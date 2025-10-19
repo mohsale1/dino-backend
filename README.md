@@ -64,16 +64,7 @@ A comprehensive, production-ready restaurant management application built with R
 ## 🛠 Technology Stack
 
 ### Frontend
-- **React 18**: Modern React with hooks and functional components
-- **TypeScript**: Type-safe development with comprehensive interfaces
-- **Material-UI (MUI)**: Professional UI components and theming
-- **React Router**: Client-side routing with protected routes
-- **Axios**: HTTP client with interceptors and error handling
-
-### State Management
-- **Context API**: Lightweight state management
-- **Custom Hooks**: Reusable logic and state handling
-- **Local Storage**: Persistent user preferences and cart data
+- **Flask**: Uses flask framework to implement the backend api's
 
 ### Real-time Features
 - **WebSocket**: Real-time notifications and updates
