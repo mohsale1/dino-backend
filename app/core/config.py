@@ -309,14 +309,15 @@ class CloudServiceManager:
     if not self._firestore_client:
 
       try:
-
+        os.environ["FIRESTORE_EMULATOR_HOST"] = "localhost:8080"
+        print("osmfirestsore :",os.getenv("FIRESTORE_EMULATOR_HOST"))
         # Initialize with timeout settings for better performance
 
         self._firestore_client = firestore.Client(
 
-          project=self.settings.GCP_PROJECT_ID,
+          project="demo-project",
 
-          database=self.settings.DATABASE_NAME
+          database="dino"
 
         )
 

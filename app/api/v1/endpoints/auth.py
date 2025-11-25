@@ -152,15 +152,15 @@ async def register_workspace(registration_data: WorkspaceRegistrationDTO):
 
     try:
 
-      server_hash, is_client_hashed = password_handler.handle_password_input(
+      # server_hash, is_client_hashed = password_handler.handle_password_input(
 
-        registration_data.owner_password,
+      #   registration_data.owner_password,
 
-        require_client_hash=True # Enforce client hashing for registration
+      #   require_client_hash=False # Enforce client hashing for registration
 
-      )
-
-      logger.info(f"Registration with {'client-hashed' if is_client_hashed else 'processed'} password for email: {registration_data.owner_email}")
+      # )
+      pass
+      #logger.info(f"Registration with {'client-hashed' if is_client_hashed else 'processed'} password for email: {registration_data.owner_email}")
 
     except ValueError as e:
 
@@ -225,7 +225,7 @@ async def register_workspace(registration_data: WorkspaceRegistrationDTO):
     }
 
      
-
+    logger.info("hellooo")
     # 2. Create Venue
 
     venue_data = {
@@ -280,7 +280,7 @@ async def register_workspace(registration_data: WorkspaceRegistrationDTO):
 
       "last_name": registration_data.owner_last_name,
 
-      "hashed_password": server_hash,
+      "hashed_password": registration_data.owner_password,
 
       "role_id": superadmin_role["id"],
 
@@ -566,7 +566,7 @@ async def login_user(login_data: UserLoginDTO):
 
         stored_hash, 
 
-        require_client_hash=True # Enforce client hashing
+        require_client_hash=False # Enforce client hashing
 
       )
 

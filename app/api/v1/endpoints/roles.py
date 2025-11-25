@@ -199,11 +199,7 @@ role_repo = RoleRepository()
 # ROLE ENDPOINTS
 # =============================================================================
 
-@router.get("", 
-            response_model=PaginatedResponse,
-            summary="Get roles",
-            description="Get paginated list of roles with filtering")
-@router.get("", 
+@router.get("/", 
             response_model=PaginatedResponse,
             summary="Get roles",
             description="Get paginated list of roles with filtering")
@@ -256,12 +252,8 @@ async def get_roles(
             detail="Failed to get roles"
         )
 
-@router.post("", 
-             response_model=ApiResponse,
-             status_code=status.HTTP_201_CREATED,
-             summary="Create role",
-             description="Create a new role with permissions (NO AUTH - TESTING ONLY)")
-@router.post("", 
+
+@router.post("/", 
              response_model=ApiResponse,
              status_code=status.HTTP_201_CREATED,
              summary="Create role",

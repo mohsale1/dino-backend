@@ -275,7 +275,7 @@ perm_repo = PermissionRepository()
 # PERMISSION ENDPOINTS
 # =============================================================================
 
-@router.get("", 
+@router.get("/", 
             response_model=PaginatedResponse,
             summary="Get permissions",
             description="Get paginated list of permissions with filtering")
@@ -336,14 +336,13 @@ async def get_permissions(
             detail="Failed to get permissions"
         )
 
-@router.post("", 
+@router.post("/", 
              response_model=ApiResponse,
              status_code=status.HTTP_201_CREATED,
              summary="Create permission",
              description="Create a new permission")
 async def create_permission(
-    permission_data: PermissionCreateDTO,
-    current_user: Dict[str, Any] = Depends(get_current_admin_user)
+    permission_data: PermissionCreateDTO
 ):
     """Create a new permission"""
     try:
@@ -369,7 +368,6 @@ async def create_permission(
             roles_count=0
         )
         
-        logger.info(f"Permission created: {permission_data.name} by {current_user['id']}")
         return ApiResponse(
             success=True,
             message="Permission created successfully",
