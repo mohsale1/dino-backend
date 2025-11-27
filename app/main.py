@@ -1,3 +1,6 @@
+
+
+
 """
 Dino E-Menu Backend API
 """
@@ -61,6 +64,15 @@ async def lifespan(app: FastAPI):
     """Application lifespan management for Cloud Run deployment"""
     # Startup
     logger.info("🦕 Starting Dino E-Menu API...")
+    
+    # Test database connection
+    try:
+        from app.core.config import get_firestore_client
+        db = get_firestore_client()
+        logger.info(f"✅ Database connection established - Project: {settings.GCP_PROJECT_ID}")
+    except Exception as e:
+        logger.warning(f"⚠️ Database connection warning: {e}")
+    
     logger.info("✅ Dino E-Menu API startup completed successfully")
     
     yield

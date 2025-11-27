@@ -2,7 +2,7 @@
 Permission Models
 Database entities and DTOs for permission management
 """
-from pydantic import Field, validator
+from pydantic import Field, field_validator
 from typing import Optional, List, Dict, Any
 from datetime import datetime
 
@@ -22,7 +22,8 @@ class Permission(BaseSchema, TimestampMixin):
     action: str = Field(..., min_length=1, max_length=50)
     scope: str = Field(..., min_length=1, max_length=50)
     
-    @validator('name')
+    @field_validator('name')
+    @classmethod
     def validate_name_format(cls, v):
         """Validate permission name format - must use dot separator"""
         if '.' not in v:
@@ -47,7 +48,8 @@ class PermissionCreateDTO(BaseDTO):
     action: str = Field(..., min_length=1, max_length=50)
     scope: str = Field(..., min_length=1, max_length=50)
     
-    @validator('name')
+    @field_validator('name')
+    @classmethod
     def validate_name_format(cls, v):
         """Validate permission name format - must use dot separator"""
         if '.' not in v:

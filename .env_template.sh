@@ -35,4 +35,4 @@ ENABLE_DOCS=false
 STORAGE_BUCKET=your-project-id-dino-storage
 
 # Firestore
-FIRESTORE_DATABASE_ID=(default)
+FIRESTORE_DATABASE_ID=default

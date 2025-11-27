@@ -67,7 +67,7 @@ class Settings(BaseSettings):
     # FIRESTORE
     # =============================================================================
     DATABASE_NAME: str = Field(
-        default="(default)", 
+        default="default", 
         description="Firestore database ID"
     )
     
@@ -261,9 +261,9 @@ class CloudServiceManager:
                     project=self.settings.GCP_PROJECT_ID,
                     database=self.settings.DATABASE_NAME
                 )
-                self.logger.info("Firestore client initialized successfully")
+                self.logger.info(f"✅ Firestore connected successfully - Project: {self.settings.GCP_PROJECT_ID}, Database: {self.settings.DATABASE_NAME}")
             except Exception as e:
-                self.logger.error(f"Failed to initialize Firestore client: {e}")
+                self.logger.error(f"❌ Failed to connect to Firestore: {e}")
                 raise
         
         return self._firestore_client
@@ -295,11 +295,11 @@ class CloudServiceManager:
         try:
             firestore_client = self.get_firestore_client()
             # Simple test - list collections
-            list(firestore_client.collections())
+            collections = list(firestore_client.collections())
             health["firestore"] = True
-            self.logger.info("Firestore health check passed")
+            self.logger.info(f"✅ Firestore health check passed - {len(collections)} collections found")
         except Exception as e:
-            error_msg = f"Firestore health check failed: {str(e)}"
+            error_msg = f"❌ Firestore health check failed: {str(e)}"
             health["errors"].append(error_msg)
             self.logger.error(error_msg)
         

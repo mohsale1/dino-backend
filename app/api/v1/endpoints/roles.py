@@ -41,10 +41,6 @@ role_repo = get_role_repo()
             response_model=PaginatedResponse,
             summary="Get roles",
             description="Get paginated list of roles with filtering")
-@router.get("", 
-            response_model=PaginatedResponse,
-            summary="Get roles",
-            description="Get paginated list of roles with filtering")
 async def get_roles(
     page: int = Query(1, ge=1, description="Page number"),
     page_size: int = Query(10, ge=1, le=100, description="Items per page"),
@@ -94,11 +90,6 @@ async def get_roles(
             detail="Failed to get roles"
         )
 
-@router.post("", 
-             response_model=ApiResponse,
-             status_code=status.HTTP_201_CREATED,
-             summary="Create role",
-             description="Create a new role with permissions (NO AUTH - TESTING ONLY)")
 @router.post("", 
              response_model=ApiResponse,
              status_code=status.HTTP_201_CREATED,

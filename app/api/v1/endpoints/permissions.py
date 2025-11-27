@@ -65,7 +65,7 @@ async def get_permissions(
         for perm in permissions:
             roles = await perm_repo.get_roles_with_permission(perm['id'])
             perm_response = PermissionResponseDTO(**perm, roles_count=len(roles))
-            enriched_permissions.append(perm_response.dict())
+            enriched_permissions.append(perm_response.model_dump())
         
         total_pages = (total + page_size - 1) // page_size
         
@@ -108,7 +108,7 @@ async def create_permission(
             )
         
         # Create permission
-        perm_dict = permission_data.dict()
+        perm_dict = permission_data.model_dump()
         perm_id = await perm_repo.create(perm_dict)
         
         # Get created permission
@@ -119,7 +119,7 @@ async def create_permission(
         return ApiResponse(
             success=True,
             message="Permission created successfully",
-            data=perm_response.dict()
+            data=perm_response.model_dump()
         )
         
     except HTTPException:
@@ -205,7 +205,7 @@ async def update_permission(
         return ApiResponse(
             success=True,
             message="Permission updated successfully",
-            data=perm_response.dict()
+            data=perm_response.model_dump()
         )
         
     except HTTPException:
@@ -395,7 +395,7 @@ async def bulk_create_permissions(
 ):
     """Bulk create permissions"""
     try:
-        permissions_data = [perm.dict() for perm in bulk_data.permissions]
+        permissions_data = [perm.model_dump() for perm in bulk_data.permissions]
         result = await perm_repo.bulk_create(permissions_data)
         
         created_permissions = [
@@ -715,7 +715,7 @@ async def validate_user_access(
 async def setup_bulk_create_permissions(bulk_data: BulkPermissionCreateDTO):
     """Bulk create permissions for system setup (NO AUTH)"""
     try:
-        permissions_data = [perm.dict() for perm in bulk_data.permissions]
+        permissions_data = [perm.model_dump() for perm in bulk_data.permissions]
         result = await perm_repo.bulk_create(permissions_data)
         
         created_permissions = [
@@ -748,32 +748,39 @@ async def setup_bulk_create_permissions(bulk_data: BulkPermissionCreateDTO):
 async def setup_create_permission(permission_data: PermissionCreateDTO):
     """Create a single permission for system setup (NO AUTH)"""
     try:
+        logger.info(f"Setup permission creation request: {permission_data.name}")
+        
         # Check if permission with same name already exists
         existing_permission = await perm_repo.get_by_name(permission_data.name)
         if existing_permission:
+            logger.warning(f"Permission already exists: {permission_data.name}")
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Permission with name '{permission_data.name}' already exists"
             )
         
         # Create permission
-        perm_dict = permission_data.dict()
+        perm_dict = permission_data.model_dump()
+        logger.debug(f"Permission data to create: {perm_dict}")
+        
         perm_id = await perm_repo.create(perm_dict)
+        logger.debug(f"Permission created with ID: {perm_id}")
         
         # Get created permission
         created_permission = await perm_repo.get_by_id(perm_id)
         perm_response = PermissionResponseDTO(**created_permission, roles_count=0)
         
-        logger.info(f"Setup permission created: {permission_data.name}")
+        logger.info(f"✅ Setup permission created successfully: {permission_data.name}")
         return ApiResponse(
             success=True,
             message="Permission created successfully",
-            data=perm_response.dict()
+            data=perm_response.model_dump()
         )
-    except HTTPException:
+    except HTTPException as he:
+        logger.error(f"HTTP Exception in setup_create_permission: {he.status_code} - {he.detail}")
         raise
     except Exception as e:
-        logger.error(f"Error in setup creating permission: {e}")
+        logger.error(f"Error in setup creating permission: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to create permission: {str(e)}"

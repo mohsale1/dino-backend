@@ -6,6 +6,7 @@ import secrets
 import string
 import re
 import time
+import bcrypt
 from datetime import datetime, timedelta
 from typing import Optional, Dict, Any, List
 from jose import JWTError, jwt
@@ -19,6 +20,7 @@ from app.core.logging import get_logger
 logger = get_logger(__name__)
 
 # BCrypt context for password hashing
+# Note: bcrypt has a 72-byte password limit, we handle truncation manually
 pwd_context = CryptContext(
     schemes=["bcrypt"],
     deprecated="auto",
@@ -150,17 +152,49 @@ def get_password_hash(password: str) -> str:
     Returns:
         BCrypt hashed password
     """
+    # BCrypt has a 72-byte limit, truncate BEFORE anything else
+    # Encode to bytes to get accurate byte count
+    password_bytes = password.encode('utf-8')
+    original_length = len(password_bytes)
+    
+    logger.info(f"Password byte length: {original_length}")
+    
+    if original_length > 72:
+        # Truncate to 72 bytes and decode back to string
+        password = password_bytes[:72].decode('utf-8', errors='ignore')
+        logger.warning(f"Password truncated from {original_length} to 72 bytes for bcrypt compatibility")
+    
+    # Double-check after truncation
+    final_bytes = password.encode('utf-8')
+    logger.info(f"Final password byte length after truncation: {len(final_bytes)}")
+    
     try:
         # Validate password strength
         validation_result = validate_password_strength(password)
         if not validation_result["is_valid"]:
             raise ValueError(f"Password validation failed: {', '.join(validation_result['errors'])}")
         
-        # Hash with BCrypt
-        return pwd_context.hash(password)
-    except Exception as e:
-        logger.error(f"Password hashing error: {e}")
+        # Log what we're about to hash
+        logger.info(f"About to hash password: type={type(password)}, len={len(password)}")
+        
+        # Use bcrypt directly to avoid passlib's validation issues
+        # bcrypt.hashpw expects bytes
+        password_bytes = password.encode('utf-8')
+        salt = bcrypt.gensalt(rounds=getattr(settings, 'BCRYPT_ROUNDS', 12))
+        hashed = bcrypt.hashpw(password_bytes, salt)
+        
+        # Convert bytes back to string for storage
+        hashed_str = hashed.decode('utf-8')
+        
+        logger.info("Password hashed successfully with bcrypt")
+        return hashed_str
+    except ValueError:
+        # Re-raise validation errors as-is
         raise
+    except Exception as e:
+        # Log and re-raise any bcrypt errors as ValueError for consistent error handling
+        logger.error(f"Password hashing error: {e}, password type: {type(password)}, length: {len(password)}, bytes: {len(password.encode('utf-8'))}")
+        raise ValueError(f"Password hashing failed: {str(e)}")
 
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
@@ -175,7 +209,14 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
         True if password matches, False otherwise
     """
     try:
-        return pwd_context.verify(plain_password, hashed_password)
+        # BCrypt has a 72-byte limit, truncate if necessary
+        password_bytes = plain_password.encode('utf-8')
+        if len(password_bytes) > 72:
+            password_bytes = password_bytes[:72]
+        
+        # Use bcrypt directly
+        hashed_bytes = hashed_password.encode('utf-8')
+        return bcrypt.checkpw(password_bytes, hashed_bytes)
     except Exception as e:
         logger.error(f"Password verification error: {e}")
         return False

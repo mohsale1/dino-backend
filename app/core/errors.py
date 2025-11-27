@@ -1,3 +1,5 @@
+     
+        
 """
 Centralized Error Handling
 Consistent error responses and logging across the application
@@ -105,8 +107,6 @@ async def http_exception_handler(request: Request, exc: HTTPException) -> JSONRe
 
 async def validation_exception_handler(request: Request, exc: RequestValidationError) -> JSONResponse:
     """Handle validation errors"""
-    error_handler.log_error(exc, request)
-    
     # Extract validation error details
     error_details = []
     for error in exc.errors():
@@ -115,6 +115,13 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
             "message": error["msg"],
             "type": error["type"]
         })
+    
+    # Log with detailed validation errors
+    logger.error(f"Validation error: {error_details}", extra={
+        "method": request.method,
+        "url": str(request.url),
+        "validation_errors": error_details
+    })
     
     error_response = error_handler.create_error_response(
         error="Validation failed",

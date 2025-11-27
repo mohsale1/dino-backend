@@ -16,8 +16,7 @@ from app.models.requests import (
 from app.core.base_endpoint import WorkspaceIsolatedEndpoint
 from app.database.repository_manager import get_user_repo
 from app.database.validated_repository import get_validated_user_repo, ValidatedUserRepository
-from app.core.security import get_current_user
-from app.core.security import password_handler
+from app.core.security import get_current_user, get_password_hash
 from app.core.logging import get_logger
 from app.core.utils import validate_required_fields, raise_validation_error
 
@@ -353,14 +352,16 @@ async def create_user(
                 detail="Invalid role_id: Role does not exist"
             )
         
-        # Handle password using unified password handler
-        # This will detect if password is client-hashed and process accordingly
-        server_hash, is_client_hashed = password_handler.handle_password_input(
-            user_data['password'],
-            require_client_hash=True  # Enforce client hashing for admin user creation
-        )
-        
-        logger.info(f"Password processed - Client hashed: {is_client_hashed}")
+        # Hash password with BCrypt
+        try:
+            server_hash = get_password_hash(user_data['password'])
+            logger.info(f"Password hashed successfully for user creation")
+        except ValueError as e:
+            logger.warning(f"Password validation error: {e}")
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=str(e)
+            )
         
         # Generate consistent UUID for user ID
         import uuid
