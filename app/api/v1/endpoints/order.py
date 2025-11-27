@@ -5,18 +5,18 @@ Complete CRUD for orders with lifecycle management and real-time updates
 from typing import List, Dict, Any, Optional
 from fastapi import APIRouter, HTTPException, status, Depends, Query
 from datetime import datetime, timedelta, timezone
-import uuid
 
-from app.models.schemas import Order, OrderStatus, PaymentStatus, OrderType
-from app.models.dto import (
+from app.models.entities import Order, OrderStatus, PaymentStatus, OrderType
+from app.utils.id_generator import generate_document_id
+from app.models.requests import (
     OrderCreateDTO, OrderUpdateDTO, OrderResponseDTO, OrderItemCreateDTO,
     ApiResponseDTO, PaginatedResponseDTO
 )
 # Removed base endpoint dependency
 from app.core.base_endpoint import WorkspaceIsolatedEndpoint
-from app.core.dependency_injection import get_repository_manager
+from app.core.dependencies import get_repository_manager
 from app.core.security import get_current_user, get_current_admin_user
-from app.core.logging_config import get_logger
+from app.core.logging import get_logger
 
 logger = get_logger(__name__)
 router = APIRouter()
@@ -77,7 +77,7 @@ class OrdersEndpoint(WorkspaceIsolatedEndpoint[Order, OrderCreateDTO, OrderUpdat
     def _generate_order_number(self) -> str:
         """Generate unique order number"""
         timestamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M")
-        random_suffix = str(uuid.uuid4())[:6].upper()
+        random_suffix = generate_document_id()[:6].upper()
         return f"ORD-{timestamp}-{random_suffix}"
     
     async def _calculate_order_totals(self, data: Dict[str, Any]):
@@ -251,7 +251,7 @@ class OrdersEndpoint(WorkspaceIsolatedEndpoint[Order, OrderCreateDTO, OrderUpdat
     async def _send_order_creation_notification(self, order_data: Dict[str, Any]):
         """Send real-time notification when order is created"""
         try:
-            from app.core.websocket_manager import connection_manager
+            from app.core.websocket import connection_manager
             
             # Get table number if available
             table_number = None
@@ -279,7 +279,7 @@ class OrdersEndpoint(WorkspaceIsolatedEndpoint[Order, OrderCreateDTO, OrderUpdat
     async def _send_order_status_notification(self, order_data: Dict[str, Any], new_status: OrderStatus):
         """Send real-time notification for order status change"""
         try:
-            from app.core.websocket_manager import connection_manager
+            from app.core.websocket import connection_manager
             
             # Get current status for comparison
             current_status = order_data.get('status', 'unknown')
@@ -556,8 +556,9 @@ async def cancel_order(
 # VENUE ORDER ENDPOINTS
 # =============================================================================
 
+# DINO GET
 @router.get("/venues/{venue_id}/orders", 
-            response_model=List[OrderResponseDTO],
+            response_model=List[Dict[str, Any]],
             summary="Get venue orders",
             description="Get all orders for a specific venue")
 async def get_venue_orders(
@@ -568,23 +569,7 @@ async def get_venue_orders(
 ):
     """Get all orders for a venue"""
     try:
-        # Validate venue access
-        if hasattr(orders_endpoint, '_validate_venue_access'):
-            await orders_endpoint._validate_venue_access(venue_id, current_user)
-        else:
-            # Fallback validation
-            venue_repo = get_repository_manager().get_repository('venue')
-            venue = await venue_repo.get_by_id(venue_id)
-            if not venue:
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail="Venue not found"
-                )
-            if not venue.get('is_active', False):
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Venue is not active"
-                )
+ 
         
         repo = get_repository_manager().get_repository('order')
         
@@ -593,15 +578,15 @@ async def get_venue_orders(
         else:
             orders_data = await repo.get_by_venue(venue_id, limit=limit)
         
-        # Process orders to ensure all required fields are present
+        # Process orders to ensure all required fields are present and populate missing data
         processed_orders = []
+        menu_repo = get_repository_manager().get_repository('menu_item')
+        
         for order in orders_data:
-            # Ensure required fields are present with defaults
+            # Remove order_number field and ensure required fields are present with defaults
             processed_order = {
                 "id": order.get('id', ''),
-                "order_number": order.get('order_number', ''),
-                "venue_id": order.get('venue_id', venue_id),
-                "customer_id": order.get('customer_id', ''),
+        
                 "order_type": order.get('order_type', 'dine_in'),
                 "table_id": order.get('table_id'),
                 "items": order.get('items', []),
@@ -611,34 +596,21 @@ async def get_venue_orders(
                 "total_amount": order.get('total_amount', 0.0),
                 "status": order.get('status', 'pending'),
                 "payment_status": order.get('payment_status', 'pending'),
-                "payment_method": order.get('payment_method'),
+                "payment_method": order.get('payment_method'),  # Populate with default if null
                 "estimated_ready_time": order.get('estimated_ready_time'),
                 "actual_ready_time": order.get('actual_ready_time'),
                 "special_instructions": order.get('special_instructions'),
                 "created_at": order.get('created_at', datetime.now(timezone.utc)),
                 "updated_at": order.get('updated_at', datetime.now(timezone.utc)),
             }
+
+
             
-            # Process items to ensure they have required fields
-            processed_items = []
-            for item in processed_order['items']:
-                processed_item = {
-                    "menu_item_id": item.get('menu_item_id', ''),
-                    "menu_item_name": item.get('menu_item_name', ''),
-                    "quantity": item.get('quantity', 1),
-                    "unit_price": item.get('unit_price', 0.0),
-                    "total_price": item.get('total_price', 0.0),
-                    "special_instructions": item.get('special_instructions'),
-                }
-                processed_items.append(processed_item)
-            
-            processed_order['items'] = processed_items
+           
             processed_orders.append(processed_order)
         
-        orders = [OrderResponseDTO(**order) for order in processed_orders]
-        
-        logger.info(f"Retrieved {len(orders)} orders for venue: {venue_id}")
-        return orders
+        logger.info(f"Retrieved {len(processed_orders)} orders for venue: {venue_id}")
+        return processed_orders
         
     except HTTPException:
         raise
@@ -653,17 +625,35 @@ async def get_venue_orders(
 @router.get("/venues/{venue_id}/analytics", 
             response_model=Dict[str, Any],
             summary="Get venue order analytics",
-            description="Get order analytics for a venue")
+            description="Get order analytics for a venue - redirects to dashboard service")
 async def get_venue_order_analytics(
     venue_id: str,
     start_date: Optional[datetime] = Query(None, description="Start date for analytics"),
     end_date: Optional[datetime] = Query(None, description="End date for analytics"),
     current_user: Dict[str, Any] = Depends(get_current_admin_user)
 ):
-    """Get order analytics for a venue"""
+    """
+    Get order analytics for a venue - uses dashboard service
+    
+    For comprehensive analytics, use:
+    - GET /api/v1/dashboard/analytics/orders (order analytics)
+    - GET /api/v1/dashboard/analytics (comprehensive analytics)
+    """
     try:
-        analytics = await orders_endpoint.get_order_analytics(
-            venue_id, start_date, end_date, current_user
+        from app.services.dashboard import DashboardService
+        from datetime import timedelta, timezone
+        
+        dashboard_service = DashboardService()
+        
+        # Set default date range if not provided
+        if not start_date or not end_date:
+            end_date = datetime.now(timezone.utc)
+            start_date = end_date - timedelta(days=7)
+        
+        analytics = await dashboard_service.get_order_analytics(
+            venue_id=venue_id,
+            start_date=start_date,
+            end_date=end_date
         )
         
         logger.info(f"Order analytics retrieved for venue: {venue_id}")
@@ -824,7 +814,7 @@ async def access_menu_by_qr(qr_code: str):
     - Returns menu with current availability
     """
     try:
-        from app.services.public_ordering_service import public_ordering_service
+        from app.services.order_public import public_ordering_service
         
         menu_access = await public_ordering_service.verify_qr_code_and_get_menu(qr_code)
         
@@ -853,7 +843,7 @@ async def check_venue_status(venue_id: str):
     - Includes break time information
     """
     try:
-        from app.services.public_ordering_service import public_ordering_service
+        from app.services.order_public import public_ordering_service
         
         status_info = await public_ordering_service.check_venue_operating_status(venue_id)
         
@@ -880,7 +870,7 @@ async def validate_order(order_data: Dict[str, Any]):
     - Calculates estimated total and preparation time
     """
     try:
-        from app.services.public_ordering_service import public_ordering_service
+        from app.services.order_public import public_ordering_service
         
         validation = await public_ordering_service.validate_order(order_data)
         
@@ -911,7 +901,7 @@ async def create_public_order(order_data: Dict[str, Any]):
     try:
         logger.info(f"Public order creation request received: venue_id={order_data.get('venue_id')}, items_count={len(order_data.get('items', []))}")
         
-        from app.services.public_ordering_service import public_ordering_service
+        from app.services.order_public import public_ordering_service
         
         # Validate required fields
         if not order_data.get('venue_id'):

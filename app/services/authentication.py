@@ -9,10 +9,10 @@ from functools import lru_cache
 
 from app.core.security import verify_password, get_password_hash, create_access_token
 from app.core.config import settings
-from app.core.logging_config import get_logger
-from app.database.firestore import get_user_repo, get_role_repo
-from app.models.dto import UserCreateDTO, UserLoginDTO, UserResponseDTO, AuthTokenDTO
-from app.models.schemas import User, UserRole
+from app.core.logging import get_logger
+from app.database.repository_manager import get_user_repo, get_role_repo
+from app.models.requests import UserCreateDTO, UserLoginDTO, UserResponseDTO, AuthTokenDTO
+from app.models.entities import User, UserRole
 
 logger = get_logger(__name__)
 
@@ -112,9 +112,9 @@ class AuthService:
             # Get or create default operator role
             role_id = await self._ensure_default_role()
             
-            # Generate consistent UUID for user ID
-            import uuid
-            user_id = str(uuid.uuid4())
+            # Generate Firestore-style ID for user
+            from app.utils.id_generator import generate_user_id
+            user_id = generate_user_id()
             
             # Create user data
             user_dict = {
@@ -150,7 +150,16 @@ class AuthService:
             )
     
     async def authenticate_user(self, email: str, password: str) -> Optional[Dict[str, Any]]:
-        """Optimized user authentication"""
+        """
+        Authenticate user with plain text password
+        
+        Args:
+            email: User email
+            password: Plain text password
+            
+        Returns:
+            User dict if authenticated, None otherwise
+        """
         user_repo = get_user_repo()
         
         try:
@@ -159,6 +168,7 @@ class AuthService:
             if not user or not user.get("is_active", True):
                 return None
             
+            # Verify plain text password against BCrypt hash
             if not verify_password(password, user["hashed_password"]):
                 return None
             
@@ -212,7 +222,7 @@ class AuthService:
                 pass  # Don't fail login for this
             
             # Prepare user data for response
-            from app.core.user_utils import convert_user_to_response_dto
+            from app.core.utils import convert_user_to_response_dto
             user_response = convert_user_to_response_dto(user)
             
             return AuthTokenDTO(
@@ -273,7 +283,17 @@ class AuthService:
             )
     
     async def change_password(self, user_id: str, current_password: str, new_password: str) -> bool:
-        """Change user password"""
+        """
+        Change user password
+        
+        Args:
+            user_id: User ID
+            current_password: Current plain text password
+            new_password: New plain text password
+            
+        Returns:
+            True if successful
+        """
         try:
             user_repo = get_user_repo()
             user = await user_repo.get_by_id(user_id)
@@ -281,10 +301,11 @@ class AuthService:
             if not user:
                 raise HTTPException(status_code=404, detail="User not found")
             
+            # Verify current password (plain text vs BCrypt hash)
             if not verify_password(current_password, user["hashed_password"]):
                 raise HTTPException(status_code=400, detail="Incorrect current password")
             
-            # Update password
+            # Hash new password with BCrypt
             new_hashed_password = get_password_hash(new_password)
             await user_repo.update(user_id, {"hashed_password": new_hashed_password})
             
@@ -333,7 +354,7 @@ class AuthService:
                 expires_delta=refresh_token_expires
             )
             
-            from app.core.user_utils import convert_user_to_response_dto
+            from app.core.utils import convert_user_to_response_dto
             user_response = convert_user_to_response_dto(user)
             
             return AuthTokenDTO(

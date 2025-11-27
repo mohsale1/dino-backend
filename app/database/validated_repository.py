@@ -5,12 +5,12 @@ Provides repository classes with built-in validation and business rule enforceme
 from typing import Dict, List, Any, Optional
 from abc import ABC, abstractmethod
 
-from app.database.firestore import (
-    UserRepository, VenueRepository, WorkspaceRepository,
+from app.database.repository_manager import (
     get_user_repo, get_venue_repo, get_workspace_repo
 )
-from app.services.validation_service import get_validation_service
-from app.core.logging_config import get_logger
+from app.repositories import UserRepository, VenueRepository, WorkspaceRepository
+from app.services.validation import get_validation_service
+from app.core.logging import get_logger
 
 logger = get_logger(__name__)
 

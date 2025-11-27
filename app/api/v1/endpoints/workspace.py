@@ -6,125 +6,19 @@ from typing import List, Dict, Any, Optional
 from fastapi import APIRouter, HTTPException, status, Depends, Query
 from datetime import datetime
 
-from app.models.schemas import Workspace, User, Venue
-from app.models.dto import (
+from app.models.entities import Workspace, User, Venue
+from app.models.requests import (
     WorkspaceCreateDTO, WorkspaceUpdateDTO, WorkspaceResponseDTO,
     ApiResponseDTO, PaginatedResponseDTO
 )
 from app.core.base_endpoint import BaseEndpoint
-from app.database.firestore import get_workspace_repo, WorkspaceRepository
+from app.database.repository_manager import get_workspace_repo
+from app.repositories import WorkspaceRepository
 from app.core.security import get_current_user, get_current_admin_user, verify_workspace_access
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from app.core.logging_config import get_logger
+from app.core.logging import get_logger
 
 logger = get_logger(__name__)
 router = APIRouter()
-
-# Optional authentication for debugging
-security = HTTPBearer(auto_error=False)
-
-async def get_current_user_optional(credentials: Optional[HTTPAuthorizationCredentials] = Depends(security)):
-    """Get current user with optional authentication for debugging"""
-    if not credentials:
-        return None
-    
-    try:
-        from app.core.security import verify_token
-        from app.database.firestore import get_user_repo
-        
-        payload = verify_token(credentials.credentials)
-        user_id = payload.get("sub")
-        
-        if not user_id:
-            return None
-            
-        user_repo = get_user_repo()
-        user_data = await user_repo.get_by_id(user_id)
-        return user_data
-    except:
-        return None
-
-
-@router.get("/test", 
-            summary="Test workspace endpoint",
-            description="Simple test endpoint to verify workspace router is working")
-async def test_workspace_endpoint():
-    """Test endpoint to verify workspace router is working"""
-    return {
-        "success": True,
-        "message": "Workspace endpoint is working",
-        "timestamp": datetime.utcnow().isoformat()
-    }
-
-
-@router.get("/list")
-async def list_workspaces(
-    page: int = Query(1, ge=1, description="Page number"),
-    page_size: int = Query(10, ge=1, le=100, description="Items per page"),
-    search: Optional[str] = Query(None, description="Search by name or description"),
-    is_active: Optional[bool] = Query(None, description="Filter by active status"),
-    current_user: Dict[str, Any] = Depends(get_current_user)
-):
-    """Alternative endpoint to list workspaces"""
-    try:
-        logger.info(f"List workspaces endpoint called by user: {current_user.get('id')}")
-        
-        filters = {}
-        if is_active is not None:
-            filters['is_active'] = is_active
-        
-        result = await workspaces_endpoint.get_items(
-            page=page,
-            page_size=page_size,
-            search=search,
-            filters=filters,
-            current_user=current_user
-        )
-        
-        logger.info(f"Workspaces returned: {len(result.data) if result.data else 0}")
-        return result
-        
-    except Exception as e:
-        logger.error(f"Error in list_workspaces: {str(e)}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to get workspaces: {str(e)}"
-        )
-
-
-@router.get("/public-debug")
-async def public_debug_workspaces():
-    """Public debug endpoint to test workspace access"""
-    try:
-        logger.info("Public debug workspaces called")
-        
-        # Get workspace repository
-        repo = get_workspace_repo()
-        
-        # Get all workspaces (for debugging)
-        all_workspaces = await repo.get_all()
-        
-        return {
-            "success": True,
-            "message": "Public debug workspaces endpoint working",
-            "total_workspaces": len(all_workspaces),
-            "workspaces": [
-                {
-                    "id": ws.get('id'),
-                    "name": ws.get('display_name', ws.get('name')),
-                    "is_active": ws.get('is_active', False)
-                }
-                for ws in all_workspaces[:5]  # Limit to first 5 for debugging
-            ]
-        }
-    except Exception as e:
-        logger.error(f"Error in public_debug_workspaces: {str(e)}")
-        return {
-            "success": False,
-            "error": str(e),
-            "message": "Public debug endpoint failed"
-        }
-
 
 class WorkspacesEndpoint(BaseEndpoint[Workspace, WorkspaceCreateDTO, WorkspaceUpdateDTO]):
     """Enhanced Workspaces endpoint with comprehensive management"""
@@ -163,14 +57,14 @@ class WorkspacesEndpoint(BaseEndpoint[Workspace, WorkspaceCreateDTO, WorkspaceUp
     def _generate_workspace_name(self, display_name: str) -> str:
         """Generate unique workspace name from display name"""
         import re
-        import uuid
+        from app.utils.id_generator import generate_firestore_id
         
         # Convert to lowercase and replace spaces/special chars with underscores
         name = re.sub(r'[^a-zA-Z0-9\s]', '', display_name.lower())
         name = re.sub(r'\s+', '_', name.strip())
         
-        # Add unique suffix
-        unique_suffix = str(uuid.uuid4())[:8]
+        # Add unique suffix using Firestore ID (first 8 chars)
+        unique_suffix = generate_firestore_id()[:8]
         return f"{name}_{unique_suffix}"
     
     async def _validate_create_permissions(self, 
@@ -259,7 +153,7 @@ class WorkspacesEndpoint(BaseEndpoint[Workspace, WorkspaceCreateDTO, WorkspaceUp
         await self._validate_access_permissions(workspace_data, current_user)
         
         # Get related data
-        from app.database.firestore import (
+        from app.database.repository_manager import (
             get_venue_repo, get_user_repo, get_order_repo, get_menu_item_repo
         )
         
@@ -323,7 +217,7 @@ class WorkspacesEndpoint(BaseEndpoint[Workspace, WorkspaceCreateDTO, WorkspaceUp
             )
         
         # Validate new owner exists and is in the workspace
-        from app.database.firestore import get_user_repo
+        from app.database.repository_manager import get_user_repo
         user_repo = get_user_repo()
         
         new_owner = await user_repo.get_by_id(new_owner_id)
@@ -354,7 +248,7 @@ workspaces_endpoint = WorkspacesEndpoint()
 # WORKSPACE MANAGEMENT ENDPOINTS
 # =============================================================================
 
-@router.get("/", 
+@router.get("", 
             response_model=PaginatedResponseDTO,
             summary="Get workspaces (default)",
             description="Get paginated list of workspaces - default endpoint")
@@ -367,8 +261,6 @@ async def get_workspaces_default(
 ):
     """Get workspaces with pagination and filtering - default endpoint"""
     try:
-        logger.info(f"Default workspaces endpoint called by user: {current_user.get('id')}")
-        
         filters = {}
         if is_active is not None:
             filters['is_active'] = is_active
@@ -381,7 +273,6 @@ async def get_workspaces_default(
             current_user=current_user
         )
         
-        logger.info(f"Workspaces returned: {len(result.data) if result.data else 0}")
         return result
         
     except Exception as e:
@@ -392,61 +283,7 @@ async def get_workspaces_default(
         )
 
 
-@router.get("/debug", 
-            summary="Debug workspaces endpoint",
-            description="Debug endpoint to check workspace access with authentication")
-async def debug_workspaces(
-    current_user: Dict[str, Any] = Depends(get_current_user_optional)
-):
-    """Debug endpoint to check workspace access"""
-    try:
-        logger.info(f"Debug workspaces endpoint called")
-        
-        if not current_user:
-            return {
-                "success": False,
-                "message": "No authentication provided",
-                "authenticated": False
-            }
-        
-        logger.info(f"Debug workspaces endpoint called by user: {current_user.get('id')}")
-        
-        # Get workspace repository
-        repo = get_workspace_repo()
-        
-        # Get all workspaces (for debugging)
-        all_workspaces = await repo.get_all()
-        
-        # Get user role
-        from app.core.security import _get_user_role
-        user_role = await _get_user_role(current_user)
-        
-        return {
-            "success": True,
-            "message": "Debug workspaces endpoint working",
-            "authenticated": True,
-            "user_id": current_user.get('id'),
-            "user_role": user_role,
-            "user_workspace_id": current_user.get('workspace_id'),
-            "total_workspaces": len(all_workspaces),
-            "workspaces": [
-                {
-                    "id": ws.get('id'),
-                    "name": ws.get('display_name', ws.get('name')),
-                    "is_active": ws.get('is_active', False)
-                }
-                for ws in all_workspaces[:5]  # Limit to first 5 for debugging
-            ]
-        }
-    except Exception as e:
-        logger.error(f"Error in debug_workspaces: {str(e)}")
-        return {
-            "success": False,
-            "error": str(e),
-            "message": "Debug endpoint failed"
-        }
-
-@router.post("/", 
+@router.post("", 
              response_model=ApiResponseDTO,
              status_code=status.HTTP_201_CREATED,
              summary="Create workspace",
@@ -472,8 +309,6 @@ async def get_workspaces(
 ):
     """Get workspaces with pagination and filtering"""
     try:
-        logger.info(f"Workspaces endpoint called by user: {current_user.get('id')}")
-        
         filters = {}
         if is_active is not None:
             filters['is_active'] = is_active
@@ -486,7 +321,6 @@ async def get_workspaces(
             current_user=current_user
         )
         
-        logger.info(f"Workspaces returned: {len(result.data) if result.data else 0}")
         return result
         
     except Exception as e:
@@ -596,7 +430,7 @@ async def get_workspace_venues(
         # Verify workspace access
         await verify_workspace_access(workspace_id, current_user)
         
-        from app.database.firestore import get_venue_repo
+        from app.database.repository_manager import get_venue_repo
         venue_repo = get_venue_repo()
         venues_data = await venue_repo.get_by_workspace(workspace_id)
         
@@ -656,7 +490,7 @@ async def get_workspace_users(
         # Verify workspace access
         await verify_workspace_access(workspace_id, current_user)
         
-        from app.database.firestore import get_user_repo
+        from app.database.repository_manager import get_user_repo
         user_repo = get_user_repo()
         users_data = await user_repo.get_by_workspace(workspace_id)
         
@@ -707,39 +541,56 @@ async def get_workspace_statistics(
 @router.get("/{workspace_id}/analytics/summary", 
             response_model=Dict[str, Any],
             summary="Get workspace analytics summary",
-            description="Get workspace analytics summary")
+            description="Get workspace analytics summary - uses dashboard service for SuperAdmin")
 async def get_workspace_analytics_summary(
     workspace_id: str,
     current_user: Dict[str, Any] = Depends(get_current_admin_user)
 ):
-    """Get workspace analytics summary"""
+    """
+    Get workspace analytics summary - uses dashboard service
+    
+    Note: For SuperAdmin dashboard with full workspace analytics, use:
+    - GET /api/v1/dashboard (SuperAdmin dashboard with workspace breakdown)
+    """
     try:
         # Verify workspace access
         await verify_workspace_access(workspace_id, current_user)
         
-        from app.database.firestore import get_venue_repo, get_order_repo
+        from app.services.dashboard import DashboardService
+        from app.database.repository_manager import get_venue_repo
+        
+        dashboard_service = DashboardService()
         venue_repo = get_venue_repo()
-        order_repo = get_order_repo()
         
         # Get workspace venues
         venues = await venue_repo.get_by_workspace(workspace_id)
         
-        # Calculate analytics
+        # Calculate workspace-level analytics using dashboard service
         total_revenue = 0.0
         total_orders = 0
         active_venues = 0
+        venue_analytics = []
         
         for venue in venues:
             if venue.get('is_active', False):
                 active_venues += 1
-            
-            venue_id = venue['id']
-            orders = await order_repo.get_by_venue(venue_id, limit=1000)
-            
-            for order in orders:
-                if order.get('payment_status') == 'paid':
-                    total_revenue += order.get('total_amount', 0)
-                total_orders += 1
+                
+                # Get venue dashboard data
+                try:
+                    venue_data = await dashboard_service.get_venue_dashboard(venue['id'])
+                    venue_summary = venue_data.get('summary', {})
+                    
+                    total_revenue += venue_summary.get('total_revenue', 0)
+                    total_orders += venue_summary.get('total_orders', 0)
+                    
+                    venue_analytics.append({
+                        "venue_id": venue['id'],
+                        "venue_name": venue.get('name'),
+                        "revenue": venue_summary.get('total_revenue', 0),
+                        "orders": venue_summary.get('total_orders', 0)
+                    })
+                except Exception as e:
+                    logger.warning(f"Could not get analytics for venue {venue['id']}: {e}")
         
         average_order_value = total_revenue / total_orders if total_orders > 0 else 0
         
@@ -748,8 +599,9 @@ async def get_workspace_analytics_summary(
             "total_venues": len(venues),
             "active_venues": active_venues,
             "total_orders": total_orders,
-            "total_revenue": total_revenue,
-            "average_order_value": average_order_value,
+            "total_revenue": round(total_revenue, 2),
+            "average_order_value": round(average_order_value, 2),
+            "venue_breakdown": venue_analytics,
             "period": "all_time"
         }
         
@@ -821,7 +673,7 @@ async def add_venue_to_workspace(
         await verify_workspace_access(workspace_id, current_user)
         
         # Verify venue exists and user has access
-        from app.database.firestore import get_venue_repo
+        from app.database.repository_manager import get_venue_repo
         venue_repo = get_venue_repo()
         
         venue = await venue_repo.get_by_id(venue_id)
@@ -883,7 +735,7 @@ async def remove_venue_from_workspace(
             await repo.update(workspace_id, {"venue_ids": venue_ids})
         
         # Optionally remove workspace from venue
-        from app.database.firestore import get_venue_repo
+        from app.database.repository_manager import get_venue_repo
         venue_repo = get_venue_repo()
         await venue_repo.update(venue_id, {"workspace_id": None})
         
@@ -967,7 +819,7 @@ async def validate_workspace_data(workspace_data: Dict[str, Any]):
             validation_result["errors"].append("Workspace name already exists")
         
         # Check email uniqueness
-        from app.database.firestore import get_user_repo
+        from app.database.repository_manager import get_user_repo
         user_repo = get_user_repo()
         
         owner_email = workspace_data.get('owner_details', {}).get('email', '').lower()
@@ -1007,7 +859,7 @@ async def create_venue_user(
     - One role per venue constraint enforced
     """
     try:
-        from app.services.role_permission_service import role_permission_service
+        from app.services.authorization import role_permission_service
         
         user_id = await role_permission_service.create_venue_user(
             creator_id=current_user["id"],

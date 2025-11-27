@@ -1,31 +1,16 @@
 """
-
 Configuration for Dino E-Menu Backend
-
 Simplified configuration for core functionality with roles and permissions
-
 """
-
 from pydantic_settings import BaseSettings
-
 from typing import List, Union, Optional
-
 from pydantic import field_validator, Field
-
 import os
-
 from google.cloud import storage, firestore
-
 from google.oauth2 import service_account
-
 import logging
 
-
-
 logger = logging.getLogger(__name__)
-
-
-
 
 
 class Settings(BaseSettings):
@@ -53,12 +38,7 @@ class Settings(BaseSettings):
     REQUIRE_STRONG_PASSWORDS: bool = Field(default=True, description="Enforce strong password policy")
     
     # JWT Authentication Control
-    JWT_AUTH: bool = Field(default=True, description="Enable JWT authentication (True) or disable for GCP auth (False)")
-    
-    # Development User (when JWT_AUTH=False)
-    DEV_USER_ID: str = Field(default="dev-user-123", description="Default user ID for development mode")
-    DEV_USER_EMAIL: str = Field(default="dev@example.com", description="Default user email for development mode")
-    DEV_USER_ROLE: str = Field(default="superadmin", description="Default user role for development mode")
+    JWT_AUTH: bool = Field(default=True, description="Enable JWT authentication")
     
     # =============================================================================
     # CORS CONFIGURATION
@@ -95,6 +75,7 @@ class Settings(BaseSettings):
     # CLOUD STORAGE
     # =============================================================================
     GCS_BUCKET_NAME: str = Field(default="your-gcs-bucket-name", description="Google Cloud Storage bucket name")
+    DINO_MENU_BUCKET: str = Field(default="", description="Dino Menu bucket name for menu item images")
     GCS_BUCKET_REGION: str = Field(default="us-central1", description="GCS bucket region")
     GCS_IMAGES_FOLDER: str = Field(default="images", description="Images folder in bucket")
     GCS_DOCUMENTS_FOLDER: str = Field(default="documents", description="Documents folder")
@@ -232,16 +213,6 @@ class Settings(BaseSettings):
         
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        
-        # Log configuration source for debugging
-        if self.DEBUG:
-            logger.info(f"Configuration loaded - Environment: {self.ENVIRONMENT}")
-            logger.info(f"Using GCP Project: {self.GCP_PROJECT_ID}")
-            logger.info(f"Using Firestore DB: {self.DATABASE_NAME}")
-            logger.info(f"Using GCS Bucket: {self.GCS_BUCKET_NAME}")
-            logger.info(f"QR Code Base URL: {self.QR_CODE_BASE_URL}")
-            logger.info(f"Debug Mode: {self.DEBUG}")
-            logger.info(f"Log Level: {self.LOG_LEVEL}")
     
     def get_env_info(self) -> dict:
         """Get environment configuration info for debugging"""
@@ -261,420 +232,211 @@ class Settings(BaseSettings):
 
 
 class CloudServiceManager:
-
-  """Manages Google Cloud service clients for production deployment"""
-
-   
-
-  def __init__(self, settings: Settings):
-
-    self.settings = settings
-
-    self._storage_client: Optional[storage.Client] = None
-
-    self._firestore_client: Optional[firestore.Client] = None
-
-    self.logger = logging.getLogger(__name__)
-
-   
-
-  def get_storage_client(self) -> storage.Client:
-
-    """Get Google Cloud Storage client"""
-
-    if not self._storage_client:
-
-      try:
-
-        self._storage_client = storage.Client(project=self.settings.GCP_PROJECT_ID)
-
-        self.logger.info("Storage client initialized successfully")
-
-      except Exception as e:
-
-        self.logger.error(f"Failed to initialize storage client: {e}")
-
-        raise
-
-     
-
-    return self._storage_client
-
-   
-
-  def get_firestore_client(self) -> firestore.Client:
-
-    """Get Firestore client with optimized settings"""
-
-    if not self._firestore_client:
-
-      try:
-        os.environ["FIRESTORE_EMULATOR_HOST"] = "localhost:8080"
-        print("osmfirestsore :",os.getenv("FIRESTORE_EMULATOR_HOST"))
-        # Initialize with timeout settings for better performance
-
-        self._firestore_client = firestore.Client(
-
-          project="demo-project",
-
-          database="dino"
-
-        )
-
-        self.logger.info("Firestore client initialized successfully")
-
-      except Exception as e:
-
-        self.logger.error(f"Failed to initialize Firestore client: {e}")
-
-        raise
-
-     
-
-    return self._firestore_client
-
-   
-
-  def get_storage_bucket(self) -> storage.Bucket:
-
-    """Get the main storage bucket"""
-
-    try:
-
-      client = self.get_storage_client()
-
-      bucket = client.bucket(self.settings.GCS_BUCKET_NAME)
-
-       
-
-      # Verify bucket exists
-
-      if not bucket.exists():
-
-        raise ValueError(f"Bucket {self.settings.GCS_BUCKET_NAME} does not exist")
-
-       
-
-      return bucket
-
-    except Exception as e:
-
-      self.logger.error(f"Failed to get storage bucket: {e}")
-
-      raise
-
-   
-
-  def health_check(self) -> dict:
-
-    """Perform health check on cloud services"""
-
-    health = {
-
-      "firestore": False,
-
-      "storage": False,
-
-      "errors": []
-
-    }
-
-     
-
-    # Test Firestore
-
-    try:
-
-      firestore_client = self.get_firestore_client()
-
-      # Simple test - list collections
-
-      list(firestore_client.collections())
-
-      health["firestore"] = True
-
-      self.logger.info("Firestore health check passed")
-
-    except Exception as e:
-
-      error_msg = f"Firestore health check failed: {str(e)}"
-
-      health["errors"].append(error_msg)
-
-      self.logger.error(error_msg)
-
-     
-
-    # Test Storage
-
-    try:
-
-      bucket = self.get_storage_bucket()
-
-      bucket.exists() # Check if bucket exists
-
-      health["storage"] = True
-
-      self.logger.info("Storage health check passed")
-
-    except Exception as e:
-
-      error_msg = f"Storage health check failed: {str(e)}"
-
-      health["errors"].append(error_msg)
-
-      self.logger.error(error_msg)
-
-     
-
-    return health
-
-
-
+    """Manages Google Cloud service clients for production deployment"""
+    
+    def __init__(self, settings: Settings):
+        self.settings = settings
+        self._storage_client: Optional[storage.Client] = None
+        self._firestore_client: Optional[firestore.Client] = None
+        self.logger = logging.getLogger(__name__)
+    
+    def get_storage_client(self) -> storage.Client:
+        """Get Google Cloud Storage client"""
+        if not self._storage_client:
+            try:
+                self._storage_client = storage.Client(project=self.settings.GCP_PROJECT_ID)
+                self.logger.info("Storage client initialized successfully")
+            except Exception as e:
+                self.logger.error(f"Failed to initialize storage client: {e}")
+                raise
+        
+        return self._storage_client
+    
+    def get_firestore_client(self) -> firestore.Client:
+        """Get Firestore client with optimized settings"""
+        if not self._firestore_client:
+            try:
+                # Initialize with timeout settings for better performance
+                self._firestore_client = firestore.Client(
+                    project=self.settings.GCP_PROJECT_ID,
+                    database=self.settings.DATABASE_NAME
+                )
+                self.logger.info("Firestore client initialized successfully")
+            except Exception as e:
+                self.logger.error(f"Failed to initialize Firestore client: {e}")
+                raise
+        
+        return self._firestore_client
+    
+    def get_storage_bucket(self) -> storage.Bucket:
+        """Get the main storage bucket"""
+        try:
+            client = self.get_storage_client()
+            bucket = client.bucket(self.settings.GCS_BUCKET_NAME)
+            
+            # Verify bucket exists
+            if not bucket.exists():
+                raise ValueError(f"Bucket {self.settings.GCS_BUCKET_NAME} does not exist")
+            
+            return bucket
+        except Exception as e:
+            self.logger.error(f"Failed to get storage bucket: {e}")
+            raise
+    
+    def health_check(self) -> dict:
+        """Perform health check on cloud services"""
+        health = {
+            "firestore": False,
+            "storage": False,
+            "errors": []
+        }
+        
+        # Test Firestore
+        try:
+            firestore_client = self.get_firestore_client()
+            # Simple test - list collections
+            list(firestore_client.collections())
+            health["firestore"] = True
+            self.logger.info("Firestore health check passed")
+        except Exception as e:
+            error_msg = f"Firestore health check failed: {str(e)}"
+            health["errors"].append(error_msg)
+            self.logger.error(error_msg)
+        
+        # Test Storage
+        try:
+            bucket = self.get_storage_bucket()
+            bucket.exists()  # Check if bucket exists
+            health["storage"] = True
+            self.logger.info("Storage health check passed")
+        except Exception as e:
+            error_msg = f"Storage health check failed: {str(e)}"
+            health["errors"].append(error_msg)
+            self.logger.error(error_msg)
+        
+        return health
 
 
 # =============================================================================
-
 # GLOBAL INSTANCES
-
 # =============================================================================
-
 def get_settings() -> Settings:
-
-  """Get application settings"""
-
-  return Settings()
-
-
-
+    """Get application settings"""
+    return Settings()
 
 
 # Initialize settings
-
 settings = get_settings()
-
 cloud_manager = CloudServiceManager(settings)
 
 
-
-
-
 # =============================================================================
-
 # CONVENIENCE FUNCTIONS
-
 # =============================================================================
-
 def get_cloud_manager() -> CloudServiceManager:
-
-  """Get cloud service manager"""
-
-  return cloud_manager
-
-
-
+    """Get cloud service manager"""
+    return cloud_manager
 
 
 def get_storage_client() -> storage.Client:
-
-  """Get Google Cloud Storage client"""
-
-  return cloud_manager.get_storage_client()
-
-
-
+    """Get Google Cloud Storage client"""
+    return cloud_manager.get_storage_client()
 
 
 def get_firestore_client() -> firestore.Client:
-
-  """Get Firestore client"""
-
-  return cloud_manager.get_firestore_client()
-
-
-
+    """Get Firestore client"""
+    return cloud_manager.get_firestore_client()
 
 
 def get_storage_bucket() -> storage.Bucket:
-
-  """Get the main storage bucket"""
-
-  return cloud_manager.get_storage_bucket()
-
-
-
+    """Get the main storage bucket"""
+    return cloud_manager.get_storage_bucket()
 
 
 def validate_configuration() -> dict:
-
-  """Validate current configuration and return status"""
-
-  validation_result = {
-
-    "valid": True,
-
-    "warnings": [],
-
-    "errors": [],
-
-    "config_info": {}
-
-  }
-
-   
-
-  try:
-
-    # Get current settings
-
-    current_settings = get_settings()
-
-    validation_result["config_info"] = current_settings.get_env_info()
-
-     
-
-    # Check critical settings
-
-    if current_settings.SECRET_KEY == "your-secret-key-change-in-production-at-least-32-characters-long":
-
-      validation_result["warnings"].append("Using default SECRET_KEY - change this in production!")
-
-     
-
-    if current_settings.GCP_PROJECT_ID == "your-gcp-project-id":
-
-      validation_result["errors"].append("GCP_PROJECT_ID not configured properly")
-
-      validation_result["valid"] = False
-
-     
-
-    if current_settings.GCS_BUCKET_NAME == "your-gcs-bucket-name":
-
-      validation_result["warnings"].append("GCS_BUCKET_NAME not configured - storage features may not work")
-
-     
-
-    if current_settings.is_production and current_settings.DEBUG:
-
-      validation_result["warnings"].append("DEBUG is enabled in production environment")
-
-     
-
-    if len(current_settings.SECRET_KEY) < 32:
-
-      validation_result["errors"].append("SECRET_KEY should be at least 32 characters long")
-
-      validation_result["valid"] = False
-
-     
-
-    # Log validation results
-
-    if validation_result["valid"]:
-
-      logger.info("Configuration validation passed")
-
-    else:
-
-      logger.error("Configuration validation failed")
-
-     
-
-    for warning in validation_result["warnings"]:
-
-      logger.warning(f"Config warning: {warning}")
-
-     
-
-    for error in validation_result["errors"]:
-
-      logger.error(f"Config error: {error}")
-
-       
-
-  except Exception as e:
-
-    logger.error(f"Configuration validation error: {e}")
-
-    validation_result["valid"] = False
-
-    validation_result["errors"].append(f"Validation error: {str(e)}")
-
-   
-
-  return validation_result
-
-
-
+    """Validate current configuration and return status"""
+    validation_result = {
+        "valid": True,
+        "warnings": [],
+        "errors": [],
+        "config_info": {}
+    }
+    
+    try:
+        # Get current settings
+        current_settings = get_settings()
+        validation_result["config_info"] = current_settings.get_env_info()
+        
+        # Check critical settings
+        if current_settings.SECRET_KEY == "your-secret-key-change-in-production-at-least-32-characters-long":
+            validation_result["warnings"].append("Using default SECRET_KEY - change this in production!")
+        
+        if current_settings.GCP_PROJECT_ID == "your-gcp-project-id":
+            validation_result["errors"].append("GCP_PROJECT_ID not configured properly")
+            validation_result["valid"] = False
+        
+        if current_settings.GCS_BUCKET_NAME == "your-gcs-bucket-name":
+            validation_result["warnings"].append("GCS_BUCKET_NAME not configured - storage features may not work")
+        
+        if current_settings.is_production and current_settings.DEBUG:
+            validation_result["warnings"].append("DEBUG is enabled in production environment")
+        
+        if len(current_settings.SECRET_KEY) < 32:
+            validation_result["errors"].append("SECRET_KEY should be at least 32 characters long")
+            validation_result["valid"] = False
+        
+        # Log validation results
+        if validation_result["valid"]:
+            logger.info("Configuration validation passed")
+        else:
+            logger.error("Configuration validation failed")
+        
+        for warning in validation_result["warnings"]:
+            logger.warning(f"Config warning: {warning}")
+        
+        for error in validation_result["errors"]:
+            logger.error(f"Config error: {error}")
+            
+    except Exception as e:
+        logger.error(f"Configuration validation error: {e}")
+        validation_result["valid"] = False
+        validation_result["errors"].append(f"Validation error: {str(e)}")
+    
+    return validation_result
 
 
 def initialize_cloud_services() -> bool:
-
-  """Initialize and test cloud services"""
-
-  try:
-
-    logger.info("Initializing cloud services")
-
-     
-
-    health = cloud_manager.health_check()
-
-     
-
-    if health["firestore"]:
-
-      logger.info("Firestore connected successfully")
-
-    else:
-
-      logger.warning("Firestore connection failed")
-
-     
-
-    if health["storage"]:
-
-      logger.info("Cloud Storage connected successfully")
-
-    else:
-
-      logger.warning("Cloud Storage connection failed")
-
-     
-
-    if health["errors"]:
-
-      logger.error("Errors during cloud service initialization")
-
-      for error in health["errors"]:
-
-        logger.error(error)
-
-     
-
-    # Return True if at least one service is working
-
-    success = health["firestore"] or health["storage"]
-
-     
-
-    if success:
-
-      logger.info("Cloud services initialization completed successfully")
-
-    else:
-
-      logger.error("All cloud services failed to initialize")
-
-     
-
-    return success
-
-     
-
-  except Exception as e:
-
-    logger.error(f"Failed to initialize cloud services: {e}")
-
-    return False
+    """Initialize and test cloud services"""
+    try:
+        logger.info("Initializing cloud services")
+        
+        health = cloud_manager.health_check()
+        
+        if health["firestore"]:
+            logger.info("Firestore connected successfully")
+        else:
+            logger.warning("Firestore connection failed")
+        
+        if health["storage"]:
+            logger.info("Cloud Storage connected successfully")
+        else:
+            logger.warning("Cloud Storage connection failed")
+        
+        if health["errors"]:
+            logger.error("Errors during cloud service initialization")
+            for error in health["errors"]:
+                logger.error(error)
+        
+        # Return True if at least one service is working
+        success = health["firestore"] or health["storage"]
+        
+        if success:
+            logger.info("Cloud services initialization completed successfully")
+        else:
+            logger.error("All cloud services failed to initialize")
+        
+        return success
+        
+    except Exception as e:
+        logger.error(f"Failed to initialize cloud services: {e}")
+        return False

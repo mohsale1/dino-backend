@@ -1,31 +1,28 @@
 """
 User Management API Endpoints
-Comprehensive user management with authentication, profiles, and administration
+Comprehensive user management with profiles and administration
 """
 from typing import List, Dict, Any, Optional
 from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, status, Query
-from fastapi.security import HTTPBearer
+from pydantic import BaseModel
 
-from app.models.schemas import User
-from app.models.dto import (
-    UserCreateDTO, AdminUserCreateDTO, UserUpdateDTO, UserLoginDTO, UserResponseDTO,
-    AuthTokenDTO, ApiResponseDTO, SimpleApiResponseDTO,
+from app.models.entities import User
+from app.models.requests import (
+    UserCreateDTO, UserUpdateDTO, UserResponseDTO,
+    ApiResponseDTO, SimpleApiResponseDTO,
     PaginatedResponseDTO
 )
 from app.core.base_endpoint import WorkspaceIsolatedEndpoint
-from app.database.firestore import get_user_repo, UserRepository
+from app.database.repository_manager import get_user_repo
 from app.database.validated_repository import get_validated_user_repo, ValidatedUserRepository
-from app.services.validation_service import get_validation_service
-from app.core.dependency_injection import get_auth_service
-from app.core.security import get_current_user, get_current_admin_user
-from app.core.unified_password_security import password_handler
-from app.core.logging_config import get_logger
-from app.core.common_utils import validate_required_fields, raise_validation_error, remove_sensitive_fields, create_success_response
+from app.core.security import get_current_user
+from app.core.security import password_handler
+from app.core.logging import get_logger
+from app.core.utils import validate_required_fields, raise_validation_error
 
 logger = get_logger(__name__)
 router = APIRouter()
-security = HTTPBearer()
 
 
 class UserEndpoint(WorkspaceIsolatedEndpoint[User, UserCreateDTO, UserUpdateDTO]):
@@ -137,77 +134,9 @@ user_endpoint = UserEndpoint()
 
 
 # =============================================================================
-# AUTHENTICATION ENDPOINTS
-# =============================================================================
-
-@router.post("/register", 
-             response_model=AuthTokenDTO,
-             status_code=status.HTTP_201_CREATED,
-             summary="Register new user",
-             description="Register a new user account. Public endpoint - no authentication required.")
-async def register_user(user_data: UserCreateDTO):
-    """Register a new user with comprehensive validation"""
-    try:
-        # Get validation service
-        validation_service = get_validation_service()
-        
-        # Convert Pydantic model to dict for validation
-        user_dict = user_data.model_dump()
-        
-        # Validate user data (this will check uniqueness, format, etc.)
-        validation_errors = await validation_service.validate_user_data(user_dict, is_update=False)
-        if validation_errors:
-            validation_service.raise_validation_exception(validation_errors)
-        
-        # Register user (auth_service will handle password hashing)
-        user = await get_auth_service().register_user(user_data)
-        
-        # Login user immediately after registration
-        login_data = UserLoginDTO(email=user_data.email, password=user_data.password)
-        token = await get_auth_service().login_user(login_data)
-        
-        logger.info(f"User registered successfully: {user_data.email}")
-        return token
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error registering user: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Registration failed"
-        )
-
-
-@router.post("/login", 
-             response_model=AuthTokenDTO,
-             summary="User login",
-             description="Authenticate user and return JWT token")
-async def login_user(login_data: UserLoginDTO):
-    """Login user"""
-    try:
-        token = await get_auth_service().login_user(login_data)
-        
-        # Update last login
-        user_repo = get_user_repo()
-        await user_repo.update(token.user.id, {"last_login": token.user.created_at})
-        
-        logger.info(f"User logged in successfully: {login_data.email}")
-        return token
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error logging in user: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Login failed"
-        )
-
-
-# =============================================================================
 # PROFILE MANAGEMENT ENDPOINTS
 # =============================================================================
+# Note: Registration and login endpoints are in auth.py
 
 @router.get("/profile", 
             response_model=UserResponseDTO,
@@ -415,7 +344,7 @@ async def create_user(
             )
         
         # Validate role_id exists
-        from app.database.firestore import get_role_repo
+        from app.database.repository_manager import get_role_repo
         role_repo = get_role_repo()
         role = await role_repo.get_by_id(user_data['role_id'])
         if not role:
@@ -681,76 +610,446 @@ async def search_users(
 # These endpoints can be re-enabled when address management is needed
 
 # =============================================================================
-# SECURITY ENDPOINTS
+# USER DATA ENDPOINTS
 # =============================================================================
 
-@router.post("/change-password", 
-             response_model=ApiResponseDTO,
-             summary="Change password",
-             description="Change user password")
-async def change_password(
-    current_password: str,
-    new_password: str,
-    current_user: Dict[str, Any] = Depends(get_current_user)
-):
-    """Change user password"""
-    try:
-        success = await get_auth_service().change_password(
-            current_user['id'], 
-            current_password, 
-            new_password
-        )
-        
-        if success:
-            logger.info(f"Password changed for user: {current_user['id']}")
-            return ApiResponseDTO(
-                success=True,
-                message="Password changed successfully"
-            )
-        else:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Failed to change password"
-            )
+class UserDataService:
+    """Simplified user data service"""
+    
+    @staticmethod
+    async def get_user_data(current_user: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Get simplified user data with venue and workspace information
+        """
+        try:
+            user_id = current_user['id']
+            user_role = current_user.get('role', 'operator')
             
+            # Get user's primary venue (can be None)
+            from app.core.security import get_user_primary_venue
+            primary_venue = await get_user_primary_venue(current_user)
+            
+            # Get workspace information if venue exists
+            workspace_data = None
+            if primary_venue and primary_venue.get('workspace_id'):
+                workspace_id = primary_venue['workspace_id']
+                try:
+                    from app.database.repository_manager import get_workspace_repo
+                    workspace_repo = get_workspace_repo()
+                    workspace_data = await workspace_repo.get_by_id(workspace_id)
+                except Exception as e:
+                    logger.warning(f"Could not fetch workspace data: {e}")
+                    workspace_data = None
+            
+            # Prepare simplified response data
+            response_data = {
+                'user': {
+                    'id': current_user['id'],
+                    'email': current_user['email'],
+                    'first_name': current_user['first_name'],
+                    'last_name': current_user['last_name'],
+                    'phone': current_user.get('phone', ''),
+                    'role': user_role,
+                    'is_active': current_user.get('is_active', True),
+                    'created_at': current_user.get('created_at'),
+                    'updated_at': current_user.get('updated_at')
+                },
+                'venue': primary_venue,  # Can be None
+                'workspace': workspace_data  # Can be None
+            }
+            
+            logger.info(f"User data retrieved successfully for user: {user_id}, venue: {primary_venue['id'] if primary_venue else 'None'}")
+            return response_data
+            
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error(f"Error getting user data: {e}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to retrieve user data"
+            )
+
+
+@router.get("/me/data", summary="Get user data")
+async def get_user_data(current_user: Dict[str, Any] = Depends(get_current_user)):
+    """
+    Get user data with venue and workspace information
+    Returns the structure: {data: {user, venue, workspace}, timestamp}
+    """
+    try:
+        user_data = await UserDataService.get_user_data(current_user)
+        
+        return {
+            "data": user_data,
+            "timestamp": datetime.utcnow().isoformat()
+        }
+        
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error changing password: {e}")
+        logger.error(f"Error in get_user_data endpoint: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to change password"
+            detail="Failed to retrieve user data"
         )
 
 
-@router.post("/deactivate", 
-             response_model=ApiResponseDTO,
-             summary="Deactivate account",
-             description="Deactivate current user account")
-async def deactivate_account(
-    current_user: Dict[str, Any] = Depends(get_current_user)
-):
-    """Deactivate user account"""
+@router.post("/me/refresh-data", summary="Refresh user data")
+async def refresh_user_data(current_user: Dict[str, Any] = Depends(get_current_user)):
+    """
+    Refresh user data (same as get_user_data but with POST method for cache busting)
+    """
     try:
-        success = await get_auth_service().deactivate_user(current_user['id'])
+        user_data = await UserDataService.get_user_data(current_user)
         
-        if success:
-            logger.info(f"Account deactivated for user: {current_user['id']}")
-            return ApiResponseDTO(
-                success=True,
-                message="Account deactivated successfully"
-            )
-        else:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Failed to deactivate account"
-            )
-            
+        return {
+            "data": user_data,
+            "timestamp": datetime.utcnow().isoformat()
+        }
+        
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error deactivating account: {e}")
+        logger.error(f"Error in refresh_user_data endpoint: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to deactivate account"
+            detail="Failed to refresh user data"
         )
+
+
+# =============================================================================
+# USER PREFERENCES AND ADDRESS MANAGEMENT
+# =============================================================================
+
+class UserAddress(BaseModel):
+    """User address model"""
+    id: Optional[str] = None
+    address_line_1: str
+    address_line_2: Optional[str] = None
+    city: str
+    state: str
+    postal_code: str
+    country: str = "India"
+    is_default: bool = False
+
+
+class UserPreferences(BaseModel):
+    """User preferences model"""
+    language: str = "en"
+    timezone: str = "Asia/Kolkata"
+    currency: str = "INR"
+    notifications_enabled: bool = True
+    email_notifications: bool = True
+    sms_notifications: bool = False
+    theme: str = "light"
+
+
+@router.get("/me/addresses", 
+            response_model=List[UserAddress],
+            summary="Get user addresses",
+            description="Get all addresses for current user")
+async def get_user_addresses(current_user: Dict[str, Any] = Depends(get_current_user)):
+    """Get user addresses"""
+    try:
+        user_repo = get_user_repo()
+        
+        # Get user data
+        user = await user_repo.get_by_id(current_user['id'])
+        if not user:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="User not found"
+            )
+        
+        # Return addresses
+        addresses = user.get('addresses', [])
+        return [UserAddress(**addr) for addr in addresses]
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting user addresses: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to get addresses"
+        )
+
+
+@router.post("/me/addresses", 
+             response_model=ApiResponseDTO,
+             summary="Add user address",
+             description="Add new address for current user")
+async def add_user_address(
+    address: UserAddress,
+    current_user: Dict[str, Any] = Depends(get_current_user)
+):
+    """Add user address"""
+    try:
+        import uuid
+        user_repo = get_user_repo()
+        
+        # Get current addresses
+        user = await user_repo.get_by_id(current_user['id'])
+        addresses = user.get('addresses', [])
+        
+        # Add new address
+        new_address = address.dict()
+        new_address['id'] = str(uuid.uuid4())
+        
+        # If this is the first address or marked as default, make it default
+        if not addresses or address.is_default:
+            # Remove default from other addresses
+            for addr in addresses:
+                addr['is_default'] = False
+            new_address['is_default'] = True
+        
+        addresses.append(new_address)
+        
+        # Update user
+        await user_repo.update(current_user['id'], {'addresses': addresses})
+        
+        logger.info(f"Address added for user: {current_user['id']}")
+        return ApiResponseDTO(
+            success=True,
+            message="Address added successfully",
+            data=new_address
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error adding user address: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to add address"
+        )
+
+
+@router.put("/me/addresses/{address_id}", 
+            response_model=ApiResponseDTO,
+            summary="Update user address",
+            description="Update existing address")
+async def update_user_address(
+    address_id: str,
+    address: UserAddress,
+    current_user: Dict[str, Any] = Depends(get_current_user)
+):
+    """Update user address"""
+    try:
+        user_repo = get_user_repo()
+        
+        # Get current addresses
+        user = await user_repo.get_by_id(current_user['id'])
+        addresses = user.get('addresses', [])
+        
+        # Find and update address
+        address_found = False
+        for i, addr in enumerate(addresses):
+            if addr['id'] == address_id:
+                updated_address = address.dict()
+                updated_address['id'] = address_id
+                
+                # Handle default address logic
+                if address.is_default:
+                    # Remove default from other addresses
+                    for other_addr in addresses:
+                        if other_addr['id'] != address_id:
+                            other_addr['is_default'] = False
+                
+                addresses[i] = updated_address
+                address_found = True
+                break
+        
+        if not address_found:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Address not found"
+            )
+        
+        # Update user
+        await user_repo.update(current_user['id'], {'addresses': addresses})
+        
+        logger.info(f"Address updated for user: {current_user['id']}")
+        return ApiResponseDTO(
+            success=True,
+            message="Address updated successfully"
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error updating user address: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to update address"
+        )
+
+
+@router.delete("/me/addresses/{address_id}", 
+               response_model=ApiResponseDTO,
+               summary="Delete user address",
+               description="Delete user address")
+async def delete_user_address(
+    address_id: str,
+    current_user: Dict[str, Any] = Depends(get_current_user)
+):
+    """Delete user address"""
+    try:
+        user_repo = get_user_repo()
+        
+        # Get current addresses
+        user = await user_repo.get_by_id(current_user['id'])
+        addresses = user.get('addresses', [])
+        
+        # Find and remove address
+        addresses = [addr for addr in addresses if addr['id'] != address_id]
+        
+        # Update user
+        await user_repo.update(current_user['id'], {'addresses': addresses})
+        
+        logger.info(f"Address deleted for user: {current_user['id']}") 
+        return ApiResponseDTO(
+            success=True,
+            message="Address deleted successfully"
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error deleting user address: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to delete address"
+        )
+
+
+@router.get("/me/preferences", 
+            response_model=UserPreferences,
+            summary="Get user preferences",
+            description="Get user preferences and settings")
+async def get_user_preferences(current_user: Dict[str, Any] = Depends(get_current_user)):
+    """Get user preferences"""
+    try:
+        user_repo = get_user_repo()
+        
+        # Get user data
+        user = await user_repo.get_by_id(current_user['id'])
+        if not user:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="User not found"
+            )
+        
+        # Return preferences with defaults
+        preferences = user.get('preferences', {})
+        return UserPreferences(**preferences)
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting user preferences: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to get preferences"
+        )
+
+
+@router.put("/me/preferences", 
+            response_model=ApiResponseDTO,
+            summary="Update user preferences",
+            description="Update user preferences and settings")
+async def update_user_preferences(
+    preferences: UserPreferences,
+    current_user: Dict[str, Any] = Depends(get_current_user)
+):
+    """Update user preferences"""
+    try:
+        user_repo = get_user_repo()
+        
+        # Update user preferences
+        await user_repo.update(current_user['id'], {
+            'preferences': preferences.dict()
+        })
+        
+        logger.info(f"Preferences updated for user: {current_user['id']}")
+        return ApiResponseDTO(
+            success=True,
+            message="Preferences updated successfully"
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error updating user preferences: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to update preferences"
+        )
+
+
+@router.get("/me/statistics", 
+            response_model=Dict[str, Any],
+            summary="Get user statistics",
+            description="Get user statistics for workspace/venue")
+async def get_user_statistics(
+    workspace_id: Optional[str] = None,
+    venue_id: Optional[str] = None,
+    current_user: Dict[str, Any] = Depends(get_current_user)
+):
+    """Get user statistics"""
+    try:
+        user_repo = get_user_repo()
+        
+        # Build filters
+        filters = []
+        if workspace_id:
+            filters.append(('workspace_id', '==', workspace_id))
+        if venue_id:
+            filters.append(('venue_id', '==', venue_id))
+        
+        # Get users
+        users = await user_repo.query(filters) if filters else await user_repo.get_all()
+        
+        # Calculate statistics
+        total_users = len(users)
+        active_users = len([u for u in users if u.get('is_active', False)])
+        
+        # Count by role
+        users_by_role = {}
+        recent_logins = 0
+        
+        for user in users:
+            role = user.get('role', 'unknown')
+            users_by_role[role] = users_by_role.get(role, 0) + 1
+            
+            # Count recent logins (last 7 days)
+            last_login = user.get('last_login')
+            if last_login:
+                from datetime import timedelta
+                if isinstance(last_login, str):
+                    last_login = datetime.fromisoformat(last_login.replace('Z', '+00:00'))
+                if last_login > datetime.utcnow() - timedelta(days=7):
+                    recent_logins += 1
+        
+        return {
+            "total_users": total_users,
+            "active_users": active_users,
+            "users_by_role": users_by_role,
+            "recent_logins": recent_logins
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting user statistics: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to get user statistics"
+        )
+
+
+# =============================================================================
+# SECURITY ENDPOINTS
+# =============================================================================
+# Note: Password change endpoint is in auth.py (/auth/change-password)

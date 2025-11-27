@@ -1,121 +1,234 @@
 """
-Error Recovery Utilities
-Provides utilities for graceful error handling and recovery
+Centralized Error Handling
+Consistent error responses and logging across the application
 """
-from typing import Any, Dict, List, Optional, Callable
-from fastapi import HTTPException, status
-from app.core.logging_config import get_logger
+from typing import Dict, Any, Optional
+from fastapi import HTTPException, Request, status
+from fastapi.responses import JSONResponse
+from fastapi.exceptions import RequestValidationError
+from pydantic import ValidationError
+import traceback
+
+from app.core.logging import get_logger
+from app.models.requests import ErrorResponseDTO
 
 logger = get_logger(__name__)
 
 
-def safe_execute(func: Callable, *args, default_return=None, log_errors=True, **kwargs):
-    """
-    Safely execute a function with error handling
+class APIError(Exception):
+    """Custom API error with structured information"""
     
-    Args:
-        func: Function to execute
-        *args: Arguments for the function
-        default_return: Value to return if function fails
-        log_errors: Whether to log errors
-        **kwargs: Keyword arguments for the function
-    
-    Returns:
-        Function result or default_return if error occurs
-    """
-    try:
-        return func(*args, **kwargs)
-    except Exception as e:
-        if log_errors:
-            logger.error(f"Error executing {func.__name__}: {e}")
-        return default_return
+    def __init__(
+        self, 
+        message: str, 
+        status_code: int = 500, 
+        error_code: Optional[str] = None,
+        details: Optional[Dict[str, Any]] = None
+    ):
+        self.message = message
+        self.status_code = status_code
+        self.error_code = error_code
+        self.details = details or {}
+        super().__init__(message)
 
 
-async def safe_execute_async(func: Callable, *args, default_return=None, log_errors=True, **kwargs):
-    """
-    Safely execute an async function with error handling
+class ErrorHandler:
+    """Centralized error handling with consistent responses"""
     
-    Args:
-        func: Async function to execute
-        *args: Arguments for the function
-        default_return: Value to return if function fails
-        log_errors: Whether to log errors
-        **kwargs: Keyword arguments for the function
+    @staticmethod
+    def create_error_response(
+        error: str,
+        status_code: int = 500,
+        error_code: Optional[str] = None,
+        details: Optional[Dict[str, Any]] = None
+    ) -> ErrorResponseDTO:
+        """Create standardized error response"""
+        return ErrorResponseDTO(
+            success=False,
+            error=error,
+            error_code=error_code,
+            details=details
+        )
     
-    Returns:
-        Function result or default_return if error occurs
-    """
-    try:
-        return await func(*args, **kwargs)
-    except Exception as e:
-        if log_errors:
-            logger.error(f"Error executing {func.__name__}: {e}")
-        return default_return
-
-
-# Import from common utils to avoid duplication
-from app.core.common_utils import validate_required_fields, raise_validation_error
-
-
-def handle_firestore_operator_error(error: Exception) -> Exception:
-    """
-    Handle Firestore operator errors and provide helpful messages
-    
-    Args:
-        error: Original exception
-    
-    Returns:
-        Modified exception with helpful message
-    """
-    error_msg = str(error).lower()
-    
-    if "operator string" in error_msg and "invalid" in error_msg:
-        # Extract operator information if possible
-        if "array-contains-any" in error_msg:
-            return Exception("Invalid Firestore operator: Use 'array_contains_any' instead of 'array-contains-any'")
-        elif "array-contains" in error_msg:
-            return Exception("Invalid Firestore operator: Use 'array_contains' instead of 'array-contains'")
+    @staticmethod
+    def log_error(
+        error: Exception,
+        request: Optional[Request] = None,
+        user_id: Optional[str] = None,
+        additional_context: Optional[Dict[str, Any]] = None
+    ) -> None:
+        """Log error with context"""
+        context = {
+            "error_type": type(error).__name__,
+            "error_message": str(error),
+        }
+        
+        if request:
+            context.update({
+                "method": request.method,
+                "url": str(request.url),
+                "headers": dict(request.headers),
+            })
+        
+        if user_id:
+            context["user_id"] = user_id
+        
+        if additional_context:
+            context.update(additional_context)
+        
+        if isinstance(error, (HTTPException, APIError)):
+            logger.warning("API Error occurred", extra=context)
         else:
-            return Exception(f"Invalid Firestore operator. Check your query filters. Original error: {error}")
-    
-    return error
+            logger.error("Unexpected error occurred", extra=context, exc_info=True)
 
 
-class ErrorRecoveryMixin:
-    """
-    Mixin class to add error recovery capabilities to endpoints
-    """
+# Global error handler instance
+error_handler = ErrorHandler()
+
+
+# Exception handlers for FastAPI
+async def http_exception_handler(request: Request, exc: HTTPException) -> JSONResponse:
+    """Handle HTTP exceptions"""
+    error_handler.log_error(exc, request)
     
-    async def safe_get_items(self, repo, filters=None, default_return=None):
-        """
-        Safely get items from repository with error recovery
-        """
-        try:
-            if filters:
-                return await repo.query(filters)
-            else:
-                return await repo.get_all()
-        except Exception as e:
-            logger.error(f"Error getting items from {repo.collection_name}: {e}")
-            return default_return or []
+    error_response = error_handler.create_error_response(
+        error=exc.detail,
+        status_code=exc.status_code,
+        error_code=f"HTTP_{exc.status_code}"
+    )
     
-    async def safe_get_by_id(self, repo, item_id, default_return=None):
-        """
-        Safely get item by ID with error recovery
-        """
-        try:
-            return await repo.get_by_id(item_id)
-        except Exception as e:
-            logger.error(f"Error getting item {item_id} from {repo.collection_name}: {e}")
-            return default_return
+    return JSONResponse(
+        status_code=exc.status_code,
+        content=error_response.model_dump(mode='json')
+    )
+
+
+async def validation_exception_handler(request: Request, exc: RequestValidationError) -> JSONResponse:
+    """Handle validation errors"""
+    error_handler.log_error(exc, request)
     
-    def safe_create_dto(self, dto_class, data, log_prefix=""):
-        """
-        Safely create DTO object with error recovery
-        """
-        try:
-            return dto_class(**data)
-        except Exception as e:
-            logger.error(f"{log_prefix}Error creating DTO {dto_class.__name__}: {e}")
-            logger.error(f"{log_prefix}Data: {data}")
-            return None
+    # Extract validation error details
+    error_details = []
+    for error in exc.errors():
+        error_details.append({
+            "field": " -> ".join(str(loc) for loc in error["loc"]),
+            "message": error["msg"],
+            "type": error["type"]
+        })
+    
+    error_response = error_handler.create_error_response(
+        error="Validation failed",
+        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        error_code="VALIDATION_ERROR",
+        details={"validation_errors": error_details}
+    )
+    
+    return JSONResponse(
+        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        content=error_response.model_dump(mode='json')
+    )
+
+
+async def api_exception_handler(request: Request, exc: APIError) -> JSONResponse:
+    """Handle custom API exceptions"""
+    error_handler.log_error(exc, request)
+    
+    error_response = error_handler.create_error_response(
+        error=exc.message,
+        status_code=exc.status_code,
+        error_code=exc.error_code,
+        details=exc.details
+    )
+    
+    return JSONResponse(
+        status_code=exc.status_code,
+        content=error_response.model_dump(mode='json')
+    )
+
+
+async def general_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+    """Handle unexpected exceptions"""
+    error_handler.log_error(exc, request)
+    
+    # Don't expose internal error details in production
+    error_message = "Internal server error"
+    error_details = None
+    
+    # In development, provide more details
+    if hasattr(request.app.state, 'debug') and request.app.state.debug:
+        error_message = str(exc)
+        error_details = {
+            "traceback": traceback.format_exc(),
+            "type": type(exc).__name__
+        }
+    
+    error_response = error_handler.create_error_response(
+        error=error_message,
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        error_code="INTERNAL_ERROR",
+        details=error_details
+    )
+    
+    return JSONResponse(
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        content=error_response.model_dump(mode='json')
+    )
+
+
+# Common error responses
+class CommonErrors:
+    """Common error responses for reuse"""
+    
+    @staticmethod
+    def not_found(resource: str = "Resource") -> APIError:
+        return APIError(
+            message=f"{resource} not found",
+            status_code=status.HTTP_404_NOT_FOUND,
+            error_code="NOT_FOUND"
+        )
+    
+    @staticmethod
+    def unauthorized() -> APIError:
+        return APIError(
+            message="Authentication required",
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            error_code="UNAUTHORIZED"
+        )
+    
+    @staticmethod
+    def forbidden(message: str = "Access denied") -> APIError:
+        return APIError(
+            message=message,
+            status_code=status.HTTP_403_FORBIDDEN,
+            error_code="FORBIDDEN"
+        )
+    
+    @staticmethod
+    def bad_request(message: str = "Bad request") -> APIError:
+        return APIError(
+            message=message,
+            status_code=status.HTTP_400_BAD_REQUEST,
+            error_code="BAD_REQUEST"
+        )
+    
+    @staticmethod
+    def conflict(message: str = "Resource already exists") -> APIError:
+        return APIError(
+            message=message,
+            status_code=status.HTTP_409_CONFLICT,
+            error_code="CONFLICT"
+        )
+    
+    @staticmethod
+    def validation_error(message: str = "Validation failed", details: Optional[Dict] = None) -> APIError:
+        return APIError(
+            message=message,
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            error_code="VALIDATION_ERROR",
+            details=details
+        )
+
+
+def get_error_handler() -> ErrorHandler:
+    """Get error handler instance"""
+    return error_handler

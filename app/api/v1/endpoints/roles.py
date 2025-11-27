@@ -7,18 +7,18 @@ from fastapi import APIRouter, Depends, HTTPException, status, Query
 from fastapi.security import HTTPBearer
 from datetime import datetime
 
-from app.models.schemas import UserRole as UserRoleEnum
-from app.models.dto import (
+from app.models.entities import UserRole as UserRoleEnum
+from app.models.requests import (
     ApiResponseDTO as ApiResponse, PaginatedResponseDTO as PaginatedResponse,
     RoleCreateDTO, RoleUpdateDTO, RoleResponseDTO, RoleFiltersDTO,
     RolePermissionMappingDTO, RoleAssignmentDTO, RoleStatisticsDTO,
     BulkPermissionAssignmentDTO, NameAvailabilityDTO
 )
 # Removed base endpoint dependency
-from app.database.firestore import get_firestore_client
-from app.services.role_permission_service import role_permission_service
+from app.database.repository_manager import get_role_repo, get_permission_repo
+from app.services.authorization import role_permission_service
 from app.core.security import get_current_user, get_current_admin_user
-from app.core.logging_config import get_logger
+from app.core.logging import get_logger
 
 logger = get_logger(__name__)
 router = APIRouter()
@@ -27,179 +27,21 @@ security = HTTPBearer()
 # Schemas are now imported from centralized locations
 
 # =============================================================================
-# ROLE REPOSITORY
+# ROLE REPOSITORY - Using centralized repository
 # =============================================================================
 
-class RoleRepository:
-    """Repository for role operations"""
-    
-    def __init__(self):
-        self.db = get_firestore_client()
-        self.collection = "roles"
-    
-    async def create(self, role_data: Dict[str, Any]) -> str:
-        """Create a new role"""
-        role_data['created_at'] = datetime.utcnow()
-        role_data['updated_at'] = datetime.utcnow()
-        
-        doc_ref = self.db.collection(self.collection).document()
-        role_data['id'] = doc_ref.id
-        
-        doc_ref.set(role_data)
-        logger.info(f"Role created: {role_data['name']} ({doc_ref.id})")
-        return doc_ref.id
-    
-    async def get_by_id(self, role_id: str) -> Optional[Dict[str, Any]]:
-        """Get role by ID"""
-        doc = self.db.collection(self.collection).document(role_id).get()
-        if doc.exists:
-            return doc.to_dict()
-        return None
-    
-    async def get_by_name(self, name: str) -> Optional[Dict[str, Any]]:
-        """Get role by name"""
-        query = self.db.collection(self.collection).where("name", "==", name)
-        
-        docs = list(query.limit(1).stream())
-        if docs:
-            return docs[0].to_dict()
-        return None
-    
-    async def list_roles(self, 
-                        filters: Optional[Dict[str, Any]] = None,
-                        page: int = 1,
-                        page_size: int = 10) -> tuple[List[Dict[str, Any]], int]:
-        """List roles with pagination and filtering"""
-        query = self.db.collection(self.collection)
-        
-        # Apply filters
-        if filters:
-            for field, value in filters.items():
-                if value is not None and field != 'search':
-                    query = query.where(field, "==", value)
-        
-        # Get total count
-        total_docs = list(query.stream())  # Use stream() instead of get()
-        total = len(total_docs)
-        
-        # Apply pagination
-        offset = (page - 1) * page_size
-        query = query.offset(offset).limit(page_size)
-        
-        docs = list(query.stream())  # Use stream() instead of get()
-        roles = [doc.to_dict() for doc in docs]
-        
-        # Apply search filter (client-side for Firestore)
-        if filters and filters.get('search'):
-            search_term = filters['search'].lower()
-            roles = [
-                role for role in roles
-                if search_term in role.get('name', '').lower() or
-                   search_term in role.get('description', '').lower()
-            ]
-        
-        return roles, total
-    
-    async def update(self, role_id: str, update_data: Dict[str, Any]) -> bool:
-        """Update role"""
-        update_data['updated_at'] = datetime.utcnow()
-        
-        doc_ref = self.db.collection(self.collection).document(role_id)
-        doc_ref.update(update_data)  # Remove await
-        
-        logger.info(f"Role updated: {role_id}")
-        return True
-    
-    async def delete(self, role_id: str) -> bool:
-        """Delete role (hard delete)"""
-        self.db.collection(self.collection).document(role_id).delete()
-        logger.info(f"Role deleted: {role_id}")
-        return True
-    
-    async def hard_delete(self, role_id: str) -> bool:
-        """Hard delete role"""
-        self.db.collection(self.collection).document(role_id).delete()  # Remove await
-        logger.info(f"Role hard deleted: {role_id}")
-        return True
-    
-    async def get_role_permissions(self, role_id: str) -> List[Dict[str, Any]]:
-        """Get permissions for a role"""
-        role = await self.get_by_id(role_id)
-        if not role:
-            return []
-        
-        permission_ids = role.get('permission_ids', [])
-        if not permission_ids:
-            return []
-        
-        # Get permissions from permissions collection
-        permissions = []
-        for perm_id in permission_ids:
-            perm_doc = self.db.collection("permissions").document(perm_id).get()  # Remove await
-            if perm_doc.exists:
-                permissions.append(perm_doc.to_dict())
-        
-        return permissions
-    
-    async def assign_permissions(self, role_id: str, permission_ids: List[str]) -> bool:
-        """Assign permissions to role"""
-        return await self.update(role_id, {"permission_ids": permission_ids})
-    
-    async def add_permissions(self, role_id: str, permission_ids: List[str]) -> bool:
-        """Add permissions to role"""
-        role = await self.get_by_id(role_id)
-        if not role:
-            return False
-        
-        current_permissions = set(role.get('permission_ids', []))
-        new_permissions = current_permissions.union(set(permission_ids))
-        
-        return await self.update(role_id, {"permission_ids": list(new_permissions)})
-    
-    async def remove_permissions(self, role_id: str, permission_ids: List[str]) -> bool:
-        """Remove permissions from role"""
-        role = await self.get_by_id(role_id)
-        if not role:
-            return False
-        
-        current_permissions = set(role.get('permission_ids', []))
-        remaining_permissions = current_permissions - set(permission_ids)
-        
-        return await self.update(role_id, {"permission_ids": list(remaining_permissions)})
-    
-    async def get_users_with_role(self, role_id: str) -> List[Dict[str, Any]]:
-        """Get users with specific role"""
-        users_query = self.db.collection("users").where("role_id", "==", role_id)
-        users_docs = list(users_query.stream())  # Use stream() instead of get()
-        return [doc.to_dict() for doc in users_docs]
-    
-    async def get_role_statistics(self) -> Dict[str, Any]:
-        """Get role statistics"""
-        query = self.db.collection(self.collection)
-        
-        roles = list(query.stream())  # Use stream() instead of get()
-        roles_data = [doc.to_dict() for doc in roles]
-        
-        stats = {
-            "total_roles": len(roles_data),
-            "users_by_role": {}
-        }
-        
-        # Count users by role
-        for role in roles_data:
-            users = await self.get_users_with_role(role['id'])
-            stats["users_by_role"][role['name']] = len(users)
-        
-        return stats
-
-# Initialize repository
-role_repo = RoleRepository()
+# Get role repository instance
+role_repo = get_role_repo()
 
 # =============================================================================
 # ROLE ENDPOINTS
 # =============================================================================
 
-@router.get("/", 
+@router.get("", 
+            response_model=PaginatedResponse,
+            summary="Get roles",
+            description="Get paginated list of roles with filtering")
+@router.get("", 
             response_model=PaginatedResponse,
             summary="Get roles",
             description="Get paginated list of roles with filtering")
@@ -252,8 +94,12 @@ async def get_roles(
             detail="Failed to get roles"
         )
 
-
-@router.post("/", 
+@router.post("", 
+             response_model=ApiResponse,
+             status_code=status.HTTP_201_CREATED,
+             summary="Create role",
+             description="Create a new role with permissions (NO AUTH - TESTING ONLY)")
+@router.post("", 
              response_model=ApiResponse,
              status_code=status.HTTP_201_CREATED,
              summary="Create role",
@@ -745,10 +591,7 @@ async def check_role_name_availability(
             detail="Failed to check role name availability"
         )
 
-def get_permission_repo():
-    """Get permission repository instance"""
-    from app.api.v1.endpoints.permissions import PermissionRepository
-    return PermissionRepository()
+
 
 # =============================================================================
 # SIMPLIFIED ROLE-PERMISSION ASSIGNMENT (NO AUTH)

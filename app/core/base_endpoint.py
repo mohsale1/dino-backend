@@ -1,39 +1,20 @@
 """
-
 Base Endpoint Classes for Standardized CRUD Operations
-
 Provides common patterns for API endpoints with authentication, validation, and workspace isolation
-
 """
-
 from typing import TypeVar, Generic, List, Dict, Any, Optional, Type
-
 from fastapi import HTTPException, status
-
 from pydantic import BaseModel
-
 from abc import ABC, abstractmethod
 
-
-
-from app.core.logging_config import get_logger
-
-
+from app.core.logging import get_logger
 
 logger = get_logger(__name__)
 
-
-
 # Type variables for generic classes
-
 ModelType = TypeVar('ModelType', bound=BaseModel)
-
 CreateSchemaType = TypeVar('CreateSchemaType', bound=BaseModel)
-
 UpdateSchemaType = TypeVar('UpdateSchemaType', bound=BaseModel)
-
-
-
 
 
 class BaseEndpoint(Generic[ModelType, CreateSchemaType, UpdateSchemaType], ABC):
@@ -132,8 +113,8 @@ class BaseEndpoint(Generic[ModelType, CreateSchemaType, UpdateSchemaType], ABC):
             
             logger.info(f"{self.collection_name.title()} created: {created_item.get('id')}")
             
-            from app.core.common_utils import create_success_response
-            return create_success_response(
+            from app.core.response_builder import response_builder
+            return response_builder.success(
                 f"{self.collection_name.title()} created successfully",
                 created_item
             )
@@ -202,8 +183,8 @@ class BaseEndpoint(Generic[ModelType, CreateSchemaType, UpdateSchemaType], ABC):
             
             logger.info(f"{self.collection_name.title()} updated: {item_id}")
             
-            from app.core.common_utils import create_success_response
-            return create_success_response(
+            from app.core.response_builder import response_builder
+            return response_builder.updated(
                 f"{self.collection_name.title()} updated successfully",
                 updated_item
             )
@@ -247,8 +228,8 @@ class BaseEndpoint(Generic[ModelType, CreateSchemaType, UpdateSchemaType], ABC):
             
             logger.info(f"{self.collection_name.title()} {'deactivated' if soft_delete else 'deleted'}: {item_id}")
             
-            from app.core.common_utils import create_success_response
-            return create_success_response(message)
+            from app.core.response_builder import response_builder
+            return response_builder.deleted(message)
             
         except HTTPException:
             raise
@@ -277,12 +258,13 @@ class BaseEndpoint(Generic[ModelType, CreateSchemaType, UpdateSchemaType], ABC):
             
             # Apply text search if provided
             if search:
-                search_lower = search.lower()
-                # Basic text search - override in subclasses for more sophisticated search
-                all_items = [
-                    item for item in all_items
-                    if any(search_lower in str(value).lower() for value in item.values() if isinstance(value, str))
-                ]
+                from app.core.query_builder import query_builder
+                # Use centralized search filter
+                all_items = query_builder.apply_search_filter(
+                    all_items, 
+                    search, 
+                    [k for k in (all_items[0].keys() if all_items else []) if isinstance(all_items[0].get(k), str)]
+                )
             
             # Filter items based on user permissions
             filtered_items = await self._filter_items_for_user(all_items, current_user)
@@ -301,7 +283,7 @@ class BaseEndpoint(Generic[ModelType, CreateSchemaType, UpdateSchemaType], ABC):
             has_next = page < total_pages
             has_prev = page > 1
             
-            from app.models.dto import PaginatedResponse
+            from app.models.requests import PaginatedResponse
             return PaginatedResponse(
                 success=True,
                 data=items,
@@ -324,181 +306,92 @@ class BaseEndpoint(Generic[ModelType, CreateSchemaType, UpdateSchemaType], ABC):
 
 
 class WorkspaceIsolatedEndpoint(BaseEndpoint[ModelType, CreateSchemaType, UpdateSchemaType]):
-
-  """
-
-  Endpoint class with workspace isolation
-
-  Ensures users can only access items within their workspace
-
-  """
-
-   
-
-  async def _validate_access_permissions(self, 
-
-                     item: Dict[str, Any], 
-
-                     current_user: Optional[Dict[str, Any]]):
-
-    """Validate workspace access permissions"""
-
-    # Call parent validation first
-
-    await super()._validate_access_permissions(item, current_user)
-
-     
-
-    if not current_user:
-
-      return
-
-     
-
-    # Get user role from role_id
-
-    from app.core.security import _get_user_role
-
-    try:
-
-      user_role = await _get_user_role(current_user)
-
-    except:
-
-      user_role = current_user.get('role', 'operator')
-
-     
-
-    # Admin users can access all items
-
-    if user_role in ['admin', 'superadmin']:
-
-      return
-
-     
-
-    # Check workspace isolation
-
-    item_workspace_id = item.get('workspace_id')
-
-    user_workspace_id = current_user.get('workspace_id')
-
-     
-
-    if item_workspace_id and user_workspace_id != item_workspace_id:
-
-      raise HTTPException(
-
-        status_code=status.HTTP_403_FORBIDDEN,
-
-        detail="Access denied: Item not in your workspace"
-
-      )
-
-   
-
-  async def _filter_items_for_user(self, 
-
-                  items: List[Dict[str, Any]], 
-
-                  current_user: Optional[Dict[str, Any]]) -> List[Dict[str, Any]]:
-
-    """Filter items based on workspace isolation"""
-
-    if not current_user:
-
-      return []
-
-     
-
-    # Get user role from role_id
-
-    from app.core.security import _get_user_role
-
-    try:
-
-      user_role = await _get_user_role(current_user)
-
-    except:
-
-      user_role = current_user.get('role', 'operator')
-
-     
-
-    # Admin users see all items
-
-    if user_role in ['admin', 'superadmin']:
-
-      return items
-
-     
-
-    # Filter by workspace
-
-    user_workspace_id = current_user.get('workspace_id')
-
-    if user_workspace_id:
-
-      return [item for item in items if item.get('workspace_id') == user_workspace_id]
-
-     
-
-    return []
-
-   
-
-  async def _build_query_filters(self, 
-
-                 filters: Optional[Dict[str, Any]], 
-
-                 search: Optional[str],
-
-                 current_user: Optional[Dict[str, Any]]) -> List[tuple]:
-
-    """Build query filters with workspace isolation"""
-
-    query_filters = []
-
-     
-
-    # Add workspace filter for non-admin users
-
-    if current_user:
-
-      # Get user role from role_id
-
-      from app.core.security import _get_user_role
-
-      try:
-
-        user_role = await _get_user_role(current_user)
-
-      except:
-
-        user_role = current_user.get('role', 'operator')
-
-       
-
-      if user_role not in ['admin', 'superadmin']:
-
-        workspace_id = current_user.get('workspace_id')
-
-        if workspace_id:
-
-          query_filters.append(('workspace_id', '==', workspace_id))
-
-     
-
-    # Add additional filters
-
-    if filters:
-
-      for field, value in filters.items():
-
-        if value is not None:
-
-          query_filters.append((field, '==', value))
-
-     
-
-    return query_filters
+    """
+    Endpoint class with workspace isolation
+    Ensures users can only access items within their workspace
+    """
+    
+    async def _validate_access_permissions(self, 
+                                         item: Dict[str, Any], 
+                                         current_user: Optional[Dict[str, Any]]):
+        """Validate workspace access permissions"""
+        # Call parent validation first
+        await super()._validate_access_permissions(item, current_user)
+        
+        if not current_user:
+            return
+        
+        # Get user role from role_id
+        from app.core.security import _get_user_role
+        try:
+            user_role = await _get_user_role(current_user)
+        except:
+            user_role = current_user.get('role', 'operator')
+        
+        # Admin users can access all items
+        if user_role in ['admin', 'superadmin']:
+            return
+        
+        # Check workspace isolation
+        item_workspace_id = item.get('workspace_id')
+        user_workspace_id = current_user.get('workspace_id')
+        
+        if item_workspace_id and user_workspace_id != item_workspace_id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Access denied: Item not in your workspace"
+            )
+    
+    async def _filter_items_for_user(self, 
+                                   items: List[Dict[str, Any]], 
+                                   current_user: Optional[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Filter items based on workspace isolation"""
+        if not current_user:
+            return []
+        
+        # Get user role from role_id
+        from app.core.security import _get_user_role
+        try:
+            user_role = await _get_user_role(current_user)
+        except:
+            user_role = current_user.get('role', 'operator')
+        
+        # Admin users see all items
+        if user_role in ['admin', 'superadmin']:
+            return items
+        
+        # Filter by workspace
+        user_workspace_id = current_user.get('workspace_id')
+        if user_workspace_id:
+            return [item for item in items if item.get('workspace_id') == user_workspace_id]
+        
+        return []
+    
+    async def _build_query_filters(self, 
+                                 filters: Optional[Dict[str, Any]], 
+                                 search: Optional[str],
+                                 current_user: Optional[Dict[str, Any]]) -> List[tuple]:
+        """Build query filters with workspace isolation"""
+        query_filters = []
+        
+        # Add workspace filter for non-admin users
+        if current_user:
+            # Get user role from role_id
+            from app.core.security import _get_user_role
+            try:
+                user_role = await _get_user_role(current_user)
+            except:
+                user_role = current_user.get('role', 'operator')
+            
+            if user_role not in ['admin', 'superadmin']:
+                workspace_id = current_user.get('workspace_id')
+                if workspace_id:
+                    query_filters.append(('workspace_id', '==', workspace_id))
+        
+        # Add additional filters
+        if filters:
+            for field, value in filters.items():
+                if value is not None:
+                    query_filters.append((field, '==', value))
+        
+        return query_filters

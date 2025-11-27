@@ -9,8 +9,8 @@ from datetime import datetime, timezone
 import logging
 
 from app.core.config import get_firestore_client
-from app.core.logging_config import EnhancedLoggerMixin, log_function_call
-from app.core.logging_middleware import db_logger
+from app.core.logging import EnhancedLoggerMixin, log_function_call
+from app.core.logging import db_logger
 import time
 
 logger = logging.getLogger(__name__)
@@ -109,7 +109,7 @@ class FirestoreRepository(EnhancedLoggerMixin):
             
             # Log to database logger (conditional)
             try:
-                from app.core.feature_manager import get_feature_manager
+                from app.core.features import get_feature_manager
                 feature_manager = get_feature_manager()
                 if feature_manager and feature_manager.is_database_logging_enabled():
                     db_logger.log_query(
@@ -176,7 +176,7 @@ class FirestoreRepository(EnhancedLoggerMixin):
                 
                 # Log to database logger (conditional)
                 try:
-                    from app.core.feature_manager import get_feature_manager
+                    from app.core.features import get_feature_manager
                     feature_manager = get_feature_manager()
                     if feature_manager and feature_manager.is_database_logging_enabled():
                         db_logger.log_query(

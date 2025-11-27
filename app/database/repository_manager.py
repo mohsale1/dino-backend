@@ -7,11 +7,19 @@ from functools import lru_cache
 import asyncio
 from datetime import datetime, timedelta
 
-from app.core.logging_config import get_logger
-from app.database.firestore import (
-    FirestoreRepository, UserRepository, VenueRepository, WorkspaceRepository,
+from app.core.logging import get_logger
+
+# Import new repository architecture
+from app.repositories import (
+    WorkspaceRepository, UserRepository, VenueRepository,
     RoleRepository, PermissionRepository, MenuItemRepository, MenuCategoryRepository,
-    TableRepository, OrderRepository, CustomerRepository
+    TableRepository, TableAreaRepository, OrderRepository, CustomerRepository,
+    TransactionRepository, NotificationRepository, ReviewRepository,
+    get_workspace_repository, get_user_repository, get_venue_repository,
+    get_role_repository, get_permission_repository, get_menu_item_repository, 
+    get_menu_category_repository, get_table_repository, get_table_area_repository, 
+    get_order_repository, get_customer_repository, get_transaction_repository, 
+    get_notification_repository, get_review_repository
 )
 
 logger = get_logger(__name__)
@@ -58,16 +66,20 @@ class RepositoryManager:
         """Get repository instance with caching"""
         if repo_type not in self._repositories:
             repo_classes = {
+                'workspace': WorkspaceRepository,
                 'user': UserRepository,
                 'venue': VenueRepository,
-                'workspace': WorkspaceRepository,
                 'role': RoleRepository,
                 'permission': PermissionRepository,
                 'menu_item': MenuItemRepository,
                 'menu_category': MenuCategoryRepository,
                 'table': TableRepository,
+                'table_area': TableAreaRepository,
                 'order': OrderRepository,
-                'customer': CustomerRepository
+                'customer': CustomerRepository,
+                'transaction': TransactionRepository,
+                'notification': NotificationRepository,
+                'review': ReviewRepository,
             }
             
             if repo_type in repo_classes:
@@ -190,35 +202,67 @@ repo_manager = RepositoryManager()
 
 
 # Convenience functions for backward compatibility
+def get_workspace_repo() -> WorkspaceRepository:
+    """Get workspace repository instance"""
+    return get_workspace_repository()
+
 def get_user_repo() -> UserRepository:
-    return repo_manager.get_repository('user')
+    """Get user repository instance"""
+    return get_user_repository()
 
 def get_venue_repo() -> VenueRepository:
-    return repo_manager.get_repository('venue')
-
-def get_workspace_repo() -> WorkspaceRepository:
-    return repo_manager.get_repository('workspace')
+    """Get venue repository instance"""
+    return get_venue_repository()
 
 def get_role_repo() -> RoleRepository:
-    return repo_manager.get_repository('role')
+    """Get role repository instance"""
+    return get_role_repository()
 
 def get_permission_repo() -> PermissionRepository:
-    return repo_manager.get_repository('permission')
+    """Get permission repository instance"""
+    return get_permission_repository()
 
 def get_menu_item_repo() -> MenuItemRepository:
-    return repo_manager.get_repository('menu_item')
+    """Get menu item repository instance"""
+    return get_menu_item_repository()
 
 def get_menu_category_repo() -> MenuCategoryRepository:
-    return repo_manager.get_repository('menu_category')
+    """Get menu category repository instance"""
+    return get_menu_category_repository()
 
 def get_table_repo() -> TableRepository:
-    return repo_manager.get_repository('table')
+    """Get table repository instance"""
+    return get_table_repository()
+
+def get_table_area_repo() -> TableAreaRepository:
+    """Get table area repository instance"""
+    return get_table_area_repository()
 
 def get_order_repo() -> OrderRepository:
-    return repo_manager.get_repository('order')
+    """Get order repository instance"""
+    return get_order_repository()
 
 def get_customer_repo() -> CustomerRepository:
-    return repo_manager.get_repository('customer')
+    """Get customer repository instance"""
+    return get_customer_repository()
+
+def get_transaction_repo() -> TransactionRepository:
+    """Get transaction repository instance"""
+    return get_transaction_repository()
+
+def get_notification_repo() -> NotificationRepository:
+    """Get notification repository instance"""
+    return get_notification_repository()
+
+def get_review_repo() -> ReviewRepository:
+    """Get review repository instance"""
+    return get_review_repository()
+
+def get_coupon_repo():
+    """Get coupon repository instance"""
+    from app.repositories.coupon import CouponRepository
+    return CouponRepository()
 
 def get_repository_manager() -> RepositoryManager:
+    """Get repository manager instance"""
     return repo_manager

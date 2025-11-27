@@ -5,10 +5,10 @@ from fastapi import APIRouter, HTTPException, status, Depends
 from typing import Dict, Any
 from datetime import datetime
 
-from app.models.dto import ApiResponseDTO
+from app.models.requests import ApiResponseDTO
 from app.core.security import get_current_user, get_current_user_id
-from app.core.logging_config import get_logger
-from app.database.firestore import get_user_repo
+from app.core.logging import get_logger
+from app.database.repository_manager import get_user_repo
 
 logger = get_logger(__name__)
 router = APIRouter()
