@@ -1,3 +1,4 @@
+
 """
 Venue Models
 Database entities and DTOs for venue management
@@ -7,7 +8,7 @@ from typing import Optional, List, Dict
 from datetime import datetime
 
 from app.models.base import BaseSchema, BaseDTO, TimestampMixin, VenueLocation
-from app.models.enums import PriceRange, SubscriptionPlan, SubscriptionStatus, VenueStatus
+from app.models.enums import PriceRange, SubscriptionPlan, SubscriptionStatus, VenueStatus, VenueType
 
 
 # =============================================================================
@@ -25,6 +26,7 @@ class Venue(BaseSchema, TimestampMixin):
     website: Optional[str] = None
     logo_url: Optional[str] = None
     workspace_id: str = Field(..., description="Workspace this venue belongs to")
+    venue_type: Optional[VenueType] = Field(default=VenueType.RESTAURANT, description="Type of venue")
     price_range: PriceRange
     subscription_plan: SubscriptionPlan = SubscriptionPlan.BASIC
     subscription_status: SubscriptionStatus = SubscriptionStatus.ACTIVE
@@ -64,11 +66,13 @@ class VenueCreateDTO(BaseDTO):
     phone: str = Field(..., pattern="^[0-9]{10}$")
     email: Optional[EmailStr] = None
     workspace_id: str = Field(..., description="Workspace this venue belongs to")
+    venue_type: Optional[VenueType] = Field(default=VenueType.RESTAURANT, description="Type of venue")
     price_range: PriceRange
     subscription_plan: SubscriptionPlan = SubscriptionPlan.BASIC
     subscription_status: SubscriptionStatus = SubscriptionStatus.ACTIVE
     admin_id: Optional[str] = None
     logo_url: Optional[str] = None
+    is_open: bool = Field(default=True, description="Whether venue is open for orders")
 
 
 class VenueUpdateDTO(BaseDTO):
@@ -78,11 +82,13 @@ class VenueUpdateDTO(BaseDTO):
     phone: Optional[str] = Field(None, pattern="^[0-9]{10}$")
     email: Optional[EmailStr] = None
     logo_url: Optional[str] = None
+    venue_type: Optional[VenueType] = None
     price_range: Optional[PriceRange] = None
     subscription_plan: Optional[SubscriptionPlan] = None
     subscription_status: Optional[SubscriptionStatus] = None
     status: Optional[VenueStatus] = None
     is_active: Optional[bool] = None
+    is_open: Optional[bool] = None
 
 
 class VenueResponseDTO(BaseDTO):
@@ -95,6 +101,7 @@ class VenueResponseDTO(BaseDTO):
     email: Optional[EmailStr] = None
     workspace_id: str = Field(..., description="Workspace this venue belongs to")
     logo_url: Optional[str] = None
+    venue_type: Optional[VenueType] = Field(default=VenueType.RESTAURANT, description="Type of venue")
     price_range: PriceRange
     subscription_plan: SubscriptionPlan
     subscription_status: SubscriptionStatus

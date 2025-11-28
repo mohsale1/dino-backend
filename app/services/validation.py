@@ -379,15 +379,28 @@ class ValidationService:
                     "venue_name": venue.get('name', 'Unknown Venue')
                 }
             
-            # 3. Check venue status
+            # 3. Check venue status and is_open
             venue_status = venue.get('status', VenueStatus.ACTIVE.value)
-            if venue_status not in [VenueStatus.ACTIVE.value]:
+            is_open = venue.get('is_open')
+            
+            # Check if venue status is operational
+            if venue_status not in [VenueStatus.ACTIVE.value, 'active', 'open']:
                 return False, {
                     "error": "Venue is not accepting orders",
                     "error_type": "venue_not_operational",
                     "message": "This venue is currently not accepting orders. Please try again later.",
                     "venue_name": venue.get('name', 'Unknown Venue'),
                     "venue_status": venue_status
+                }
+            
+            # Check if venue is explicitly closed (is_open = False)
+            if is_open is False:
+                return False, {
+                    "error": "Venue is not accepting orders",
+                    "error_type": "venue_closed",
+                    "message": "This venue is currently closed. Please try again later.",
+                    "venue_name": venue.get('name', 'Unknown Venue'),
+                    "is_open": is_open
                 }
             
             # 4. If table_id is provided, validate table exists and belongs to venue
@@ -528,14 +541,16 @@ class ValidationService:
             
             # Check if venue is active
             is_active = venue.get('is_active', False)
-            is_open = venue.get('is_open', False)
+            is_open = venue.get('is_open')  # Can be True, False, or None
             venue_status = venue.get('status', VenueStatus.ACTIVE.value)
             
-            # Venue is operational if it's active, open, and has active status
+            # Venue is operational if it's active
+            # Note: is_open is optional - if not explicitly set to False, we assume venue is open if active
+            # status field should be 'active' or match VenueStatus.ACTIVE
             is_operational = (
                 is_active and 
-                is_open and 
-                venue_status == VenueStatus.ACTIVE.value
+                (is_open is not False) and  # Only reject if explicitly False
+                venue_status in [VenueStatus.ACTIVE.value, 'active', 'open']
             )
             
             if not is_operational:

@@ -32,7 +32,7 @@ class UserRepository(BaseRepository):
     
     async def get_by_venue(self, venue_id: str) -> List[Dict[str, Any]]:
         """Get users assigned to a venue"""
-        return await self.query([('venue_ids', 'array-contains', venue_id)])
+        return await self.query([('venue_ids', 'array_contains', venue_id)])
     
     async def get_by_workspace(self, workspace_id: str) -> List[Dict[str, Any]]:
         """Get users in a workspace"""

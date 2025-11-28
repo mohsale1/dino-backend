@@ -54,6 +54,14 @@ class VenuesEndpoint(WorkspaceIsolatedEndpoint[Venue, VenueCreateDTO, VenueUpdat
         data['rating'] = 0.0
         data['total_reviews'] = 0
         
+        # Ensure is_open is set (default to True if not provided)
+        if 'is_open' not in data:
+            data['is_open'] = True
+        
+        # Set default theme to classic
+        if 'theme' not in data:
+            data['theme'] = 'classic'
+        
         return data
     
     async def _validate_create_permissions(self, data: Dict[str, Any], current_user: Optional[Dict[str, Any]]):
@@ -180,7 +188,7 @@ async def get_public_venues(
         filters = [('is_active', '==', True)]
         
         if cuisine_type:
-            filters.append(('cuisine_types', 'array-contains', cuisine_type))
+            filters.append(('cuisine_types', 'array_contains', cuisine_type))
         if price_range:
             filters.append(('price_range', '==', price_range))
         
@@ -281,8 +289,12 @@ async def get_venues_by_workspace(workspace_id: str, current_user: Dict[str, Any
                 'location': location_info,
                 'phone': venue.get('phone'),
                 'email': venue.get('email'),
+                'venue_type': venue.get('venue_type'),
+                'price_range': venue.get('price_range'),
+                'theme': venue.get('theme'),
+                'image_url': venue.get('image_url'),
                 'is_active': venue.get('is_active', False),
-                'is_open': venue.get('status', VenueStatus.ACTIVE),
+                'is_open': venue.get('is_open', False),
                 'created_at': venue.get('created_at', datetime.utcnow()),
                 'updated_at': venue.get('updated_at', datetime.utcnow())
             }
@@ -669,15 +681,30 @@ async def get_venue_users(venue_id: str, current_user: Dict[str, Any] = Depends(
             last_name = user.get('last_name', '')
             is_active = user.get('is_active', True)
             last_login = user.get('last_login')
+            email = user.get('email', '')
+            phone = user.get('phone', '')
+            workspace_id = user.get('workspace_id', '')
+            venue_id_val = user.get('venue_id', '')
             
             if last_login and hasattr(last_login, 'isoformat'):
                 last_login = last_login.isoformat()
             
+            # Determine status text
+            status = "Active" if is_active else "Inactive"
+            
             formatted_user = {
                 "id": user.get('id'),
                 "name": f"{first_name} {last_name}",
+                "first_name": first_name,
+                "last_name": last_name,
+                "email": email,
+                "phone": phone,
+                "role": role_name,
                 "role_display_name": role_display_name,
+                "status": status,
                 "is_active": is_active,
+                "workspace_id": workspace_id,
+                "venue_id": venue_id_val,
                 "created_at": user.get('created_at'),
                 "updated_at": user.get('updated_at'),
                 "role_id": role_id,

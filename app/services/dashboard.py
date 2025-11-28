@@ -228,6 +228,63 @@ class DashboardService:
             ]
             active_orders = [o for o in all_orders if o.get('status') in active_statuses]
             
+            # Order status breakdown
+            status_breakdown = {}
+            for status in OrderStatus:
+                count = len([o for o in all_orders if o.get('status') == status.value])
+                if count > 0:
+                    status_breakdown[status.value] = {
+                        "count": count,
+                        "percentage": round((count / len(all_orders) * 100), 1) if all_orders else 0
+                    }
+            
+            # Revenue trend (last 7 days)
+            end_date = datetime.now(timezone.utc)
+            start_date = end_date - timedelta(days=6)
+            revenue_trend = await self._calculate_revenue_trend(all_orders, start_date, end_date)
+            
+            # Popular menu items
+            popular_items = await self._get_popular_items(venue_id, all_orders, limit=10)
+            
+            # Peak hours
+            peak_hours = self._calculate_peak_hours(all_orders)
+            
+            # Payment method breakdown
+            payment_breakdown = {}
+            for order in all_orders:
+                method = order.get('payment_method', 'unknown')
+                status = order.get('payment_status', 'unknown')
+                if method not in payment_breakdown:
+                    payment_breakdown[method] = {"count": 0, "revenue": 0, "paid": 0, "pending": 0}
+                payment_breakdown[method]["count"] += 1
+                if status == PaymentStatus.PAID.value:
+                    payment_breakdown[method]["paid"] += 1
+                    payment_breakdown[method]["revenue"] += order.get('total_amount', 0)
+                else:
+                    payment_breakdown[method]["pending"] += 1
+            
+            formatted_payment_breakdown = [
+                {
+                    "method": method,
+                    "count": data["count"],
+                    "revenue": round(data["revenue"], 2),
+                    "paid": data["paid"],
+                    "pending": data["pending"]
+                }
+                for method, data in payment_breakdown.items()
+            ]
+            
+            # Category performance
+            category_performance = await self._calculate_category_performance(venue_id, all_orders)
+            
+            # Table status breakdown
+            table_status_breakdown = {
+                "available": len([t for t in active_tables if t.get('table_status') == TableStatus.AVAILABLE.value]),
+                "occupied": len(occupied_tables),
+                "reserved": len([t for t in active_tables if t.get('table_status') == TableStatus.RESERVED.value]),
+                "maintenance": len([t for t in active_tables if t.get('table_status') == TableStatus.MAINTENANCE.value])
+            }
+            
             return {
                 "venue": {
                     "id": venue['id'],
@@ -253,6 +310,15 @@ class DashboardService:
                     "average_order_value": round(today_revenue / len(today_orders), 2) if today_orders else 0
                 },
                 "recent_orders": formatted_recent_orders,
+                "analytics": {
+                    "order_status_breakdown": status_breakdown,
+                    "revenue_trend": revenue_trend,
+                    "popular_items": popular_items,
+                    "peak_hours": peak_hours,
+                    "payment_methods": formatted_payment_breakdown,
+                    "category_performance": category_performance,
+                    "table_status_breakdown": table_status_breakdown
+                },
                 "timestamp": datetime.now(timezone.utc).isoformat()
             }
             

@@ -138,6 +138,20 @@ class FeedbackType(str, Enum):
     OVERALL = "overall"
 
 
+class VenueType(str, Enum):
+    """Venue types"""
+    RESTAURANT = "restaurant"
+    CAFE = "cafe"
+    BAR = "bar"
+    FOOD_COURT = "food_court"
+    FINE_DINING = "fine_dining"
+    FAST_FOOD = "fast_food"
+    BAKERY = "bakery"
+    PUB = "pub"
+    LOUNGE = "lounge"
+    OTHER = "other"
+
+
 class PriceRange(str, Enum):
     """Price ranges"""
     BUDGET = "budget"

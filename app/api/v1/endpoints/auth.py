@@ -135,6 +135,7 @@ async def register_workspace(registration_data: WorkspaceRegistrationDTO):
             "is_active": True,
             "rating_total": 0.0,
             "rating_count": 0,
+            "theme": "classic",
             "created_at": current_time,
             "updated_at": current_time,
             "workspace_id": workspace_id

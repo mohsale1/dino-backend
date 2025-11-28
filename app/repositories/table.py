@@ -23,6 +23,10 @@ class TableAreaRepository(BaseRepository):
             filters.append(('is_active', '==', True))
         return await self.query(filters)
     
+    async def get_by_venue_id(self, venue_id: str, active_only: bool = False) -> List[Dict[str, Any]]:
+        """Get table areas by venue ID (alias for get_by_venue)"""
+        return await self.get_by_venue(venue_id, active_only)
+    
     async def get_by_name(self, venue_id: str, name: str) -> Optional[Dict[str, Any]]:
         """Get table area by name within a venue"""
         results = await self.query([

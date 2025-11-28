@@ -27,6 +27,7 @@ class BaseRepository(ABC, Generic[T]):
         try:
             # Add timestamps using centralized utility
             from app.core.utils import add_timestamps
+            from app.utils.id_generator import generate_document_id
             data = add_timestamps(data, is_update=False)
             
             if doc_id:
@@ -34,9 +35,10 @@ class BaseRepository(ABC, Generic[T]):
                 doc_ref = self.collection.document(doc_id)
                 data['id'] = doc_id
             else:
-                # Auto-generate ID
-                doc_ref = self.collection.document()
-                data['id'] = doc_ref.id
+                # Auto-generate UUID
+                generated_id = generate_document_id()
+                doc_ref = self.collection.document(generated_id)
+                data['id'] = generated_id
             
             doc_ref.set(data)
             logger.info(f"Created document in {self.collection_name}: {data['id']}")
@@ -156,9 +158,11 @@ class BaseRepository(ABC, Generic[T]):
             batch = self.db.batch()
             
             from app.core.utils import add_timestamps
+            from app.utils.id_generator import generate_document_id
             for item in items:
-                doc_ref = self.collection.document()
-                item['id'] = doc_ref.id
+                generated_id = generate_document_id()
+                doc_ref = self.collection.document(generated_id)
+                item['id'] = generated_id
                 item = add_timestamps(item, is_update=False)
                 
                 batch.set(doc_ref, item)
