@@ -564,7 +564,6 @@ async def refresh_token(request_data: RefreshTokenRequest):
 async def get_user_permissions(current_user: Dict[str, Any] = Depends(get_current_user)):
     """Get current user's permissions"""
     try:
-        from app.services.authorization import role_permission_service
         from app.database.repository_manager import get_role_repo, get_permission_repo
         
         # Get user's role and permissions
@@ -604,9 +603,6 @@ async def get_user_permissions(current_user: Dict[str, Any] = Depends(get_curren
                     'description': perm['description']
                 })
         
-        # Get dashboard permissions using the role we already have
-        dashboard_permissions = await role_permission_service.get_role_dashboard_permissions_with_role(role['name'])
-        
         return ApiResponseDTO(
             success=True,
             message="User permissions retrieved successfully",
@@ -619,7 +615,6 @@ async def get_user_permissions(current_user: Dict[str, Any] = Depends(get_curren
                     'description': role.get('description', '')
                 },
                 'permissions': detailed_permissions,
-                'dashboard_permissions': dashboard_permissions,
                 'permission_count': len(detailed_permissions)
             }
         )
