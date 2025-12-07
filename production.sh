@@ -40,13 +40,13 @@ export CORS_ALLOW_HEADERS=*
 # =============================================================================
 # GOOGLE CLOUD PLATFORM
 # =============================================================================
-export GCP_PROJECT_ID=edl-idaas-fdev-platform-2c85
+export GCP_PROJECT_ID=gcp-dino-prod
 export GCP_REGION=us-central1
 
 # =============================================================================
 # FIRESTORE DATABASE
 # =============================================================================
-export DATABASE_NAME=jm-dino
+export DATABASE_NAME=dino-prod
 
 # =============================================================================
 # CLOUD STORAGE
