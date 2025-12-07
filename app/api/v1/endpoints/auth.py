@@ -268,9 +268,18 @@ async def login_user(login_data: UserLoginDTO):
             )
         
         # Get user by email
-        user = await user_repo.get_by_email(login_data.email)
+        try:
+            user = await user_repo.get_by_email(login_data.email)
+            logger.info(f"User lookup result for {login_data.email}: {'Found' if user else 'Not found'}")
+        except Exception as query_error:
+            logger.error(f"Error querying user by email {login_data.email}: {query_error}", exc_info=True)
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Database query failed"
+            )
         
         if not user:
+            logger.warning(f"User not found for email: {login_data.email}")
             login_tracker.record_failed_attempt(login_data.email)
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,

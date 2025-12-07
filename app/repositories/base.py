@@ -129,10 +129,13 @@ class BaseRepository(ABC, Generic[T]):
             filters = [('venue_id', '==', 'venue123'), ('is_active', '==', True)]
         """
         try:
+            from google.cloud.firestore_v1.base_query import FieldFilter
+            
             query = self.collection
             
             for field, operator, value in filters:
-                query = query.where(field, operator, value)
+                # Use the new filter() method with FieldFilter to avoid deprecation warning
+                query = query.where(filter=FieldFilter(field, operator, value))
             
             if limit:
                 query = query.limit(limit)
@@ -141,7 +144,8 @@ class BaseRepository(ABC, Generic[T]):
             return [doc.to_dict() for doc in docs]
             
         except Exception as e:
-            logger.error(f"Error querying {self.collection_name}: {e}")
+            logger.error(f"Error querying {self.collection_name}: {e}", exc_info=True)
+            logger.error(f"Query filters: {filters}")
             raise
     
     async def exists(self, doc_id: str) -> bool:
