@@ -21,7 +21,6 @@ class OrderItem(BaseSchema):
     menu_item_name: str
     quantity: int = Field(..., ge=1)
     unit_price: float = Field(..., gt=0)
-    total_price: float = Field(..., gt=0)
     special_instructions: Optional[str] = Field(None, max_length=500)
 
 
@@ -37,7 +36,6 @@ class Order(BaseSchema, TimestampMixin):
     subtotal: float = Field(..., ge=0)
     tax_amount: float = Field(default=0.0, ge=0)
     discount_amount: float = Field(default=0.0, ge=0)
-    total_amount: float = Field(..., gt=0)
     status: OrderStatus = OrderStatus.PENDING
     payment_status: PaymentStatus = PaymentStatus.PENDING
     payment_method: Optional[PaymentMethod] = None
@@ -64,7 +62,6 @@ class OrderItemResponseDTO(BaseDTO):
     menu_item_name: str
     quantity: int
     unit_price: float
-    total_price: float
     special_instructions: Optional[str] = None
 
 
@@ -109,7 +106,6 @@ class OrderResponseDTO(BaseDTO):
     subtotal: float
     tax_amount: float
     discount_amount: float
-    total_amount: float
     status: OrderStatus
     payment_status: PaymentStatus
     payment_method: Optional[PaymentMethod] = None
@@ -126,7 +122,6 @@ class OrderCreationResponseDTO(BaseDTO):
     order_id: str
     order_number: str
     estimated_preparation_time: Optional[int] = None
-    total_amount: float
     payment_required: bool
     message: str
     customer_id: str

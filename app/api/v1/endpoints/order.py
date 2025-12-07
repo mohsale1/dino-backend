@@ -109,8 +109,8 @@ class OrdersEndpoint(WorkspaceIsolatedEndpoint[Order, OrderCreateDTO, OrderUpdat
                 )
             
             unit_price = menu_item['base_price']
-            total_price = unit_price * quantity
-            subtotal += total_price
+            item_total = unit_price * quantity
+            subtotal += item_total
             
             # Create order item
             order_item = {
@@ -120,23 +120,20 @@ class OrdersEndpoint(WorkspaceIsolatedEndpoint[Order, OrderCreateDTO, OrderUpdat
                 "variant_name": item.get('variant_name'),
                 "quantity": quantity,
                 "unit_price": unit_price,
-                "total_price": total_price,
                 "special_instructions": item.get('special_instructions')
             }
             order_items.append(order_item)
         
-        # Calculate tax and total
+        # Calculate tax
         tax_rate = 0.18  # 18% GST
         tax_amount = subtotal * tax_rate
         discount_amount = data.get('discount_amount', 0.0)
-        total_amount = subtotal + tax_amount - discount_amount
         
         # Update data
         data['items'] = order_items
         data['subtotal'] = subtotal
         data['tax_amount'] = tax_amount
         data['discount_amount'] = discount_amount
-        data['total_amount'] = total_amount
     
     async def _validate_create_permissions(self, 
                                          data: Dict[str, Any], 
@@ -340,7 +337,11 @@ class OrdersEndpoint(WorkspaceIsolatedEndpoint[Order, OrderCreateDTO, OrderUpdat
         
         # Calculate analytics
         total_orders = len(filtered_orders)
-        total_revenue = sum(order.get('total_amount', 0) for order in filtered_orders if order.get('payment_status') == 'paid')
+        # Calculate total revenue from subtotal + tax - discount
+        total_revenue = sum(
+            (order.get('subtotal', 0) + order.get('tax_amount', 0) - order.get('discount_amount', 0))
+            for order in filtered_orders if order.get('payment_status') == 'paid'
+        )
         average_order_value = total_revenue / total_orders if total_orders > 0 else 0
         
         # Status breakdown
@@ -603,7 +604,6 @@ async def get_venue_orders(
                     "menu_item_name": item.get('menu_item_name') or item.get('name', ''),  # Support both fields
                     "quantity": item.get('quantity', 1),
                     "unit_price": item.get('unit_price', 0.0),
-                    "total_price": item.get('total_price', 0.0),
                     "special_instructions": item.get('special_instructions')
                 }
                 processed_items.append(processed_item)
@@ -613,13 +613,13 @@ async def get_venue_orders(
                 "id": order.get('id', ''),
                 "order_number": order.get('order_number', ''),
                 "order_type": order.get('order_type', 'dine_in'),
+                "customer_id": order.get('customer_id', ''),
                 "table_id": table_id,
                 "table_number": table_number,  # Add table number
                 "items": processed_items,
                 "subtotal": order.get('subtotal', 0.0),
                 "tax_amount": order.get('tax_amount', 0.0),
                 "discount_amount": order.get('discount_amount', 0.0),
-                "total_amount": order.get('total_amount', 0.0),
                 "status": order.get('status', 'pending'),
                 "payment_status": order.get('payment_status', 'pending'),
                 "payment_method": order.get('payment_method'),
@@ -994,7 +994,6 @@ async def track_order_status(order_id: str):
             "estimated_preparation_time": order.get("estimated_preparation_time"),
             "estimated_ready_time": order.get("estimated_ready_time"),
             "actual_ready_time": order.get("actual_ready_time"),
-            "total_amount": order.get("total_amount"),
             "payment_status": order.get("payment_status"),
             "created_at": order.get("created_at"),
             "venue_name": None  # Will be populated below
@@ -1056,7 +1055,7 @@ async def get_order_receipt(order_id: str):
             "items": order.get("items", []),
             "subtotal": order.get("subtotal", 0.0),
             "tax_amount": order.get("tax_amount", 0.0),
-            "total_amount": order.get("total_amount", 0.0),
+            "discount_amount": order.get("discount_amount", 0.0),
             "payment_status": order.get("payment_status"),
             "order_date": order.get("created_at"),
             "table_number": None

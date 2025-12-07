@@ -205,10 +205,9 @@ class PublicOrderingService:
                 
                 validated_items.append({
                     'menu_item_id': menu_item_id,
-                    'name': menu_item['name'],
+                    'menu_item_name': menu_item['name'],
                     'quantity': quantity,
-                    'unit_price': menu_item['base_price'],
-                    'total_price': item_total
+                    'unit_price': menu_item['base_price']
                 })
             
             # Calculate tax and final total
@@ -261,15 +260,13 @@ class PublicOrderingService:
                 'venue_id': order_data['venue_id'],
                 'table_id': order_data.get('table_id'),
                 'customer_id': customer_id,
-                'customer_name': customer_info.get('name', 'Guest'),
-                'customer_phone': customer_info.get('phone'),
                 'order_type': OrderType.DINE_IN.value,
                 'status': OrderStatus.PENDING.value,
                 'payment_status': PaymentStatus.PENDING.value,
                 'items': validation['validated_items'],
                 'subtotal': validation['subtotal'],
                 'tax_amount': validation['tax_amount'],
-                'total_amount': validation['total_amount'],
+                'discount_amount': 0.0,
                 'estimated_preparation_time': validation['estimated_preparation_time'],
                 'special_instructions': order_data.get('special_instructions'),
                 'created_at': datetime.utcnow(),
@@ -304,7 +301,6 @@ class PublicOrderingService:
                 'success': True,
                 'order_id': order_id,
                 'order_number': order_number,
-                'total_amount': validation['total_amount'],
                 'estimated_ready_time': datetime.utcnow() + timedelta(minutes=validation['estimated_preparation_time']),
                 'status': OrderStatus.PENDING.value,
                 'message': 'Order placed successfully! You will receive updates on your order status.'
