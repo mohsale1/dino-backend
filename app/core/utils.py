@@ -445,6 +445,7 @@ def convert_user_to_response_dto(user_data: Dict[str, Any]) -> UserResponseDTO:
     - Missing required fields with sensible defaults
     - Sensitive data removal
     - Proper error handling
+    - Timestamp conversion
     
     Args:
         user_data: Raw user data dictionary from database
@@ -484,6 +485,17 @@ def convert_user_to_response_dto(user_data: Dict[str, Any]) -> UserResponseDTO:
     data.setdefault("is_verified", False)
     data.setdefault("email_verified", False)
     data.setdefault("phone_verified", False)
+    data.setdefault("deleted", False)
+    
+    # Ensure timestamps exist (required fields)
+    current_time = datetime.now(timezone.utc)
+    if "created_at" not in data or data["created_at"] is None:
+        logger.warning(f"User {data.get('id', 'unknown')} missing created_at, using current time")
+        data["created_at"] = current_time
+    
+    if "updated_at" not in data or data["updated_at"] is None:
+        logger.warning(f"User {data.get('id', 'unknown')} missing updated_at, using current time")
+        data["updated_at"] = current_time
     
     # Log warnings for missing critical fields
     if not data.get("phone"):
