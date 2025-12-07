@@ -35,11 +35,10 @@ class MenuItem(BaseSchema, TimestampMixin):
     is_vegetarian: bool = Field(default=True)
     spice_level: SpiceLevel = SpiceLevel.MILD
     preparation_time_minutes: int = Field(..., ge=5, le=120)
-    image_urls: List[str] = Field(default_factory=list)
+    image_url: Optional[str] = None
     is_available: bool = Field(default=True)
     rating_total: float = Field(default=0.0, ge=0, description="Sum of all ratings")
     rating_count: int = Field(default=0, ge=0, description="Number of ratings received")
-    average_rating: float = Field(default=0.0, ge=0, description="Calculated average rating")
     
     @property
     def calculated_average_rating(self) -> float:
@@ -114,10 +113,9 @@ class MenuItemResponseDTO(BaseDTO):
     is_vegetarian: bool
     spice_level: SpiceLevel
     preparation_time_minutes: int
-    image_urls: List[str] = Field(default_factory=list)
+    image_url: Optional[str] = None
     is_available: bool
     rating_total: float = Field(description="Sum of all ratings")
     rating_count: int = Field(description="Number of ratings received")
-    average_rating: float = Field(description="Calculated average rating")
     created_at: datetime
     updated_at: datetime

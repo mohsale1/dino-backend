@@ -263,7 +263,6 @@ class PublicOrderingService:
                 'customer_id': customer_id,
                 'customer_name': customer_info.get('name', 'Guest'),
                 'customer_phone': customer_info.get('phone'),
-                'customer_email': customer_info.get('email'),
                 'order_type': OrderType.DINE_IN.value,
                 'status': OrderStatus.PENDING.value,
                 'payment_status': PaymentStatus.PENDING.value,
@@ -327,22 +326,18 @@ class PublicOrderingService:
         try:
             customer_repo = self.repo_manager.get_repository('customer')
             
-            # Try to find existing customer by phone or email
+            # Try to find existing customer by phone
             customer = None
             if customer_info.get('phone'):
                 customers = await customer_repo.query([('phone', '==', customer_info['phone'])])
                 if customers:
                     customer = customers[0]
             
-            if not customer and customer_info.get('email'):
-                customers = await customer_repo.query([('email', '==', customer_info['email'])])
-                if customers:
-                    customer = customers[0]
-            
             if customer:
                 # Update existing customer
+                customer_name = customer_info.get('name', customer.get('name'))
                 update_data = {
-                    'name': customer_info.get('name', customer.get('name')),
+                    'name': customer_name.lower() if customer_name else customer.get('name'),
                     'updated_at': datetime.utcnow()
                 }
                 
@@ -359,11 +354,11 @@ class PublicOrderingService:
             else:
                 # Create new customer
                 customer_id = generate_document_id()
+                customer_name = customer_info.get('name', 'guest')
                 customer_data = {
                     'id': customer_id,
-                    'name': customer_info.get('name', 'Guest'),
+                    'name': customer_name.lower(),
                     'phone': customer_info.get('phone'),
-                    'email': customer_info.get('email'),
                     'venue_ids': [venue_id] if venue_id else [],
                     'created_at': datetime.utcnow(),
                     'updated_at': datetime.utcnow()
@@ -380,7 +375,7 @@ class PublicOrderingService:
     async def _update_customer_stats(self, customer_id: str, order_amount: float):
         """
         Update customer statistics after order placement
-        Updates: total_orders, total_spent, last_order_date
+        Updates: total_orders, last_order_date
         """
         try:
             if customer_id == "guest-customer":
@@ -396,17 +391,15 @@ class PublicOrderingService:
             
             # Calculate updated stats
             current_total_orders = customer.get('total_orders', 0)
-            current_total_spent = customer.get('total_spent', 0.0)
             
             update_data = {
                 'total_orders': current_total_orders + 1,
-                'total_spent': round(current_total_spent + order_amount, 2),
                 'last_order_date': datetime.utcnow(),
                 'updated_at': datetime.utcnow()
             }
             
             await customer_repo.update(customer_id, update_data)
-            logger.info(f"Updated customer {customer_id} stats: orders={update_data['total_orders']}, spent={update_data['total_spent']}")
+            logger.info(f"Updated customer {customer_id} stats: orders={update_data['total_orders']}")
             
         except Exception as e:
             logger.error(f"Error updating customer stats for {customer_id}: {e}")

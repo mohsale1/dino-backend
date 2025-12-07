@@ -20,7 +20,6 @@ class Customer(BaseSchema, TimestampMixin):
     phone: str = Field(..., pattern="^[0-9]{10}$")
     venue_ids: List[str] = Field(default_factory=list, description="List of unique venue IDs where customer has ordered")
     total_orders: int = Field(default=0)
-    total_spent: float = Field(default=0.0)
     last_order_date: Optional[datetime] = None
     favorite_venue_id: Optional[str] = None
     marketing_consent: bool = Field(default=False)
@@ -49,7 +48,6 @@ class CustomerResponseDTO(BaseDTO):
     phone: str
     venue_ids: List[str] = Field(default_factory=list, description="List of unique venue IDs where customer has ordered")
     total_orders: int
-    total_spent: float
     last_order_date: Optional[datetime] = None
     favorite_venue_id: Optional[str] = None
     loyalty_points: int

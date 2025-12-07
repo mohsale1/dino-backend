@@ -81,12 +81,10 @@ class MenuItemRepository(BaseRepository):
             
             new_total = current_total + rating
             new_count = current_count + 1
-            new_average = new_total / new_count if new_count > 0 else 0.0
             
             await self.update(item_id, {
                 'rating_total': new_total,
-                'rating_count': new_count,
-                'average_rating': new_average
+                'rating_count': new_count
             })
             
             return True

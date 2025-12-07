@@ -47,6 +47,9 @@ class MenuCategoriesEndpoint(WorkspaceIsolatedEndpoint[MenuCategory, MenuCategor
                                   data: Dict[str, Any], 
                                   current_user: Optional[Dict[str, Any]]) -> Dict[str, Any]:
         """Prepare category data before creation"""
+        # Convert name to lowercase
+        if 'name' in data:
+            data['name'] = data['name'].lower()
         data['is_active'] = True
         data['image_url'] = None
         return data
@@ -91,11 +94,10 @@ class MenuItemsEndpoint(WorkspaceIsolatedEndpoint[MenuItem, MenuItemCreateDTO, M
                                   data: Dict[str, Any], 
                                   current_user: Optional[Dict[str, Any]]) -> Dict[str, Any]:
         """Prepare menu item data before creation"""
-        data['image_urls'] = []
+        data['image_url'] = None
         data['is_available'] = True
         data['rating_total'] = 0.0
         data['rating_count'] = 0
-        data['average_rating'] = 0.0
         return data
     
     async def _validate_create_permissions(self, 
@@ -238,8 +240,6 @@ async def get_menu_category(
 ):
     """Get menu category by ID"""
     return await categories_endpoint.get_item(category_id, current_user)
-
-
 @router.put("/categories/{category_id}", 
             response_model=ApiResponseDTO,
             summary="Update menu category",
@@ -250,8 +250,12 @@ async def update_menu_category(
     current_user: Dict[str, Any] = Depends(get_current_admin_user)
 ):
     """Update menu category information"""
+    # Convert name to lowercase if provided
+    update_dict = category_update.dict(exclude_unset=True)
+    if "name" in update_dict and update_dict["name"]:
+        update_dict["name"] = update_dict["name"].lower()
+        category_update = MenuCategoryUpdateDTO(**update_dict)
     return await categories_endpoint.update_item(category_id, category_update, current_user)
-
 
 @router.delete("/categories/{category_id}", 
                response_model=ApiResponseDTO,
@@ -533,10 +537,7 @@ async def upload_item_image(
             file, upload_id, workspace_id, venue_id
         )
         
-        current_images = item.get('image_urls', [])
-        updated_images = current_images + [image_url]
-        
-        await repo.update(item_id, {"image_urls": updated_images})
+        await repo.update(item_id, {"image_url": image_url})
         
         logger.info(f"Successfully uploaded image for menu item {item_id}: {image_url}")
         return ApiResponseDTO(
@@ -544,7 +545,6 @@ async def upload_item_image(
             message="Image uploaded successfully",
             data={
                 "image_url": image_url,
-                "total_images": len(updated_images),
                 "item_id": item_id,
                 "workspace_id": workspace_id,
                 "venue_id": venue_id
@@ -561,86 +561,7 @@ async def upload_item_image(
         )
 
 
-@router.post("/items/{item_id}/images", 
-             response_model=ApiResponseDTO,
-             summary="Upload item images",
-             description="Upload images for menu item")
-async def upload_item_images(
-    item_id: str,
-    files: List[UploadFile] = File(...),
-    current_user: Dict[str, Any] = Depends(get_current_admin_user)
-):
-    """Upload menu item images with workspace/venue folder structure"""
-    try:
-        repo = get_repository_manager().get_repository('menu_item')
-        item = await repo.get_by_id(item_id)
-        
-        if not item:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Menu item not found"
-            )
-        
-        await items_endpoint._validate_access_permissions(item, current_user)
-        
-        venue_id = item.get('venue_id')
-        if not venue_id:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Menu item must have a venue_id"
-            )
-        
-        from app.services.storage import get_storage_service
-        storage_service = get_storage_service()
-        uploaded_urls = []
-        
-        for i, file in enumerate(files):
-            if not file.content_type or not file.content_type.startswith('image/'):
-                logger.warning(f"Invalid file type for {file.filename}: {file.content_type}")
-                continue
-            
-            try:
-                # Upload image to GCS bucket with path: VENUE_ID/filename
-                image_url = await storage_service.upload_menu_item_image(
-                    file, f"{item_id}_{i}", venue_id
-                )
-                uploaded_urls.append(image_url)
-                logger.info(f"Uploaded image for menu item {item_id}: {image_url}")
-            except Exception as upload_error:
-                logger.error(f"Failed to upload {file.filename}: {upload_error}")
-                continue
-        
-        if not uploaded_urls:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="No valid images were uploaded"
-            )
-        
-        current_images = item.get('image_urls', [])
-        all_images = current_images + uploaded_urls
-        
-        await repo.update(item_id, {"image_urls": all_images})
-        
-        logger.info(f"Successfully uploaded {len(uploaded_urls)} images for menu item: {item_id}")
-        return ApiResponseDTO(
-            success=True,
-            message=f"Successfully uploaded {len(uploaded_urls)} images",
-            data={
-                "uploaded_urls": uploaded_urls,
-                "total_images": len(all_images),
-                "item_id": item_id,
-                "venue_id": venue_id
-            }
-        )
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error uploading item images: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to upload images"
-        )
+
 
 
 # =============================================================================
