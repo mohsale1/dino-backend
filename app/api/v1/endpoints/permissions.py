@@ -109,10 +109,9 @@ async def create_permission(
         
         # Create permission
         perm_dict = permission_data.model_dump()
-        perm_id = await perm_repo.create(perm_dict)
+        created_permission = await perm_repo.create(perm_dict)
         
-        # Get created permission
-        created_permission = await perm_repo.get_by_id(perm_id)
+        # Create response DTO
         perm_response = PermissionResponseDTO(**created_permission, roles_count=0)
         
         logger.info(f"Permission created: {permission_data.name} by {current_user['id']}")
@@ -744,11 +743,16 @@ async def setup_bulk_create_permissions(bulk_data: BulkPermissionCreateDTO):
              response_model=ApiResponse,
              status_code=status.HTTP_201_CREATED,
              summary="Setup: Create single permission",
-             description="Create a single permission (NO AUTH - SETUP ONLY)")
+             description="Create a single permission (NO AUTH - SETUP ONLY)",
+             response_model_exclude_none=True)
 async def setup_create_permission(permission_data: PermissionCreateDTO):
     """Create a single permission for system setup (NO AUTH)"""
     try:
-        logger.info(f"Setup permission creation request: {permission_data.name}")
+        logger.info(f"🔍 Setup permission creation request received")
+        logger.info(f"   Name: {permission_data.name}")
+        logger.info(f"   Resource: {permission_data.resource}")
+        logger.info(f"   Action: {permission_data.action}")
+        logger.info(f"   Scope: {permission_data.scope}")
         
         # Check if permission with same name already exists
         existing_permission = await perm_repo.get_by_name(permission_data.name)
@@ -763,11 +767,10 @@ async def setup_create_permission(permission_data: PermissionCreateDTO):
         perm_dict = permission_data.model_dump()
         logger.debug(f"Permission data to create: {perm_dict}")
         
-        perm_id = await perm_repo.create(perm_dict)
-        logger.debug(f"Permission created with ID: {perm_id}")
+        created_permission = await perm_repo.create(perm_dict)
+        logger.debug(f"Permission created with ID: {created_permission['id']}")
         
-        # Get created permission
-        created_permission = await perm_repo.get_by_id(perm_id)
+        # Create response DTO
         perm_response = PermissionResponseDTO(**created_permission, roles_count=0)
         
         logger.info(f"✅ Setup permission created successfully: {permission_data.name}")

@@ -40,7 +40,7 @@ class PermissionRepository(BaseRepository):
                               page: int = 1,
                               page_size: int = 10) -> tuple[List[Dict[str, Any]], int]:
         """List permissions with pagination and filtering"""
-        query = self.db.collection(self.collection)
+        query = self.collection
         
         # Apply filters
         if filters:
@@ -76,7 +76,7 @@ class PermissionRepository(BaseRepository):
         """Update permission"""
         update_data['updated_at'] = datetime.utcnow()
         
-        doc_ref = self.db.collection(self.collection).document(permission_id)
+        doc_ref = self.collection.document(permission_id)
         doc_ref.update(update_data)
         
         logger.info(f"Permission updated: {permission_id}")
@@ -84,7 +84,7 @@ class PermissionRepository(BaseRepository):
     
     async def delete(self, permission_id: str) -> bool:
         """Delete permission (hard delete)"""
-        self.db.collection(self.collection).document(permission_id).delete()
+        self.collection.document(permission_id).delete()
         logger.info(f"Permission deleted: {permission_id}")
         return True
     
@@ -96,7 +96,7 @@ class PermissionRepository(BaseRepository):
     
     async def get_permissions_by_category(self, workspace_id: Optional[str] = None) -> List[Dict[str, Any]]:
         """Get permissions grouped by category"""
-        query = self.db.collection(self.collection)
+        query = self.collection
         if workspace_id:
             query = query.where("workspace_id", "==", workspace_id)
         
@@ -120,7 +120,7 @@ class PermissionRepository(BaseRepository):
     
     async def get_permission_matrix(self, workspace_id: Optional[str] = None) -> Dict[str, Any]:
         """Get permission matrix (resources vs actions)"""
-        query = self.db.collection(self.collection)
+        query = self.collection
         if workspace_id:
             query = query.where("workspace_id", "==", workspace_id)
         
@@ -151,7 +151,7 @@ class PermissionRepository(BaseRepository):
     
     async def get_resources(self) -> List[str]:
         """Get all unique resources"""
-        docs = list(self.db.collection(self.collection).stream())
+        docs = list(self.collection.stream())
         resources = set()
         for doc in docs:
             data = doc.to_dict()
@@ -161,7 +161,7 @@ class PermissionRepository(BaseRepository):
     
     async def get_actions(self) -> List[str]:
         """Get all unique actions"""
-        docs = list(self.db.collection(self.collection).stream())
+        docs = list(self.collection.stream())
         actions = set()
         for doc in docs:
             data = doc.to_dict()
@@ -171,7 +171,7 @@ class PermissionRepository(BaseRepository):
     
     async def get_permission_statistics(self, workspace_id: Optional[str] = None) -> Dict[str, Any]:
         """Get permission statistics"""
-        query = self.db.collection(self.collection)
+        query = self.collection
         if workspace_id:
             query = query.where("workspace_id", "==", workspace_id)
         
@@ -221,8 +221,7 @@ class PermissionRepository(BaseRepository):
                     continue
                 
                 # Create permission
-                perm_id = await self.create(perm_data)
-                created_perm = await self.get_by_id(perm_id)
+                created_perm = await self.create(perm_data)
                 created_permissions.append(created_perm)
                 created += 1
                 
