@@ -1,4 +1,3 @@
-
 """
 Venue Models
 Database entities and DTOs for venue management
@@ -29,13 +28,8 @@ class Venue(BaseSchema, TimestampMixin):
     venue_type: Optional[VenueType] = Field(default=VenueType.RESTAURANT, description="Type of venue")
     price_range: PriceRange
     subscription_plan: SubscriptionPlan = SubscriptionPlan.BASIC
-    subscription_status: SubscriptionStatus = SubscriptionStatus.ACTIVE
-    status: VenueStatus = VenueStatus.ACTIVE
     is_active: bool = Field(default=True)
     is_open: bool = Field(default=True, description="Whether venue is currently open for orders")
-    rating_total: float = Field(default=0.0, ge=0, description="Sum of all ratings")
-    rating_count: int = Field(default=0, ge=0, description="Number of ratings received")
-    admin_id: Optional[str] = None
     
     @validator('website')
     def validate_venue_website(cls, v):
@@ -45,13 +39,6 @@ class Venue(BaseSchema, TimestampMixin):
         if not v.startswith(('http://', 'https://')):
             v = f"https://{v}"
         return v
-    
-    @property
-    def average_rating(self) -> float:
-        """Calculate average rating from rating_total and rating_count"""
-        if self.rating_count == 0:
-            return 0.0
-        return round(self.rating_total / self.rating_count, 2)
 
 
 # =============================================================================
@@ -69,8 +56,6 @@ class VenueCreateDTO(BaseDTO):
     venue_type: Optional[VenueType] = Field(default=VenueType.RESTAURANT, description="Type of venue")
     price_range: PriceRange
     subscription_plan: SubscriptionPlan = SubscriptionPlan.BASIC
-    subscription_status: SubscriptionStatus = SubscriptionStatus.ACTIVE
-    admin_id: Optional[str] = None
     logo_url: Optional[str] = None
     is_open: bool = Field(default=True, description="Whether venue is open for orders")
 
@@ -79,14 +64,13 @@ class VenueUpdateDTO(BaseDTO):
     """DTO for updating venues"""
     name: Optional[str] = Field(None, min_length=1, max_length=100)
     description: Optional[str] = Field(None, max_length=1000)
+    location: Optional[VenueLocation] = None
     phone: Optional[str] = Field(None, pattern="^[0-9]{10}$")
     email: Optional[EmailStr] = None
     logo_url: Optional[str] = None
     venue_type: Optional[VenueType] = None
     price_range: Optional[PriceRange] = None
     subscription_plan: Optional[SubscriptionPlan] = None
-    subscription_status: Optional[SubscriptionStatus] = None
-    status: Optional[VenueStatus] = None
     is_active: Optional[bool] = None
     is_open: Optional[bool] = None
 
@@ -104,12 +88,7 @@ class VenueResponseDTO(BaseDTO):
     venue_type: Optional[VenueType] = Field(default=VenueType.RESTAURANT, description="Type of venue")
     price_range: PriceRange
     subscription_plan: SubscriptionPlan
-    subscription_status: SubscriptionStatus
-    status: VenueStatus
     is_active: bool
-    rating_total: float = Field(description="Sum of all ratings")
-    rating_count: int = Field(description="Number of ratings received")
-    admin_id: Optional[str] = None
     created_at: datetime
     updated_at: datetime
 
@@ -125,9 +104,6 @@ class VenuePublicInfoDTO(BaseDTO):
     features: List[str] = Field(default_factory=list)
     is_open: bool
     current_wait_time: Optional[int] = None
-    rating_total: float = Field(default=0.0, description="Sum of all ratings")
-    rating_count: int = Field(default=0, description="Number of ratings received")
-    average_rating: float = Field(default=0.0, description="Calculated average rating")
     logo_url: Optional[str] = None
 
 
@@ -140,7 +116,6 @@ class VenueWorkspaceListDTO(BaseDTO):
     phone: Optional[str] = None
     email: Optional[str] = None
     is_active: bool
-    is_open: bool = Field(default=False, description="Current operational status - true if status is 'active', false otherwise")
-    subscription_status: SubscriptionStatus
+    is_open: bool = Field(default=False, description="Current operational status")
     created_at: datetime
     updated_at: datetime

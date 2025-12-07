@@ -1,4 +1,3 @@
-
 """
 Workspace Registration Service
 Handles workspace setup and initial data creation
@@ -56,7 +55,6 @@ class WorkspaceService:
             "workspace_id": workspace_id,
             "name": registration_data.get('venue_name'),
             "owner_id": user_id,
-            "admin_id": user_id,
             "is_active": True,
             "is_verified": False,
             "rating": 0.0,

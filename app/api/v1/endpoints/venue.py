@@ -45,7 +45,6 @@ class VenuesEndpoint(WorkspaceIsolatedEndpoint[Venue, VenueCreateDTO, VenueUpdat
         """Prepare venue data before creation"""
         if current_user:
             data['owner_id'] = current_user['id']
-            data['admin_id'] = current_user['id']
             if not data.get('workspace_id'):
                 data['workspace_id'] = current_user.get('workspace_id')
         
