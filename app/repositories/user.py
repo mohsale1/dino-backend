@@ -39,8 +39,17 @@ class UserRepository(BaseRepository):
         return await self.query([('workspace_id', '==', workspace_id)])
     
     async def get_active_users(self) -> List[Dict[str, Any]]:
-        """Get all active users"""
-        return await self.query([('is_active', '==', True)])
+        """Get all active users (excluding deleted)"""
+        return await self.query([
+            ('is_active', '==', True),
+            ('deleted', '==', False)
+        ])
+    
+    async def get_all(self) -> List[Dict[str, Any]]:
+        """Get all users excluding deleted ones"""
+        all_users = await super().get_all()
+        # Filter out deleted users (check both 'deleted' field and None for backward compatibility)
+        return [user for user in all_users if not user.get('deleted', False)]
     
     async def assign_to_venue(self, user_id: str, venue_id: str) -> bool:
         """Assign user to a venue"""

@@ -73,14 +73,29 @@ class BaseRepository(ABC, Generic[T]):
             raise
     
     async def update(self, doc_id: str, data: Dict[str, Any]) -> Dict[str, Any]:
-        """Update document"""
+        """Update document with proper nested object merging"""
         try:
             # Add updated timestamp using centralized utility
             from app.core.utils import add_timestamps
             data = add_timestamps(data, is_update=True)
             
             doc_ref = self.collection.document(doc_id)
-            doc_ref.update(data)
+            
+            # Get existing document to merge nested objects
+            existing_doc = await self.get_by_id(doc_id)
+            if not existing_doc:
+                raise ValueError(f"Document {doc_id} not found")
+            
+            # Merge nested objects (like location) instead of replacing them
+            merged_data = {}
+            for key, value in data.items():
+                if isinstance(value, dict) and key in existing_doc and isinstance(existing_doc[key], dict):
+                    # Merge nested dictionaries
+                    merged_data[key] = {**existing_doc[key], **value}
+                else:
+                    merged_data[key] = value
+            
+            doc_ref.update(merged_data)
             
             logger.info(f"Updated document in {self.collection_name}: {doc_id}")
             

@@ -104,6 +104,7 @@ class OrderResponseDTO(BaseDTO):
     customer_id: str
     order_type: OrderType
     table_id: Optional[str] = None
+    table_number: Optional[str] = None  # User-friendly table number
     items: List[OrderItemResponseDTO]
     subtotal: float
     tax_amount: float

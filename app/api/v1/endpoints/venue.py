@@ -62,6 +62,10 @@ class VenuesEndpoint(WorkspaceIsolatedEndpoint[Venue, VenueCreateDTO, VenueUpdat
         if 'theme' not in data:
             data['theme'] = 'classic'
         
+        # Always set country to India
+        if 'location' in data and isinstance(data['location'], dict):
+            data['location']['country'] = 'India'
+        
         return data
     
     async def _validate_create_permissions(self, data: Dict[str, Any], current_user: Optional[Dict[str, Any]]):
@@ -368,6 +372,13 @@ async def get_venue(venue_id: str, current_user: Dict[str, Any] = Depends(get_cu
 @router.put("/{venue_id}", response_model=ApiResponseDTO, summary="Update venue")
 async def update_venue(venue_id: str, venue_update: VenueUpdateDTO, current_user: Dict[str, Any] = Depends(get_current_admin_user)):
     """Update venue information"""
+    # Ensure country is always set to India
+    update_data = venue_update.dict(exclude_unset=True)
+    if 'location' in update_data and isinstance(update_data['location'], dict):
+        update_data['location']['country'] = 'India'
+        # Recreate the DTO with updated data
+        venue_update = VenueUpdateDTO(**update_data)
+    
     return await venues_endpoint.update_item(venue_id, venue_update, current_user)
 
 

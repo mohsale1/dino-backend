@@ -379,26 +379,21 @@ class ValidationService:
                     "venue_name": venue.get('name', 'Unknown Venue')
                 }
             
-            # 3. Check venue status and is_open
-            venue_status = venue.get('status', VenueStatus.ACTIVE.value)
+            # 3. Check if venue is operational (only check is_active and is_open)
+            # Ignore status field - venue is operational only if is_active=True AND is_open=True
             is_open = venue.get('is_open')
             
-            # Check if venue status is operational
-            if venue_status not in [VenueStatus.ACTIVE.value, 'active', 'open']:
+            # Log venue status for debugging
+            logger.info(f"Venue {venue_id} validation - is_active: {venue.get('is_active')}, is_open: {is_open}")
+            
+            # Venue must be explicitly open (is_open = True)
+            # If is_open is None or False, reject the venue
+            if is_open is not True:
+                logger.warning(f"Venue {venue_id} is not open (is_open={is_open})")
                 return False, {
                     "error": "Venue is not accepting orders",
                     "error_type": "venue_not_operational",
                     "message": "This venue is currently not accepting orders. Please try again later.",
-                    "venue_name": venue.get('name', 'Unknown Venue'),
-                    "venue_status": venue_status
-                }
-            
-            # Check if venue is explicitly closed (is_open = False)
-            if is_open is False:
-                return False, {
-                    "error": "Venue is not accepting orders",
-                    "error_type": "venue_closed",
-                    "message": "This venue is currently closed. Please try again later.",
                     "venue_name": venue.get('name', 'Unknown Venue'),
                     "is_open": is_open
                 }
@@ -448,7 +443,6 @@ class ValidationService:
                 "email": venue.get('email'),
                 "is_active": venue.get('is_active', False),
                 "is_open": venue.get('is_open', False),
-                "status": venue.get('status', VenueStatus.ACTIVE.value),
                 "rating": self._calculate_venue_rating(venue)
             }
             
@@ -539,19 +533,13 @@ class ValidationService:
                     'error_type': 'venue_not_found'
                 }
             
-            # Check if venue is active
+            # Check if venue is active and open
+            # Ignore status field - venue is operational only if is_active=True AND is_open=True
             is_active = venue.get('is_active', False)
             is_open = venue.get('is_open')  # Can be True, False, or None
-            venue_status = venue.get('status', VenueStatus.ACTIVE.value)
             
-            # Venue is operational if it's active
-            # Note: is_open is optional - if not explicitly set to False, we assume venue is open if active
-            # status field should be 'active' or match VenueStatus.ACTIVE
-            is_operational = (
-                is_active and 
-                (is_open is not False) and  # Only reject if explicitly False
-                venue_status in [VenueStatus.ACTIVE.value, 'active', 'open']
-            )
+            # Venue is operational only if both is_active and is_open are True
+            is_operational = is_active and is_open is True
             
             if not is_operational:
                 return {
@@ -560,7 +548,6 @@ class ValidationService:
                     'message': 'Venue is currently not accepting orders',
                     'error_type': 'venue_not_operational',
                     'venue_name': venue.get('name', 'Unknown Venue'),
-                    'venue_status': venue_status,
                     'is_active': is_active,
                     'is_open': is_open
                 }
@@ -570,7 +557,6 @@ class ValidationService:
                 'is_open': True,
                 'message': 'Venue is open for orders',
                 'venue_name': venue.get('name', 'Unknown Venue'),
-                'venue_status': venue_status,
                 'is_active': is_active,
                 'next_opening': None,  # Would be calculated based on operating hours
                 'next_closing': None   # Would be calculated based on operating hours

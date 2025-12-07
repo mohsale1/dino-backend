@@ -36,7 +36,7 @@ class VenueLocation(BaseModel):
     address: str = Field(..., min_length=5, max_length=500)
     city: str = Field(..., min_length=2, max_length=100)
     state: str = Field(..., min_length=2, max_length=100)
-    country: str = Field(..., min_length=2, max_length=100)
+    country: Optional[str] = Field(default="India", min_length=2, max_length=100)
     postal_code: str = Field(..., min_length=3, max_length=20)
     landmark: Optional[str] = Field(None, max_length=200)
 

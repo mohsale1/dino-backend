@@ -1,5 +1,3 @@
-     
-        
 """
 Centralized Error Handling
 Consistent error responses and logging across the application
@@ -93,10 +91,23 @@ async def http_exception_handler(request: Request, exc: HTTPException) -> JSONRe
     """Handle HTTP exceptions"""
     error_handler.log_error(exc, request)
     
+    # Handle case where exc.detail might be a dict or string
+    error_message = exc.detail
+    error_details = None
+    
+    if isinstance(exc.detail, dict):
+        # If detail is a dict, extract error message and details
+        error_message = exc.detail.get('error', str(exc.detail))
+        error_details = {k: v for k, v in exc.detail.items() if k != 'error'}
+    elif not isinstance(exc.detail, str):
+        # If detail is neither string nor dict, convert to string
+        error_message = str(exc.detail)
+    
     error_response = error_handler.create_error_response(
-        error=exc.detail,
+        error=error_message,
         status_code=exc.status_code,
-        error_code=f"HTTP_{exc.status_code}"
+        error_code=f"HTTP_{exc.status_code}",
+        details=error_details
     )
     
     return JSONResponse(

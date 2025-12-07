@@ -263,6 +263,11 @@ def get_coupon_repo():
     from app.repositories.coupon import CouponRepository
     return CouponRepository()
 
+def get_config_repo():
+    """Get config repository instance"""
+    from app.repositories.config import ConfigRepository
+    return ConfigRepository()
+
 def get_repository_manager() -> RepositoryManager:
     """Get repository manager instance"""
     return repo_manager

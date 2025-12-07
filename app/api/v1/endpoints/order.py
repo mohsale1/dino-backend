@@ -580,33 +580,56 @@ async def get_venue_orders(
         
         # Process orders to ensure all required fields are present and populate missing data
         processed_orders = []
-        menu_repo = get_repository_manager().get_repository('menu_item')
+        table_repo = get_repository_manager().get_repository('table')
         
         for order in orders_data:
-            # Remove order_number field and ensure required fields are present with defaults
+            # Get table number if table_id exists
+            table_number = None
+            table_id = order.get('table_id')
+            if table_id:
+                try:
+                    table = await table_repo.get_by_id(table_id)
+                    if table:
+                        table_number = table.get('table_number')
+                except Exception as e:
+                    logger.warning(f"Failed to fetch table number for table_id {table_id}: {e}")
+            
+            # Process items to ensure menu_item_name field exists
+            items = order.get('items', [])
+            processed_items = []
+            for item in items:
+                processed_item = {
+                    "menu_item_id": item.get('menu_item_id', ''),
+                    "menu_item_name": item.get('menu_item_name') or item.get('name', ''),  # Support both fields
+                    "quantity": item.get('quantity', 1),
+                    "unit_price": item.get('unit_price', 0.0),
+                    "total_price": item.get('total_price', 0.0),
+                    "special_instructions": item.get('special_instructions')
+                }
+                processed_items.append(processed_item)
+            
+            # Build processed order with all required fields
             processed_order = {
                 "id": order.get('id', ''),
-        
+                "order_number": order.get('order_number', ''),
                 "order_type": order.get('order_type', 'dine_in'),
-                "table_id": order.get('table_id'),
-                "items": order.get('items', []),
+                "table_id": table_id,
+                "table_number": table_number,  # Add table number
+                "items": processed_items,
                 "subtotal": order.get('subtotal', 0.0),
                 "tax_amount": order.get('tax_amount', 0.0),
                 "discount_amount": order.get('discount_amount', 0.0),
                 "total_amount": order.get('total_amount', 0.0),
                 "status": order.get('status', 'pending'),
                 "payment_status": order.get('payment_status', 'pending'),
-                "payment_method": order.get('payment_method'),  # Populate with default if null
+                "payment_method": order.get('payment_method'),
                 "estimated_ready_time": order.get('estimated_ready_time'),
                 "actual_ready_time": order.get('actual_ready_time'),
-                "special_instructions": order.get('special_instructions'),
+                "special_instructions": order.get('special_instructions', ''),
                 "created_at": order.get('created_at', datetime.now(timezone.utc)),
                 "updated_at": order.get('updated_at', datetime.now(timezone.utc)),
             }
-
-
             
-           
             processed_orders.append(processed_order)
         
         logger.info(f"Retrieved {len(processed_orders)} orders for venue: {venue_id}")
@@ -936,15 +959,27 @@ async def create_public_order(order_data: Dict[str, Any]):
 @router.get("/public/{order_id}/status",
             response_model=Dict[str, Any],
             summary="Track Order Status",
-            description="Track order status using order ID")
+            description="Track order status using order ID or order number")
 async def track_order_status(order_id: str):
     """
     Track order status for customers
+    Accepts either order_id (UUID) or order_number (e.g., PUB-202411281234-ABC123)
     """
     try:
         order_repo = get_repository_manager().get_repository('order')
         
+        # Try to get by ID first (UUID format)
         order = await order_repo.get_by_id(order_id)
+        
+        # If not found and looks like an order number, search by order_number
+        if not order:
+            # Check if it looks like an order number (contains hyphens or starts with common prefixes)
+            if '-' in order_id or order_id.startswith(('ORD', 'PUB', 'ORDER')):
+                # Search by order_number
+                orders = await order_repo.query([('order_number', '==', order_id)])
+                if orders:
+                    order = orders[0]
+        
         if not order:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,

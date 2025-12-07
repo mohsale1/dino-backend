@@ -25,6 +25,7 @@ from app.repositories.permission import PermissionRepository, get_permission_rep
 from app.repositories.transaction import TransactionRepository, get_transaction_repository
 from app.repositories.notification import NotificationRepository, get_notification_repository
 from app.repositories.review import ReviewRepository, get_review_repository
+from app.repositories.config import ConfigRepository
 
 __all__ = [
     # Base
@@ -45,6 +46,7 @@ __all__ = [
     'TransactionRepository',
     'NotificationRepository',
     'ReviewRepository',
+    'ConfigRepository',
     
     # Getter Functions
     'get_workspace_repository',

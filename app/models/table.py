@@ -2,10 +2,9 @@
 Table Models
 Database entities and DTOs for tables and table areas
 """
-from pydantic import Field, validator
+from pydantic import Field
 from typing import Optional
 from datetime import datetime
-import re
 
 from app.models.base import BaseSchema, BaseDTO, TimestampMixin
 from app.models.enums import TableStatus
@@ -21,20 +20,8 @@ class TableArea(BaseSchema, TimestampMixin):
     venue_id: str
     name: str = Field(..., min_length=1, max_length=100)
     description: Optional[str] = Field(None, max_length=500)
-    color: Optional[str] = Field(None, max_length=7, description="Hex color code")
     is_active: bool = Field(default=True)
     active: bool = Field(default=True)  # For API compatibility
-    
-    @validator('color')
-    def validate_color(cls, v):
-        """Validate hex color code"""
-        if v is None:
-            return v
-        if not v.startswith('#'):
-            v = f"#{v}"
-        if not re.match(r'^#[0-9A-Fa-f]{6}$', v):
-            raise ValueError('Color must be a valid hex color code')
-        return v
 
 
 class Table(BaseSchema, TimestampMixin):
@@ -56,7 +43,6 @@ class TableAreaCreateDTO(BaseDTO):
     """DTO for creating table areas"""
     name: str = Field(..., min_length=1, max_length=100)
     description: Optional[str] = Field(None, max_length=500)
-    color: Optional[str] = Field(None, max_length=7, description="Hex color code")
     venue_id: str
     active: Optional[bool] = Field(default=True, alias="active")
 
@@ -68,7 +54,6 @@ class TableAreaUpdateDTO(BaseDTO):
     """DTO for updating table areas"""
     name: Optional[str] = Field(None, min_length=1, max_length=100)
     description: Optional[str] = Field(None, max_length=500)
-    color: Optional[str] = Field(None, max_length=7, description="Hex color code")
     active: Optional[bool] = None
     is_active: Optional[bool] = None
 
@@ -79,7 +64,6 @@ class TableAreaResponseDTO(BaseDTO):
     venue_id: str
     name: str
     description: Optional[str] = None
-    color: Optional[str] = None
     is_active: bool
     active: bool
     created_at: datetime

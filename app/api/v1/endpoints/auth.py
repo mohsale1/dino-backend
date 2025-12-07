@@ -29,6 +29,8 @@ async def register_workspace(registration_data: WorkspaceRegistrationDTO):
     2. A new venue under the workspace with venue details  
     3. A new user (owner) with personal details and superadmin role
     4. Links all entities together properly
+    
+    Note: Registration code verification is handled on the frontend before submission
     """
     try:
         from app.database.repository_manager import get_workspace_repo, get_venue_repo, get_user_repo, get_role_repo

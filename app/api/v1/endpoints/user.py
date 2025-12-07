@@ -219,18 +219,20 @@ async def get_users(
         # Get user repository directly
         user_repo = get_user_repo()
         
-        # Build filters
-        query_filters = []
+        # Build filters - always exclude deleted users
+        query_filters = [('deleted', '==', False)]
         if role_id:
             query_filters.append(('role_id', '==', role_id))
         if is_active is not None:
             query_filters.append(('is_active', '==', is_active))
         
         # Get all users first (for total count)
-        if query_filters:
+        if len(query_filters) > 1:
             all_users = await user_repo.query(query_filters)
         else:
-            all_users = await user_repo.get_all()
+            # Just filter deleted users
+            all_users_raw = await user_repo.get_all()
+            all_users = [u for u in all_users_raw if not u.get('deleted', False)]
         
         logger.info(f"Found {len(all_users)} total users in database")
         
@@ -318,7 +320,7 @@ async def create_user(
         logger.info(f"POST /users called with data: {user_data}")
         
         # Basic validation using shared utility
-        required_fields = ['email', 'phone', 'first_name', 'last_name', 'password', 'role_id']
+        required_fields = ['email', 'phone', 'first_name', 'last_name', 'password']
         missing_fields = validate_required_fields(user_data, required_fields)
         if missing_fields:
             raise_validation_error(missing_fields)
@@ -342,15 +344,28 @@ async def create_user(
                 detail="Phone number already exists"
             )
         
-        # Validate role_id exists
+        # Validate role_id if provided, otherwise use default operator role
         from app.database.repository_manager import get_role_repo
         role_repo = get_role_repo()
-        role = await role_repo.get_by_id(user_data['role_id'])
-        if not role:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Invalid role_id: Role does not exist"
-            )
+        
+        role_id = user_data.get('role_id')
+        if role_id:
+            # Validate provided role_id
+            role = await role_repo.get_by_id(role_id)
+            if not role:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Invalid role_id: Role does not exist"
+                )
+        else:
+            # Find operator role as default
+            operator_role = await role_repo.get_by_name('operator')
+            if not operator_role:
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail="Default operator role not found in system"
+                )
+            role_id = operator_role['id']
         
         # Hash password with BCrypt
         try:
@@ -375,9 +390,10 @@ async def create_user(
             'first_name': user_data['first_name'],
             'last_name': user_data['last_name'],
             'hashed_password': server_hash,  # Store the properly processed server hash
-            'role_id': user_data['role_id'],
+            'role_id': role_id,  # Use validated or default role_id
             'venue_ids': user_data.get('venue_ids', []),  # Default to empty array if not provided
             'is_active': True,
+            'deleted': False,  # Initialize deleted field
             'is_verified': False,
             'email_verified': False,
             'phone_verified': False,
@@ -572,6 +588,129 @@ async def activate_user(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to activate user"
+        )
+
+
+@router.delete("/{user_id}", 
+               response_model=SimpleApiResponseDTO,
+               summary="Delete user (soft delete)",
+               description="Soft delete user by ID (set is_active to False and is_deleted to True)")
+async def delete_user(
+    user_id: str,
+    current_user: Dict[str, Any] = Depends(get_current_user)
+):
+    """Soft delete user (set is_active to False and is_deleted to True)"""
+    try:
+        user_repo = get_user_repo()
+        
+        # Check if user exists
+        user = await user_repo.get_by_id(user_id)
+        if not user:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="User not found"
+            )
+        
+        # Check if user is already deleted
+        if user.get('deleted', False):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="User is already deleted"
+            )
+        
+        # Validate permissions
+        await user_endpoint._validate_update_permissions(user, current_user)
+        
+        # Soft delete: deactivate user and mark as deleted
+        await user_repo.update(user_id, {
+            "is_active": False,
+            "deleted": True,
+            "deleted_at": datetime.utcnow()
+        })
+        
+        logger.info(f"User soft deleted: {user_id} by {current_user['id']}")
+        return SimpleApiResponseDTO(
+            success=True,
+            message="User deleted successfully"
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error deleting user {user_id}: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to delete user"
+        )
+
+
+@router.put("/{user_id}/password", 
+            response_model=SimpleApiResponseDTO,
+            summary="Update user password",
+            description="Update user password by ID")
+async def update_user_password(
+    user_id: str,
+    password_data: Dict[str, str],
+    current_user: Dict[str, Any] = Depends(get_current_user)
+):
+    """Update user password"""
+    try:
+        user_repo = get_user_repo()
+        
+        # Check if user exists
+        user = await user_repo.get_by_id(user_id)
+        if not user:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="User not found"
+            )
+        
+        # Validate permissions
+        await user_endpoint._validate_update_permissions(user, current_user)
+        
+        # Get new password from request
+        new_password = password_data.get('password') or password_data.get('new_password')
+        if not new_password:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Password is required"
+            )
+        
+        # Validate password strength
+        if len(new_password) < 8:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Password must be at least 8 characters long"
+            )
+        
+        # Hash the new password
+        try:
+            hashed_password = get_password_hash(new_password)
+        except ValueError as e:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=str(e)
+            )
+        
+        # Update password
+        await user_repo.update(user_id, {
+            "hashed_password": hashed_password,
+            "updated_at": datetime.utcnow()
+        })
+        
+        logger.info(f"Password updated for user: {user_id} by {current_user['id']}")
+        return SimpleApiResponseDTO(
+            success=True,
+            message="Password updated successfully"
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error updating password for user {user_id}: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to update password"
         )
 
 

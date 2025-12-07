@@ -2,18 +2,15 @@
 Dino Multi-Venue Platform - Main API Router
 Simplified router with core endpoints and roles/permissions
 """
-
 from fastapi import APIRouter
 from app.core.logging import get_logger
 
 logger = get_logger(__name__)
 
-# =============================================================================
-# IMPORT CORE ENDPOINTS
-# =============================================================================
+# Import core endpoints
 from app.api.v1.endpoints import (
     user,
-    venue,
+    venue, 
     workspace,
     menu,
     table,
@@ -26,6 +23,7 @@ from app.api.v1.endpoints import (
     websocket,
     tour,
     coupon,
+    config
 )
 
 api_router = APIRouter()
@@ -36,69 +34,69 @@ api_router = APIRouter()
 
 # User Management
 api_router.include_router(
-    user.router,
-    prefix="/users",
+    user.router, 
+    prefix="/users", 
     tags=["users"],
     responses={
         404: {"description": "User not found"},
         403: {"description": "Access denied"},
-        401: {"description": "Authentication required"},
-    },
+        401: {"description": "Authentication required"}
+    }
 )
 
 # Venue Management
 api_router.include_router(
-    venue.router,
-    prefix="/venues",
+    venue.router, 
+    prefix="/venues", 
     tags=["venues"],
     responses={
         404: {"description": "Venue not found"},
         403: {"description": "Access denied"},
-        401: {"description": "Authentication required"},
-    },
+        401: {"description": "Authentication required"}
+    }
 )
 
 # Workspace Management
 api_router.include_router(
-    workspace.router,
-    prefix="/workspaces",
-    tags=["workspaces"],
+    workspace.router, 
+    prefix="/workspaces", 
+    tags=["workspaces"]
 )
 
 # Menu Management
 api_router.include_router(
-    menu.router,
-    prefix="/menu",
+    menu.router, 
+    prefix="/menu", 
     tags=["menu"],
     responses={
         404: {"description": "Menu item/category not found"},
         403: {"description": "Access denied"},
-        401: {"description": "Authentication required"},
-    },
+        401: {"description": "Authentication required"}
+    }
 )
 
 # Table Management
 api_router.include_router(
-    table.router,
-    prefix="/tables",
+    table.router, 
+    prefix="/tables", 
     tags=["tables"],
     responses={
         404: {"description": "Table not found"},
         403: {"description": "Access denied"},
-        401: {"description": "Authentication required"},
-    },
+        401: {"description": "Authentication required"}
+    }
 )
 
 # Order Management
 api_router.include_router(
-    order.router,
-    prefix="/orders",
+    order.router, 
+    prefix="/orders", 
     tags=["orders"],
     responses={
         404: {"description": "Order not found"},
         403: {"description": "Access denied"},
-        401: {"description": "Authentication required"},
-    },
+        401: {"description": "Authentication required"}
+    }
 )
 
 # =============================================================================
@@ -107,25 +105,25 @@ api_router.include_router(
 
 # Authentication & Registration
 api_router.include_router(
-    auth.router,
-    prefix="/auth",
+    auth.router, 
+    prefix="/auth", 
     tags=["authentication"],
     responses={
         401: {"description": "Authentication failed"},
         400: {"description": "Invalid credentials"},
-        409: {"description": "User already exists"},
-    },
+        409: {"description": "User already exists"}
+    }
 )
 
 # Health Check Endpoints
 api_router.include_router(
-    health.router,
+    health.router, 
     prefix="/health",
     tags=["health"],
     responses={
         200: {"description": "Health check successful"},
-        503: {"description": "Service unavailable"},
-    },
+        503: {"description": "Service unavailable"}
+    }
 )
 
 # =============================================================================
@@ -134,28 +132,28 @@ api_router.include_router(
 
 # Roles Management
 api_router.include_router(
-    roles.router,
-    prefix="/roles",
+    roles.router, 
+    prefix="/roles", 
     tags=["roles"],
     responses={
         404: {"description": "Role not found"},
         403: {"description": "Access denied"},
         401: {"description": "Authentication required"},
-        400: {"description": "Invalid role data"},
-    },
+        400: {"description": "Invalid role data"}
+    }
 )
 
 # Permissions Management
 api_router.include_router(
-    permissions.router,
-    prefix="/permissions",
+    permissions.router, 
+    prefix="/permissions", 
     tags=["permissions"],
     responses={
         404: {"description": "Permission not found"},
         403: {"description": "Access denied"},
         401: {"description": "Authentication required"},
-        400: {"description": "Invalid permission data"},
-    },
+        400: {"description": "Invalid permission data"}
+    }
 )
 
 # =============================================================================
@@ -171,9 +169,10 @@ api_router.include_router(
         404: {"description": "Dashboard data not found"},
         403: {"description": "Access denied"},
         401: {"description": "Authentication required"},
-        400: {"description": "No venue assigned"},
-    },
+        400: {"description": "No venue assigned"}
+    }
 )
+
 
 # =============================================================================
 # TOUR MANAGEMENT ENDPOINTS
@@ -181,14 +180,14 @@ api_router.include_router(
 
 # Dashboard Tour Management
 api_router.include_router(
-    tour.router,
-    prefix="/tour",
+    tour.router, 
+    prefix="/tour", 
     tags=["tour"],
     responses={
         404: {"description": "Tour data not found"},
         403: {"description": "Access denied"},
-        401: {"description": "Authentication required"},
-    },
+        401: {"description": "Authentication required"}
+    }
 )
 
 # =============================================================================
@@ -197,14 +196,14 @@ api_router.include_router(
 
 # WebSocket Real-time Updates
 api_router.include_router(
-    websocket.router,
-    prefix="/ws",
+    websocket.router, 
+    prefix="/ws", 
     tags=["websocket"],
     responses={
         401: {"description": "Authentication required"},
         403: {"description": "Access denied"},
-        1008: {"description": "WebSocket authentication failed"},
-    },
+        1008: {"description": "WebSocket authentication failed"}
+    }
 )
 
 # =============================================================================
@@ -220,6 +219,23 @@ api_router.include_router(
         404: {"description": "Coupon not found"},
         403: {"description": "Access denied"},
         401: {"description": "Authentication required"},
-        400: {"description": "Invalid coupon data"},
-    },
+        400: {"description": "Invalid coupon data"}
+    }
+)
+
+# =============================================================================
+# CONFIG MANAGEMENT ENDPOINTS
+# =============================================================================
+
+# Config Management
+api_router.include_router(
+    config.router,
+    prefix="/config",
+    tags=["config"],
+    responses={
+        404: {"description": "Configuration not found"},
+        403: {"description": "Access denied"},
+        401: {"description": "Authentication required"},
+        400: {"description": "Invalid config data"}
+    }
 )
