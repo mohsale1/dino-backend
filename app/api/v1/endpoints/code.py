@@ -16,7 +16,7 @@ logger = get_logger(__name__)
 router = APIRouter()
 
 # Configuration key for the code
-CODE_CONFIG_KEY = "dino.code.value"
+CODE_CONFIG_KEY = "dino.registration.code"
 
 
 async def verify_dinos_role(current_user: Dict[str, Any] = Depends(get_current_user)):
