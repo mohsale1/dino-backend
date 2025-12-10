@@ -537,6 +537,57 @@ async def get_users_with_role(
 # ROLE STATISTICS AND UTILITIES
 # =============================================================================
 
+@router.get("/with-permissions",
+            response_model=List[Dict[str, Any]],
+            summary="Get all roles with permissions",
+            description="Get all roles with their assigned permissions in frontend-aligned format")
+async def get_roles_with_permissions():
+    """Get all roles with permissions - optimized for frontend use"""
+    try:
+        # Get all roles
+        all_roles = await role_repo.get_all()
+        
+        # Enrich each role with permissions in frontend format
+        roles_with_permissions = []
+        for role in all_roles:
+            # Get permissions for this role
+            permissions = await role_repo.get_role_permissions(role['id'])
+            
+            # Transform permissions to frontend format
+            frontend_permissions = []
+            for perm in permissions:
+                frontend_permissions.append({
+                    'id': perm.get('id'),
+                    'name': perm.get('name'),
+                    'resource': perm.get('resource'),
+                    'action': perm.get('action'),
+                    'description': perm.get('description', f"{perm.get('action')} {perm.get('resource')}")
+                })
+            
+            # Build role response in frontend format
+            role_response = {
+                'id': role['id'],
+                'name': role.get('name'),
+                'displayName': role.get('display_name') or role.get('name', '').title(),
+                'description': role.get('description', ''),
+                'permissions': frontend_permissions,
+                'user_count': len(await role_repo.get_users_with_role(role['id'])),
+                'created_at': role.get('created_at'),
+                'updated_at': role.get('updated_at')
+            }
+            roles_with_permissions.append(role_response)
+        
+        logger.info(f"Retrieved {len(roles_with_permissions)} roles with permissions")
+        return roles_with_permissions
+        
+    except Exception as e:
+        logger.error(f"Error getting roles with permissions: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to get roles with permissions"
+        )
+
+
 @router.get("/statistics/overview", 
             response_model=RoleStatisticsDTO,
             summary="Get role statistics",
