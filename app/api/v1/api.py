@@ -23,7 +23,8 @@ from app.api.v1.endpoints import (
     websocket,
     tour,
     coupon,
-    config
+    config,
+    code
 )
 
 api_router = APIRouter()
@@ -239,3 +240,21 @@ api_router.include_router(
         400: {"description": "Invalid config data"}
     }
 )
+
+# =============================================================================
+# CODE MANAGEMENT ENDPOINTS
+# =============================================================================
+
+# Code Management (Dinos Role Only)
+api_router.include_router(
+    code.router,
+    prefix="/code",
+    tags=["code"],
+    responses={
+        404: {"description": "Code not found"},
+        403: {"description": "Access denied - Dinos role required"},
+        401: {"description": "Authentication required"},
+        400: {"description": "Invalid code data"}
+    }
+)
+
