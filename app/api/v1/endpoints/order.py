@@ -561,23 +561,77 @@ async def cancel_order(
 @router.get("/venues/{venue_id}/orders", 
             response_model=List[Dict[str, Any]],
             summary="Get venue orders",
-            description="Get all orders for a specific venue")
+            description="Get all orders for a specific venue with date filtering and pagination")
 async def get_venue_orders(
     venue_id: str,
     status: Optional[OrderStatus] = Query(None, description="Filter by status"),
     limit: Optional[int] = Query(50, ge=1, le=200, description="Maximum number of orders"),
+    start_date: Optional[str] = Query(None, description="Start date (YYYY-MM-DD)"),
+    end_date: Optional[str] = Query(None, description="End date (YYYY-MM-DD)"),
+    page: Optional[int] = Query(1, ge=1, description="Page number"),
+    page_size: Optional[int] = Query(20, ge=1, le=100, description="Items per page"),
     current_user: Dict[str, Any] = Depends(get_current_user)
 ):
-    """Get all orders for a venue"""
+    """Get all orders for a venue with date filtering and pagination"""
     try:
- 
-        
         repo = get_repository_manager().get_repository('order')
         
+        # Parse date filters
+        date_start = None
+        date_end = None
+        
+        if start_date:
+            try:
+                date_start = datetime.strptime(start_date, "%Y-%m-%d").replace(
+                    hour=0, minute=0, second=0, tzinfo=timezone.utc
+                )
+            except ValueError:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Invalid start_date format. Use YYYY-MM-DD"
+                )
+        
+        if end_date:
+            try:
+                date_end = datetime.strptime(end_date, "%Y-%m-%d").replace(
+                    hour=23, minute=59, second=59, tzinfo=timezone.utc
+                )
+            except ValueError:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Invalid end_date format. Use YYYY-MM-DD"
+                )
+        
+        # Get orders with status filter
         if status:
             orders_data = await repo.get_by_status(venue_id, status.value)
         else:
             orders_data = await repo.get_by_venue(venue_id, limit=limit)
+        
+        # Apply date filtering
+        if date_start or date_end:
+            filtered_orders = []
+            for order in orders_data:
+                order_date = order.get('created_at')
+                if order_date:
+                    # Ensure order_date is datetime object
+                    if isinstance(order_date, str):
+                        order_date = datetime.fromisoformat(order_date.replace('Z', '+00:00'))
+                    
+                    # Apply date range filter
+                    if date_start and order_date < date_start:
+                        continue
+                    if date_end and order_date > date_end:
+                        continue
+                    
+                    filtered_orders.append(order)
+            orders_data = filtered_orders
+        
+        # Apply pagination
+        total_orders = len(orders_data)
+        start_idx = (page - 1) * page_size
+        end_idx = start_idx + page_size
+        orders_data = orders_data[start_idx:end_idx]
         
         # Process orders to ensure all required fields are present and populate missing data
         processed_orders = []

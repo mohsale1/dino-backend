@@ -107,27 +107,32 @@ class UserLoginDTO(BaseDTO):
 
 
 class UserUpdateDTO(BaseDTO):
-    """DTO for updating users"""
-    first_name: Optional[str] = Field(None, min_length=1, max_length=50)
-    last_name: Optional[str] = Field(None, min_length=1, max_length=50)
+    """DTO for updating users - accepts camelCase"""
+    firstName: Optional[str] = Field(None, min_length=1, max_length=50, alias="first_name")
+    lastName: Optional[str] = Field(None, min_length=1, max_length=50, alias="last_name")
     phone: Optional[str] = Field(None, pattern="^[0-9]{10}$")
-    is_active: Optional[bool] = None
+    isActive: Optional[bool] = Field(None, alias="is_active")
+    
+    class Config:
+        populate_by_name = True
 
 
 class UserResponseDTO(BaseDTO):
-    """Complete user response DTO"""
+    """Complete user response DTO - camelCase for frontend"""
     id: str
     email: EmailStr
-    phone: str = Field(default="", description="Phone number - required but can be empty during migration")
-    first_name: str
-    last_name: str
-    role_id: str = Field(default="unknown", description="Role ID reference - required but can be unknown during migration")
-    venue_ids: List[str] = Field(default_factory=list, description="List of venue IDs user has access to")
-    is_active: bool = Field(default=True)
-    deleted: bool = Field(default=False, description="Soft delete flag - user is marked as deleted")
-    is_verified: bool = Field(default=False)
-    email_verified: bool = Field(default=False)
-    phone_verified: bool = Field(default=False)
-    last_login: Optional[datetime] = None
-    created_at: datetime
-    updated_at: datetime
+    phone: str = Field(default="", description="Phone number")
+    firstName: str = Field(..., alias="first_name")
+    lastName: str = Field(..., alias="last_name")
+    role: str = Field(default="operator", description="Role name")
+    workspaceId: Optional[str] = Field(None, alias="workspace_id")
+    venueId: Optional[str] = Field(None, description="Active venue ID (first from venueIds)")
+    venueIds: List[str] = Field(default_factory=list, alias="venue_ids")
+    isActive: bool = Field(default=True, alias="is_active")
+    isVerified: bool = Field(default=False, alias="is_verified")
+    createdAt: datetime = Field(..., alias="created_at")
+    updatedAt: datetime = Field(..., alias="updated_at")
+    
+    class Config:
+        populate_by_name = True
+        by_alias = True

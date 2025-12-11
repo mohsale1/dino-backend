@@ -23,7 +23,7 @@ class AuthTokenDTO(BaseDTO):
     refresh_token: Optional[str] = None
     token_type: str = "bearer"
     expires_in: int
-    user: UserResponseDTO
+    user: Optional[Any] = None  # Made optional - can be minimal user data or full UserResponseDTO
 
 
 class TokenDTO(BaseDTO):

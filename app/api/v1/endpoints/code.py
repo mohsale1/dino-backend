@@ -16,7 +16,7 @@ logger = get_logger(__name__)
 router = APIRouter()
 
 # Configuration key for the code
-CODE_CONFIG_KEY = "dino.registration.code"
+CODE_CONFIG_KEY = "dino.code.value"
 
 
 async def verify_dinos_role(current_user: Dict[str, Any] = Depends(get_current_user)):
@@ -28,10 +28,15 @@ async def verify_dinos_role(current_user: Dict[str, Any] = Depends(get_current_u
     
     user_role = await _get_user_role(current_user)
     
-    if user_role != 'dinos':
+    # Log for debugging
+    logger.info(f"Code access attempt - User: {current_user.get('email')}, Role: {user_role}, Role ID: {current_user.get('role_id')}")
+    
+    # Check if user has dinos role (case-insensitive)
+    if user_role.lower() != 'dinos':
+        logger.warning(f"Access denied to code module - User: {current_user.get('email')}, Role: {user_role}")
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Access denied. This feature is only accessible to dinos role."
+            detail=f"Access denied. This feature is only accessible to dinos role. Your role: {user_role}"
         )
     
     return current_user
@@ -124,4 +129,54 @@ async def refresh_code(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to refresh code"
+        )
+
+
+@router.get("/debug/my-role",
+            response_model=ApiResponseDTO,
+            summary="Debug: Check my role",
+            description="Debug endpoint to check current user's role information")
+async def debug_my_role(
+    current_user: Dict[str, Any] = Depends(get_current_user)
+):
+    """
+    Debug endpoint to check current user's role
+    Helps diagnose role-related access issues
+    """
+    try:
+        from app.core.security import _get_user_role
+        from app.database.repository_manager import get_role_repo
+        
+        user_role = await _get_user_role(current_user)
+        role_id = current_user.get('role_id')
+        
+        # Get full role details if role_id exists
+        role_details = None
+        if role_id:
+            role_repo = get_role_repo()
+            role_details = await role_repo.get_by_id(role_id)
+        
+        return ApiResponseDTO(
+            success=True,
+            message="Role information retrieved",
+            data={
+                "user_email": current_user.get('email'),
+                "user_id": current_user.get('id'),
+                "role_name": user_role,
+                "role_id": role_id,
+                "role_details": role_details,
+                "has_dinos_access": user_role.lower() == 'dinos',
+                "raw_user_data": {
+                    "role": current_user.get('role'),
+                    "role_id": current_user.get('role_id'),
+                    "venue_ids": current_user.get('venue_ids', [])
+                }
+            }
+        )
+        
+    except Exception as e:
+        logger.error(f"Error in debug endpoint: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to get role information: {str(e)}"
         )

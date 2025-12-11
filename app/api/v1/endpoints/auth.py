@@ -326,17 +326,14 @@ async def login_user(login_data: UserLoginDTO):
             expires_delta=refresh_token_expires
         )
         
-        # Convert user data to UserResponseDTO
-        user_response_dto = convert_user_to_response_dto(user)
-        
         logger.info(f"Successful login for user: {user['id']}")
         
+        # Return only tokens - frontend will call /auth/me for user details
         return AuthTokenDTO(
             access_token=access_token,
             refresh_token=refresh_token,
             token_type="bearer",
-            expires_in=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
-            user=user_response_dto
+            expires_in=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60
         )
         
     except HTTPException:
@@ -350,9 +347,42 @@ async def login_user(login_data: UserLoginDTO):
 
 @router.get("/me", response_model=UserResponseDTO)
 async def get_current_user_info(current_user: Dict[str, Any] = Depends(get_current_user)):
-    """Get current user information"""
+    """Get current user information with role name - returns camelCase"""
     try:
-        return convert_user_to_response_dto(current_user)
+        from app.database.repository_manager import get_role_repo
+        
+        # Get user role name
+        role_repo = get_role_repo()
+        user_role_id = current_user.get('role_id')
+        role_name = 'operator'
+        
+        if user_role_id:
+            user_role = await role_repo.get_by_id(user_role_id)
+            if user_role:
+                role_name = user_role.get('name', 'operator')
+        
+        # Get venue IDs and determine active venue
+        venue_ids = current_user.get('venue_ids', [])
+        active_venue_id = venue_ids[0] if venue_ids else None
+        
+        # Build camelCase response
+        response_data = {
+            'id': current_user['id'],
+            'email': current_user['email'],
+            'phone': current_user.get('phone', ''),
+            'firstName': current_user.get('first_name', ''),
+            'lastName': current_user.get('last_name', ''),
+            'role': role_name,
+            'workspaceId': current_user.get('workspace_id'),
+            'venueId': active_venue_id,
+            'venueIds': venue_ids,
+            'isActive': current_user.get('is_active', True),
+            'isVerified': current_user.get('is_verified', False),
+            'createdAt': current_user.get('created_at'),
+            'updatedAt': current_user.get('updated_at'),
+        }
+        
+        return response_data
     except Exception as e:
         logger.error(f"Failed to get current user info: {e}", exc_info=True)
         raise HTTPException(
@@ -365,10 +395,20 @@ async def update_current_user(
     user_update: UserUpdateDTO,
     current_user_id: str = Depends(get_current_user_id)
 ):
-    """Update current user information"""
+    """Update current user information - accepts camelCase"""
     try:
-        # Convert to dict and remove None values
-        update_data = user_update.model_dump(exclude_unset=True)
+        # Convert camelCase to snake_case for database
+        update_data = {}
+        data_dict = user_update.model_dump(exclude_unset=True, by_alias=False)
+        
+        if 'firstName' in data_dict:
+            update_data['first_name'] = data_dict['firstName']
+        if 'lastName' in data_dict:
+            update_data['last_name'] = data_dict['lastName']
+        if 'phone' in data_dict:
+            update_data['phone'] = data_dict['phone']
+        if 'isActive' in data_dict:
+            update_data['is_active'] = data_dict['isActive']
         
         if not update_data:
             raise HTTPException(
@@ -377,10 +417,21 @@ async def update_current_user(
             )
         
         user = await get_auth_service().update_user(current_user_id, update_data)
+        
+        # Convert response to camelCase
+        response_data = {
+            'id': user['id'],
+            'email': user['email'],
+            'phone': user.get('phone', ''),
+            'firstName': user.get('first_name', ''),
+            'lastName': user.get('last_name', ''),
+            'isActive': user.get('is_active', True),
+        }
+        
         return ApiResponseDTO(
             success=True,
             message="User updated successfully",
-            data=user
+            data=response_data
         )
     except HTTPException:
         raise
@@ -538,17 +589,14 @@ async def refresh_token(request_data: RefreshTokenRequest):
             expires_delta=refresh_token_expires
         )
         
-        # Convert user data to UserResponseDTO
-        user_response_dto = convert_user_to_response_dto(user)
-        
         logger.info(f"Token refresh successful for user: {user['id']}")
         
+        # Return minimal data - no user object needed for token refresh
         return AuthTokenDTO(
             access_token=access_token,
             refresh_token=new_refresh_token,
             token_type="bearer",
-            expires_in=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
-            user=user_response_dto
+            expires_in=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60
         )
         
     except HTTPException:

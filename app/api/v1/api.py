@@ -257,4 +257,3 @@ api_router.include_router(
         400: {"description": "Invalid code data"}
     }
 )
-
