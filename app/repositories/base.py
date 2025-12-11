@@ -235,3 +235,114 @@ class BaseRepository(ABC, Generic[T]):
         except Exception as e:
             logger.error(f"Error batch deleting documents from {self.collection_name}: {e}")
             raise
+    
+    async def get_by_ids_batch(self, ids: List[str], fields: Optional[List[str]] = None) -> Dict[str, Dict[str, Any]]:
+        """
+        Fetch multiple documents by IDs in a single query (optimized for N+1 problem)
+        
+        Args:
+            ids: List of document IDs to fetch
+            fields: Optional list of fields to return (field projection)
+        
+        Returns:
+            Dictionary mapping document ID to document data
+        
+        Note:
+            Firestore 'in' query supports up to 10 items per query.
+            This method automatically batches larger requests.
+        """
+        if not ids:
+            return {}
+        
+        try:
+            all_docs = {}
+            batch_size = 10  # Firestore limit for 'in' queries
+            
+            # Split into batches of 10
+            for i in range(0, len(ids), batch_size):
+                batch_ids = ids[i:i + batch_size]
+                
+                # Query documents by ID
+                query = self.collection.where('__name__', 'in', [
+                    self.collection.document(doc_id) for doc_id in batch_ids
+                ])
+                
+                # Apply field projection if specified
+                if fields:
+                    query = query.select(fields)
+                
+                docs = list(query.stream())
+                for doc in docs:
+                    all_docs[doc.id] = doc.to_dict()
+            
+            logger.debug(f"Batch fetched {len(all_docs)} documents from {self.collection_name}")
+            return all_docs
+            
+        except Exception as e:
+            logger.error(f"Error batch fetching documents from {self.collection_name}: {e}")
+            raise
+    
+    async def get_with_fields(self, doc_id: str, fields: List[str]) -> Optional[Dict[str, Any]]:
+        """
+        Fetch document with only specified fields (field projection)
+        
+        Args:
+            doc_id: Document ID
+            fields: List of field names to return
+        
+        Returns:
+            Dictionary with only requested fields
+        
+        Example:
+            user = await repo.get_with_fields('user123', ['id', 'email', 'first_name'])
+        """
+        try:
+            doc_ref = self.collection.document(doc_id)
+            doc = doc_ref.get(field_paths=fields)
+            
+            if doc.exists:
+                return doc.to_dict()
+            return None
+            
+        except Exception as e:
+            logger.error(f"Error getting document {doc_id} with fields from {self.collection_name}: {e}")
+            raise
+    
+    async def query_with_fields(
+        self, 
+        filters: List[tuple], 
+        fields: List[str],
+        limit: Optional[int] = None
+    ) -> List[Dict[str, Any]]:
+        """
+        Query documents with field projection
+        
+        Args:
+            filters: List of tuples (field, operator, value)
+            fields: List of field names to return
+            limit: Maximum number of results
+        
+        Returns:
+            List of documents with only requested fields
+        """
+        try:
+            from google.cloud.firestore_v1.base_query import FieldFilter
+            
+            query = self.collection
+            
+            # Apply filters
+            for field, operator, value in filters:
+                query = query.where(filter=FieldFilter(field, operator, value))
+            
+            # Apply field projection
+            query = query.select(fields)
+            
+            if limit:
+                query = query.limit(limit)
+            
+            docs = list(query.stream())
+            return [doc.to_dict() for doc in docs]
+            
+        except Exception as e:
+            logger.error(f"Error querying {self.collection_name} with fields: {e}")
+            raise
