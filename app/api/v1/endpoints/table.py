@@ -375,13 +375,13 @@ async def update_table(
 @router.delete("/{table_id}", 
                response_model=ApiResponseDTO,
                summary="Delete table",
-               description="Deactivate table (soft delete)")
+               description="Delete table permanently")
 async def delete_table(
     table_id: str,
     current_user: Dict[str, Any] = Depends(get_current_admin_user)
 ):
-    """Delete table (soft delete by deactivating)"""
-    return await tables_endpoint.delete_item(table_id, current_user, soft_delete=True)
+    """Delete table (hard delete - permanently removes the table)"""
+    return await tables_endpoint.delete_item(table_id, current_user, soft_delete=False)
 
 
 # =============================================================================
