@@ -153,6 +153,107 @@ async def create_role(
             detail="Failed to create role"
         )
 
+# =============================================================================
+# SPECIAL ENDPOINTS (MUST BE BEFORE /{role_id} TO AVOID ROUTE CONFLICTS)
+# =============================================================================
+
+@router.get("/with-permissions",
+            response_model=List[Dict[str, Any]],
+            summary="Get all roles with permissions",
+            description="Get all roles with their assigned permissions in frontend-aligned format")
+async def get_roles_with_permissions():
+    """Get all roles with permissions - optimized for frontend use"""
+    try:
+        # Get all roles
+        all_roles = await role_repo.get_all()
+        
+        # Enrich each role with permissions in frontend format
+        roles_with_permissions = []
+        for role in all_roles:
+            # Get permissions for this role
+            permissions = await role_repo.get_role_permissions(role['id'])
+            
+            # Transform permissions to frontend format
+            frontend_permissions = []
+            for perm in permissions:
+                frontend_permissions.append({
+                    'id': perm.get('id'),
+                    'name': perm.get('name'),
+                    'resource': perm.get('resource'),
+                    'action': perm.get('action'),
+                    'description': perm.get('description', f"{perm.get('action')} {perm.get('resource')}")
+                })
+            
+            # Build role response in frontend format
+            role_response = {
+                'id': role['id'],
+                'name': role.get('name'),
+                'displayName': role.get('display_name') or role.get('name', '').title(),
+                'description': role.get('description', ''),
+                'permissions': frontend_permissions,
+                'user_count': len(await role_repo.get_users_with_role(role['id'])),
+                'created_at': role.get('created_at'),
+                'updated_at': role.get('updated_at')
+            }
+            roles_with_permissions.append(role_response)
+        
+        logger.info(f"Retrieved {len(roles_with_permissions)} roles with permissions")
+        return roles_with_permissions
+        
+    except Exception as e:
+        logger.error(f"Error getting roles with permissions: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to get roles with permissions"
+        )
+
+@router.get("/statistics/overview", 
+            response_model=RoleStatisticsDTO,
+            summary="Get role statistics",
+            description="Get comprehensive role statistics")
+async def get_role_statistics():
+    """Get role statistics"""
+    try:
+        stats = await role_repo.get_role_statistics()
+        return RoleStatisticsDTO(**stats)
+        
+    except Exception as e:
+        logger.error(f"Error getting role statistics: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to get role statistics"
+        )
+
+@router.get("/check-name", 
+            response_model=Dict[str, bool],
+            summary="Check role name availability",
+            description="Check if role name is available")
+async def check_role_name_availability(
+    name: str = Query(..., description="Role name to check"),
+    workspace_id: Optional[str] = Query(None, description="Workspace ID"),
+    exclude_id: Optional[str] = Query(None, description="Role ID to exclude from check")
+):
+    """Check if role name is available"""
+    try:
+        existing_role = await role_repo.get_by_name(name)
+        
+        # If excluding a specific role ID, check if it's the same role
+        if existing_role and exclude_id and existing_role.get('id') == exclude_id:
+            return {"available": True}
+        
+        return {"available": existing_role is None}
+        
+    except Exception as e:
+        logger.error(f"Error checking role name availability: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to check role name availability"
+        )
+
+# =============================================================================
+# PARAMETERIZED ENDPOINTS (MUST BE AFTER SPECIFIC ROUTES)
+# =============================================================================
+
 @router.get("/{role_id}", 
             response_model=RoleResponseDTO,
             summary="Get role by ID",
@@ -532,108 +633,6 @@ async def get_users_with_role(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to get users with role"
         )
-
-# =============================================================================
-# ROLE STATISTICS AND UTILITIES
-# =============================================================================
-
-@router.get("/with-permissions",
-            response_model=List[Dict[str, Any]],
-            summary="Get all roles with permissions",
-            description="Get all roles with their assigned permissions in frontend-aligned format")
-async def get_roles_with_permissions():
-    """Get all roles with permissions - optimized for frontend use"""
-    try:
-        # Get all roles
-        all_roles = await role_repo.get_all()
-        
-        # Enrich each role with permissions in frontend format
-        roles_with_permissions = []
-        for role in all_roles:
-            # Get permissions for this role
-            permissions = await role_repo.get_role_permissions(role['id'])
-            
-            # Transform permissions to frontend format
-            frontend_permissions = []
-            for perm in permissions:
-                frontend_permissions.append({
-                    'id': perm.get('id'),
-                    'name': perm.get('name'),
-                    'resource': perm.get('resource'),
-                    'action': perm.get('action'),
-                    'description': perm.get('description', f"{perm.get('action')} {perm.get('resource')}")
-                })
-            
-            # Build role response in frontend format
-            role_response = {
-                'id': role['id'],
-                'name': role.get('name'),
-                'displayName': role.get('display_name') or role.get('name', '').title(),
-                'description': role.get('description', ''),
-                'permissions': frontend_permissions,
-                'user_count': len(await role_repo.get_users_with_role(role['id'])),
-                'created_at': role.get('created_at'),
-                'updated_at': role.get('updated_at')
-            }
-            roles_with_permissions.append(role_response)
-        
-        logger.info(f"Retrieved {len(roles_with_permissions)} roles with permissions")
-        return roles_with_permissions
-        
-    except Exception as e:
-        logger.error(f"Error getting roles with permissions: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to get roles with permissions"
-        )
-
-
-@router.get("/statistics/overview", 
-            response_model=RoleStatisticsDTO,
-            summary="Get role statistics",
-            description="Get comprehensive role statistics")
-async def get_role_statistics(
-
-):
-    """Get role statistics"""
-    try:
-        stats = await role_repo.get_role_statistics()
-        return RoleStatisticsDTO(**stats)
-        
-    except Exception as e:
-        logger.error(f"Error getting role statistics: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to get role statistics"
-        )
-
-@router.get("/check-name", 
-            response_model=Dict[str, bool],
-            summary="Check role name availability",
-            description="Check if role name is available")
-async def check_role_name_availability(
-    name: str = Query(..., description="Role name to check"),
-    workspace_id: Optional[str] = Query(None, description="Workspace ID"),
-    exclude_id: Optional[str] = Query(None, description="Role ID to exclude from check")
-):
-    """Check if role name is available"""
-    try:
-        existing_role = await role_repo.get_by_name(name)
-        
-        # If excluding a specific role ID, check if it's the same role
-        if existing_role and exclude_id and existing_role.get('id') == exclude_id:
-            return {"available": True}
-        
-        return {"available": existing_role is None}
-        
-    except Exception as e:
-        logger.error(f"Error checking role name availability: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to check role name availability"
-        )
-
-
 
 # =============================================================================
 # SIMPLIFIED ROLE-PERMISSION ASSIGNMENT (NO AUTH)
