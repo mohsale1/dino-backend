@@ -44,9 +44,6 @@ async def get_all_tables(
     """
     service = TableService()
     
-    if page_size > 100:
-        page_size = 100
-    
     items, total, total_pages = service.get_paginated_tables(
         workspace_id=workspace_id,
         page=page,
@@ -68,6 +65,51 @@ async def get_all_tables(
             "total_pages": total_pages,
             "has_next": page < total_pages,
             "has_prev": page > 1
+        }
+    }
+
+# /statistics must be registered BEFORE /{table_id} to avoid route shadowing
+@router.get("/statistics", response_model=BaseResponse, dependencies=[Depends(ApplicationRoleCheck.require_operator)])
+async def get_table_statistics(
+    workspace_id: str = Query(..., description="Workspace ID"),
+    area_id: Optional[str] = Query(None, description="Filter by area")
+):
+    """Get table statistics"""
+    from src.repositories.TableRepository import TableRepository
+    
+    table_repo = TableRepository()
+    
+    # Build filters
+    filters = {
+        "workspace_id": workspace_id,
+        "is_deleted": False
+    }
+    
+    if area_id:
+        filters["area_id"] = area_id
+    
+    # Get all tables
+    tables = table_repo.get_all(filters=filters)
+    
+    # Calculate statistics
+    total_tables = len(tables)
+    available_tables = len([t for t in tables if t.get('status') == 'available'])
+    occupied_tables = len([t for t in tables if t.get('status') == 'occupied'])
+    reserved_tables = len([t for t in tables if t.get('status') == 'reserved'])
+    maintenance_tables = len([t for t in tables if t.get('status') == 'maintenance'])
+    total_capacity = sum(t.get('capacity', 0) for t in tables)
+    
+    return {
+        "success": True,
+        "message": "Table statistics retrieved successfully",
+        "data": {
+            "total_tables": total_tables,
+            "available_tables": available_tables,
+            "occupied_tables": occupied_tables,
+            "reserved_tables": reserved_tables,
+            "maintenance_tables": maintenance_tables,
+            "total_capacity": total_capacity,
+            "occupancy_rate": round((occupied_tables / total_tables * 100) if total_tables > 0 else 0, 2)
         }
     }
 
@@ -177,14 +219,14 @@ async def restore_table(table_id: str):
 @router.put("/{table_id}/status", response_model=BaseResponse, dependencies=[Depends(ApplicationRoleCheck.require_operator)])
 async def update_table_status(
     table_id: str,
-    status: str = Query(..., description="Table status (available, occupied, reserved, maintenance)")
+    table_status: str = Query(..., description="Table status (available, occupied, reserved, maintenance)")
 ):
     """Update table status (Admin, Manager, Operator)"""
     service = TableService()
     
     # Validate status
     valid_statuses = ['available', 'occupied', 'reserved', 'maintenance']
-    if status not in valid_statuses:
+    if table_status not in valid_statuses:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Invalid status. Must be one of: {', '.join(valid_statuses)}"
@@ -198,7 +240,7 @@ async def update_table_status(
             detail="Table not found"
         )
     
-    success = service.update_table(table_id, {"status": status})
+    success = service.update_table(table_id, {"status": table_status})
     
     if not success:
         raise HTTPException(
@@ -208,20 +250,20 @@ async def update_table_status(
     
     return {
         "success": True,
-        "message": f"Table status updated to {status}"
+        "message": f"Table status updated to {table_status}"
     }
 
 @router.post("/bulk-update-status", response_model=BaseResponse, dependencies=[Depends(ApplicationRoleCheck.require_manager)])
 async def bulk_update_table_status(
     table_ids: List[str],
-    status: str
+    table_status: str
 ):
     """Bulk update table status (Admin, Manager)"""
     service = TableService()
     
     # Validate status
     valid_statuses = ['available', 'occupied', 'reserved', 'maintenance']
-    if status not in valid_statuses:
+    if table_status not in valid_statuses:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Invalid status. Must be one of: {', '.join(valid_statuses)}"
@@ -237,7 +279,7 @@ async def bulk_update_table_status(
                 failed_tables.append({"id": table_id, "reason": "Table not found"})
                 continue
             
-            success = service.update_table(table_id, {"status": status})
+            success = service.update_table(table_id, {"status": table_status})
             if success:
                 updated_count += 1
             else:
@@ -247,53 +289,9 @@ async def bulk_update_table_status(
     
     return {
         "success": True,
-        "message": f"Updated {updated_count} tables to status: {status}",
+        "message": f"Updated {updated_count} tables to status: {table_status}",
         "data": {
             "updated_count": updated_count,
             "failed_tables": failed_tables
-        }
-    }
-
-@router.get("/statistics", response_model=BaseResponse, dependencies=[Depends(ApplicationRoleCheck.require_operator)])
-async def get_table_statistics(
-    workspace_id: str = Query(..., description="Workspace ID"),
-    area_id: Optional[str] = Query(None, description="Filter by area")
-):
-    """Get table statistics"""
-    from src.repositories.TableRepository import TableRepository
-    
-    table_repo = TableRepository()
-    
-    # Build filters
-    filters = {
-        "workspace_id": workspace_id,
-        "is_deleted": False
-    }
-    
-    if area_id:
-        filters["area_id"] = area_id
-    
-    # Get all tables
-    tables = table_repo.get_all(filters=filters)
-    
-    # Calculate statistics
-    total_tables = len(tables)
-    available_tables = len([t for t in tables if t.get('status') == 'available'])
-    occupied_tables = len([t for t in tables if t.get('status') == 'occupied'])
-    reserved_tables = len([t for t in tables if t.get('status') == 'reserved'])
-    maintenance_tables = len([t for t in tables if t.get('status') == 'maintenance'])
-    total_capacity = sum(t.get('capacity', 0) for t in tables)
-    
-    return {
-        "success": True,
-        "message": "Table statistics retrieved successfully",
-        "data": {
-            "total_tables": total_tables,
-            "available_tables": available_tables,
-            "occupied_tables": occupied_tables,
-            "reserved_tables": reserved_tables,
-            "maintenance_tables": maintenance_tables,
-            "total_capacity": total_capacity,
-            "occupancy_rate": round((occupied_tables / total_tables * 100) if total_tables > 0 else 0, 2)
         }
     }

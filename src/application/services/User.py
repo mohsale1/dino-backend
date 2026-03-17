@@ -9,7 +9,7 @@ from typing import Dict, Any, List, Optional, Tuple
 
 class ApplicationUserService:
     def __init__(self):
-        self.user_repo = UserRepository()
+        self.user_repo = UserRepository('application_users')
         self.role_repo = RoleRepository()
     
     def create_application_user(self, user_data: Dict[str, Any]) -> str:
@@ -22,9 +22,9 @@ class ApplicationUserService:
         Returns:
             str: Created user ID
         """
-        # Hash password if provided
+        # Hash password if provided, store under correct key
         if 'password' in user_data:
-            user_data['password'] = get_password_hash(user_data['password'])
+            user_data['password_hash'] = get_password_hash(user_data.pop('password'))
         
         # Set default values
         user_data['is_active'] = user_data.get('is_active', True)
@@ -108,9 +108,9 @@ class ApplicationUserService:
     
     def update_user(self, user_id: str, update_data: Dict[str, Any]) -> bool:
         """Update user"""
-        # Hash password if being updated
+        # Hash password if being updated, store under correct key
         if 'password' in update_data:
-            update_data['password'] = get_password_hash(update_data['password'])
+            update_data['password_hash'] = get_password_hash(update_data.pop('password'))
         
         return self.user_repo.update(user_id, update_data)
     

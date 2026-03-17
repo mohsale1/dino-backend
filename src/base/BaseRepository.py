@@ -1,7 +1,7 @@
 from typing import Optional, List, Dict, Any, Tuple
 from src.config.Database import get_firestore_client
-from google.cloud.firestore_v1 import FieldFilter
-from datetime import datetime
+from google.cloud.firestore_v1 import FieldFilter, Query
+from datetime import datetime, timezone
 
 class BaseRepository:
     """Base repository with generic CRUD operations"""
@@ -15,8 +15,8 @@ class BaseRepository:
         """Create a new document and return the created document"""
         doc_ref = self.collection.document()
         data['id'] = doc_ref.id
-        data['created_at'] = datetime.utcnow()
-        data['updated_at'] = datetime.utcnow()
+        data['created_at'] = datetime.now(timezone.utc)
+        data['updated_at'] = datetime.now(timezone.utc)
         if 'is_active' not in data:
             data['is_active'] = True
         if 'is_deleted' not in data:
@@ -98,7 +98,6 @@ class BaseRepository:
         
         # Apply ordering
         if order_by:
-            from google.cloud.firestore_v1 import Query
             direction = Query.DESCENDING if order_direction.lower() == "desc" else Query.ASCENDING
             query = query.order_by(order_by, direction=direction)
         
@@ -114,7 +113,7 @@ class BaseRepository:
     def update(self, doc_id: str, data: Dict[str, Any]) -> bool:
         """Update document by ID"""
         try:
-            data['updated_at'] = datetime.utcnow()
+            data['updated_at'] = datetime.now(timezone.utc)
             self.collection.document(doc_id).update(data)
             return True
         except Exception:
@@ -133,7 +132,7 @@ class BaseRepository:
         return self.update(doc_id, {
             'is_deleted': True,
             'is_active': False,
-            'deleted_at': datetime.utcnow()
+            'deleted_at': datetime.now(timezone.utc)
         })
     
     def restore(self, doc_id: str) -> bool:
@@ -141,7 +140,7 @@ class BaseRepository:
         return self.update(doc_id, {
             'is_deleted': False,
             'is_active': True,
-            'restored_at': datetime.utcnow()
+            'restored_at': datetime.now(timezone.utc)
         })
     
     def exists(self, field: str, value: Any, include_deleted: bool = False) -> bool:

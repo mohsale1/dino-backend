@@ -7,7 +7,7 @@ class BaseService:
     def __init__(self, repository: BaseRepository):
         self.repository = repository
     
-    def create(self, data: Dict[str, Any]) -> str:
+    def create(self, data: Dict[str, Any]) -> Dict[str, Any]:
         """Create new entity"""
         return self.repository.create(data)
     

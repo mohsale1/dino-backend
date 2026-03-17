@@ -42,7 +42,7 @@ async def create_order(order: OrderCreate, user: Dict[str, Any] = Depends(Applic
 @router.get("", dependencies=[Depends(ApplicationRoleCheck.require_operator)])
 async def get_all_orders(
     page: int = 1,
-    page_size: int = 10,
+    page_size: int = Query(10, ge=1, le=100),
     order_by: str = "created_at",
     order_direction: str = "desc",
     status: str = None,
@@ -59,10 +59,6 @@ async def get_all_orders(
     - status: Filter by order status (optional)
     """
     service = OrderService()
-    
-    # Validate page_size
-    if page_size > 100:
-        page_size = 100
     
     # Filter based on user role and access
     filters = {}
@@ -100,6 +96,41 @@ async def get_all_orders(
             "has_next": page < total_pages,
             "has_prev": page > 1
         }
+    }
+
+# /statistics must be registered BEFORE /{order_id} to avoid route shadowing
+@router.get("/statistics", response_model=BaseResponse, dependencies=[Depends(ApplicationRoleCheck.require_operator)])
+async def get_order_statistics(
+    workspace_id: str = Query(..., description="Workspace ID"),
+    organization_id: Optional[str] = Query(None, description="Organization ID"),
+    start_date: Optional[str] = Query(None, description="Start date (ISO format)"),
+    end_date: Optional[str] = Query(None, description="End date (ISO format)"),
+    user: Dict[str, Any] = Depends(ApplicationRoleCheck.require_operator)
+):
+    """Get order statistics (Admin, Manager, Operator)"""
+    service = OrderService()
+    
+    # Build filters based on user role
+    filters = {"workspace_id": workspace_id}
+    user_role = user.get('role', {}).get('name')
+    
+    if user_role in ['Manager', 'Operator']:
+        filters['organization_id'] = user.get('organization_id')
+    elif organization_id:
+        filters['organization_id'] = organization_id
+    
+    # Add date filters
+    if start_date:
+        filters['start_date'] = start_date
+    if end_date:
+        filters['end_date'] = end_date
+    
+    stats = service.get_statistics(filters)
+    
+    return {
+        "success": True,
+        "message": "Order statistics retrieved successfully",
+        "data": stats
     }
 
 @router.get("/{order_id}", response_model=BaseResponse, dependencies=[Depends(ApplicationRoleCheck.require_operator)])
@@ -220,7 +251,7 @@ async def restore_order(order_id: str):
 @router.put("/{order_id}/status", response_model=BaseResponse, dependencies=[Depends(ApplicationRoleCheck.require_operator)])
 async def update_order_status(
     order_id: str,
-    status: str = Query(..., description="New status (pending, confirmed, preparing, ready, served, completed, cancelled)"),
+    new_status: str = Query(..., description="New status (pending, confirmed, preparing, ready, served, completed, cancelled)"),
     user: Dict[str, Any] = Depends(ApplicationRoleCheck.require_operator)
 ):
     """Update order status (Admin, Manager, Operator)"""
@@ -228,7 +259,7 @@ async def update_order_status(
     
     # Validate status
     valid_statuses = ['pending', 'confirmed', 'preparing', 'ready', 'served', 'completed', 'cancelled']
-    if status not in valid_statuses:
+    if new_status not in valid_statuses:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Invalid status. Must be one of: {', '.join(valid_statuses)}"
@@ -252,7 +283,7 @@ async def update_order_status(
                 detail="Access denied to this order"
             )
     
-    success = service.update(order_id, {"status": status})
+    success = service.update(order_id, {"status": new_status})
     
     if not success:
         raise HTTPException(
@@ -262,7 +293,7 @@ async def update_order_status(
     
     return {
         "success": True,
-        "message": f"Order status updated to {status}"
+        "message": f"Order status updated to {new_status}"
     }
 
 @router.put("/{order_id}/cancel", response_model=BaseResponse, dependencies=[Depends(ApplicationRoleCheck.require_manager)])
@@ -308,44 +339,10 @@ async def cancel_order(order_id: str, user: Dict[str, Any] = Depends(Application
         "message": "Order cancelled successfully"
     }
 
-@router.get("/statistics", response_model=BaseResponse, dependencies=[Depends(ApplicationRoleCheck.require_operator)])
-async def get_order_statistics(
-    workspace_id: str = Query(..., description="Workspace ID"),
-    organization_id: Optional[str] = Query(None, description="Organization ID"),
-    start_date: Optional[str] = Query(None, description="Start date (ISO format)"),
-    end_date: Optional[str] = Query(None, description="End date (ISO format)"),
-    user: Dict[str, Any] = Depends(ApplicationRoleCheck.require_operator)
-):
-    """Get order statistics (Admin, Manager, Operator)"""
-    service = OrderService()
-    
-    # Build filters based on user role
-    filters = {"workspace_id": workspace_id}
-    user_role = user.get('role', {}).get('name')
-    
-    if user_role in ['Manager', 'Operator']:
-        filters['organization_id'] = user.get('organization_id')
-    elif organization_id:
-        filters['organization_id'] = organization_id
-    
-    # Add date filters
-    if start_date:
-        filters['start_date'] = start_date
-    if end_date:
-        filters['end_date'] = end_date
-    
-    stats = service.get_statistics(filters)
-    
-    return {
-        "success": True,
-        "message": "Order statistics retrieved successfully",
-        "data": stats
-    }
-
 @router.post("/bulk-update-status", response_model=BaseResponse, dependencies=[Depends(ApplicationRoleCheck.require_manager)])
 async def bulk_update_order_status(
     order_ids: List[str],
-    status: str,
+    new_status: str,
     user: Dict[str, Any] = Depends(ApplicationRoleCheck.require_manager)
 ):
     """Bulk update order status (Admin, Manager)"""
@@ -353,7 +350,7 @@ async def bulk_update_order_status(
     
     # Validate status
     valid_statuses = ['pending', 'confirmed', 'preparing', 'ready', 'served', 'completed', 'cancelled']
-    if status not in valid_statuses:
+    if new_status not in valid_statuses:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Invalid status. Must be one of: {', '.join(valid_statuses)}"
@@ -378,7 +375,7 @@ async def bulk_update_order_status(
                     failed_orders.append({"id": order_id, "reason": "Access denied"})
                     continue
             
-            success = service.update(order_id, {"status": status})
+            success = service.update(order_id, {"status": new_status})
             if success:
                 updated_count += 1
             else:
@@ -388,7 +385,7 @@ async def bulk_update_order_status(
     
     return {
         "success": True,
-        "message": f"Updated {updated_count} orders to status: {status}",
+        "message": f"Updated {updated_count} orders to status: {new_status}",
         "data": {
             "updated_count": updated_count,
             "failed_orders": failed_orders
@@ -460,7 +457,7 @@ async def create_public_order(
         "special_instructions": order.special_instructions
     }
     
-    # Create order
+    # Create order (total_amount already set; create_order will not overwrite it)
     order_id = service.create_order(order_data)
     
     # Get created order

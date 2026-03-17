@@ -3,7 +3,7 @@ from src.repositories.OrderRepository import OrderRepository
 from typing import Dict, Any
 import random
 import string
-from datetime import datetime
+from datetime import datetime, timezone
 
 class OrderService(BaseService):
     """Order service"""
@@ -14,7 +14,7 @@ class OrderService(BaseService):
     
     def generate_order_number(self) -> str:
         """Generate unique order number"""
-        timestamp = datetime.utcnow().strftime("%Y%m%d%H%M%S")
+        timestamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
         random_suffix = ''.join(random.choices(string.digits, k=4))
         return f"ORD-{timestamp}-{random_suffix}"
     
@@ -23,9 +23,9 @@ class OrderService(BaseService):
         # Generate order number
         data['order_number'] = self.generate_order_number()
         
-        # Calculate total amount from items
-        total_amount = sum(item.get('total_price', 0) for item in data.get('items', []))
-        data['total_amount'] = total_amount
+        # Only calculate total_amount from items if caller has not already provided it
+        if 'total_amount' not in data:
+            data['total_amount'] = sum(item.get('total_price', 0) for item in data.get('items', []))
         
         # Set default status
         if 'status' not in data:
@@ -35,7 +35,7 @@ class OrderService(BaseService):
             data['payment_status'] = 'unpaid'
         
         # Set order date
-        data['order_date'] = datetime.utcnow()
+        data['order_date'] = datetime.now(timezone.utc)
         
         # Get workspace_id from organization
         from src.repositories.OrganizationRepository import OrganizationRepository

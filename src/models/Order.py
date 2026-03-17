@@ -1,6 +1,6 @@
 from src.base.BaseModel import BaseModel
 from typing import Optional, List, Dict, Any
-from datetime import datetime
+from datetime import datetime, timezone
 
 class Order(BaseModel):
     """Order model"""
@@ -39,7 +39,7 @@ class Order(BaseModel):
         # Additional information
         self.special_instructions: Optional[str] = None
         self.notes: Optional[str] = None
-        self.order_date: datetime = datetime.utcnow()
+        self.order_date: datetime = datetime.now(timezone.utc)
         self.confirmed_at: Optional[datetime] = None
         self.completed_at: Optional[datetime] = None
         self.cancelled_at: Optional[datetime] = None

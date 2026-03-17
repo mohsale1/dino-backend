@@ -1,4 +1,5 @@
 from fastapi import APIRouter, HTTPException, status, Depends, Query
+from pydantic import BaseModel
 from src.schemas.ApplicationUser import ApplicationUserCreate, ApplicationUserUpdate, ApplicationUserResponse
 from src.application.services.User import ApplicationUserService
 from src.base.BaseSchema import BaseResponse
@@ -7,6 +8,10 @@ from src.core.Dependencies import get_current_application_user
 from typing import Dict, Any, Optional
 
 router = APIRouter(prefix="/users", tags=["Application Users"])
+
+
+class UpdateRoleRequest(BaseModel):
+    role_id: str
 
 @router.get("/me/data", response_model=BaseResponse)
 async def get_current_user_data(current_user: Dict[str, Any] = Depends(get_current_application_user)):
@@ -202,6 +207,56 @@ async def get_all_application_users(
         }
     }
 
+@router.get("/role/{role_id}", response_model=BaseResponse, dependencies=[Depends(ApplicationRoleCheck.require_admin_or_superadmin)])
+async def get_users_by_role(role_id: str):
+    """Get all users with specific role (Admin only)"""
+    service = ApplicationUserService()
+
+    users = service.get_users_by_role(role_id)
+
+    return {
+        "success": True,
+        "message": "Users retrieved successfully",
+        "data": users
+    }
+
+@router.get("/workspace/{workspace_id}", response_model=BaseResponse, dependencies=[Depends(ApplicationRoleCheck.require_admin_or_superadmin)])
+async def get_users_by_workspace(workspace_id: str):
+    """Get all users in a workspace (Admin only)"""
+    service = ApplicationUserService()
+
+    users = service.get_users_by_workspace(workspace_id)
+
+    return {
+        "success": True,
+        "message": "Users retrieved successfully",
+        "data": users
+    }
+
+@router.get("/organization/{organization_id}", response_model=BaseResponse, dependencies=[Depends(ApplicationRoleCheck.require_manager_or_superadmin)])
+async def get_users_by_organization(organization_id: str, current_user: Dict[str, Any] = Depends(ApplicationRoleCheck.require_manager_or_superadmin)):
+    """Get all users in an organization (Admin, Manager)"""
+    service = ApplicationUserService()
+
+    # Check access based on role
+    user_role = current_user.get('role', {}).get('name')
+
+    if user_role == 'Manager':
+        # Managers can only view users in their organization
+        if organization_id != current_user.get('organization_id'):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Access denied to this organization"
+            )
+
+    users = service.get_users_by_organization(organization_id)
+
+    return {
+        "success": True,
+        "message": "Users retrieved successfully",
+        "data": users
+    }
+
 @router.get("/{user_id}", response_model=BaseResponse, dependencies=[Depends(ApplicationRoleCheck.require_manager_or_superadmin)])
 async def get_application_user(user_id: str, current_user: Dict[str, Any] = Depends(ApplicationRoleCheck.require_manager_or_superadmin)):
     """Get application user details (Admin, Manager)"""
@@ -380,18 +435,18 @@ async def deactivate_user(user_id: str, current_user: Dict[str, Any] = Depends(A
     }
 
 @router.put("/{user_id}/role", response_model=BaseResponse, dependencies=[Depends(ApplicationRoleCheck.require_admin_or_superadmin)])
-async def update_user_role(user_id: str, role_id: str):
+async def update_user_role(user_id: str, request: UpdateRoleRequest):
     """Update user role (Admin only)"""
     service = ApplicationUserService()
     
     # Validate role exists and is an application role
-    if not service.validate_application_role(role_id):
+    if not service.validate_application_role(request.role_id):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Invalid role or role is not an application role (role_type must be 1)"
         )
     
-    success = service.update_user(user_id, {"role_id": role_id})
+    success = service.update_user(user_id, {"role_id": request.role_id})
     
     if not success:
         raise HTTPException(
@@ -404,52 +459,3 @@ async def update_user_role(user_id: str, role_id: str):
         "message": "User role updated successfully"
     }
 
-@router.get("/role/{role_id}", response_model=BaseResponse, dependencies=[Depends(ApplicationRoleCheck.require_admin_or_superadmin)])
-async def get_users_by_role(role_id: str):
-    """Get all users with specific role (Admin only)"""
-    service = ApplicationUserService()
-    
-    users = service.get_users_by_role(role_id)
-    
-    return {
-        "success": True,
-        "message": "Users retrieved successfully",
-        "data": users
-    }
-
-@router.get("/workspace/{workspace_id}", response_model=BaseResponse, dependencies=[Depends(ApplicationRoleCheck.require_admin_or_superadmin)])
-async def get_users_by_workspace(workspace_id: str):
-    """Get all users in a workspace (Admin only)"""
-    service = ApplicationUserService()
-    
-    users = service.get_users_by_workspace(workspace_id)
-    
-    return {
-        "success": True,
-        "message": "Users retrieved successfully",
-        "data": users
-    }
-
-@router.get("/organization/{organization_id}", response_model=BaseResponse, dependencies=[Depends(ApplicationRoleCheck.require_manager_or_superadmin)])
-async def get_users_by_organization(organization_id: str, current_user: Dict[str, Any] = Depends(ApplicationRoleCheck.require_manager_or_superadmin)):
-    """Get all users in an organization (Admin, Manager)"""
-    service = ApplicationUserService()
-    
-    # Check access based on role
-    user_role = current_user.get('role', {}).get('name')
-    
-    if user_role == 'Manager':
-        # Managers can only view users in their organization
-        if organization_id != current_user.get('organization_id'):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Access denied to this organization"
-            )
-    
-    users = service.get_users_by_organization(organization_id)
-    
-    return {
-        "success": True,
-        "message": "Users retrieved successfully",
-        "data": users
-    }

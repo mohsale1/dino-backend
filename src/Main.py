@@ -136,7 +136,6 @@ app.include_router(ApplicationDashboard.router, prefix="/api/v1/application", ta
 app.include_router(ApplicationReviews.router, prefix="/api/v1/application", tags=["Application"])
 
 app.include_router(ApplicationHomePage.router, prefix="/api/v1/application", tags=["Application"])
-app.include_router(ApplicationHomePage.router, prefix="/api/v1/public", tags=["Public"])  # Public access
 
 if __name__ == "__main__":
     import uvicorn

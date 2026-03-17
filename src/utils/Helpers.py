@@ -1,7 +1,7 @@
 from datetime import datetime
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
-def format_datetime(dt: datetime) -> str:
+def format_datetime(dt: datetime) -> Optional[str]:
     """Format datetime to ISO string"""
     return dt.isoformat() if dt else None
 

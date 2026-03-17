@@ -1,5 +1,5 @@
 from src.base.BaseModel import BaseModel
-from typing import Optional, List, Dict, Any
+from typing import Optional
 
 class Item(BaseModel):
     """Item model - represents menu items"""

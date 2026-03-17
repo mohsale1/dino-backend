@@ -14,10 +14,6 @@ class RoleService(BaseService):
         """Create new role"""
         return self.create(data)
     
-    def get_role_by_id(self, role_id: str) -> Dict[str, Any]:
-        """Get role by ID"""
-        return self.get_by_id(role_id)
-    
     def get_all_roles(self) -> List[Dict[str, Any]]:
         """Get all roles"""
         return self.get_all()

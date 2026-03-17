@@ -3,73 +3,68 @@ Home Page Info Repository
 Handles database operations for home page information
 """
 
-from src.base.BaseRepository import BaseRepository
+import logging
+from datetime import datetime, timezone
 from typing import Dict, Any, Optional, List
+
+from src.base.BaseRepository import BaseRepository
+
+logger = logging.getLogger(__name__)
 
 
 class HomePageInfoRepository(BaseRepository):
     """
     Repository for home page information
-    
+
     Manages a single document containing:
     - stats: array of stat objects
     - testimonials: array of testimonial objects
     - contact: contact information object
     """
-    
+
     def __init__(self):
         super().__init__("homepage_info")
-    
+
     def get_homepage_info(self) -> Optional[Dict[str, Any]]:
         """
-        Get the home page info (there should only be one document)
-        Returns the first document or None
-        
+        Get the home page info (there should only be one document).
+        Returns the first document or None.
+
         Note: Validates that the document has the correct structure
-        (stats, testimonials, contact keys)
+        (stats, testimonials, contact keys).
         """
         items = self.get_all(limit=1)
-        
+
         if not items:
             return None
-        
+
         doc = items[0]
-        
-        # Validate structure - ensure it's not a user document or other wrong data
-        required_keys = ['stats', 'testimonials', 'contact']
+
         invalid_keys = ['password_hash', 'role_id', 'workspace_id', 'organization_id']
-        
-        # Check for invalid keys (user document in wrong collection)
         if any(key in doc for key in invalid_keys):
-            import logging
-            logger = logging.getLogger(__name__)
             logger.error(f"Found invalid document in homepage_info collection (ID: {doc.get('id')})")
             logger.error("This appears to be a user document in the wrong collection!")
             logger.error("Please run: python backend/cleanup_homepage_info.py")
             return None
-        
-        # Check for required keys
+
+        required_keys = ['stats', 'testimonials', 'contact']
         if not all(key in doc for key in required_keys):
-            import logging
-            logger = logging.getLogger(__name__)
             logger.warning(f"Homepage info document missing required keys. Found: {list(doc.keys())}")
-        
+
         return doc
-    
+
     def get_or_create_homepage_info(self) -> Dict[str, Any]:
         """
-        Get existing home page info or create default one with proper default values
+        Get existing home page info or create a default one.
         """
         existing = self.get_homepage_info()
-        
+
         if existing:
             return existing
-        
-        # Create default home page info with proper default values
-        from datetime import datetime
-        
+
+        now = datetime.now(timezone.utc)
+
         default_data = {
-            # Stats array - default values
             'stats': [
                 {
                     "title": "Active Restaurants",
@@ -104,8 +99,6 @@ class HomePageInfoRepository(BaseRepository):
                     "icon": "menu_book"
                 }
             ],
-            
-            # Testimonials array - default Indian business reviews
             'testimonials': [
                 {
                     "name": "Rajesh Kumar",
@@ -115,7 +108,7 @@ class HomePageInfoRepository(BaseRepository):
                     "rating": 5,
                     "comment": "Dino transformed our restaurant operations completely. Orders are faster, more accurate, and our customers love the digital menu experience. Highly recommended!",
                     "avatar": "RK",
-                    "created_at": datetime.utcnow().isoformat() + "Z"
+                    "created_at": now.isoformat()
                 },
                 {
                     "name": "Priya Sharma",
@@ -125,7 +118,7 @@ class HomePageInfoRepository(BaseRepository):
                     "rating": 5,
                     "comment": "The analytics dashboard gives us incredible insights into our business. We've increased our revenue by 30% since implementing Dino. Best decision ever!",
                     "avatar": "PS",
-                    "created_at": datetime.utcnow().isoformat() + "Z"
+                    "created_at": now.isoformat()
                 },
                 {
                     "name": "Amit Patel",
@@ -135,7 +128,7 @@ class HomePageInfoRepository(BaseRepository):
                     "rating": 5,
                     "comment": "Managing multiple outlets was a challenge until we found Dino. Now everything is centralized and efficient. Our staff loves how easy it is to use.",
                     "avatar": "AP",
-                    "created_at": datetime.utcnow().isoformat() + "Z"
+                    "created_at": now.isoformat()
                 },
                 {
                     "name": "Sneha Reddy",
@@ -145,7 +138,7 @@ class HomePageInfoRepository(BaseRepository):
                     "rating": 5,
                     "comment": "The QR code ordering system is a game-changer! Our customers can browse the menu and place orders seamlessly. Customer satisfaction has gone up significantly.",
                     "avatar": "SR",
-                    "created_at": datetime.utcnow().isoformat() + "Z"
+                    "created_at": now.isoformat()
                 },
                 {
                     "name": "Vikram Singh",
@@ -155,7 +148,7 @@ class HomePageInfoRepository(BaseRepository):
                     "rating": 5,
                     "comment": "Dino helped us go digital without any hassle. The support team is amazing and the platform is very user-friendly. Our business has grown 40% in just 6 months!",
                     "avatar": "VS",
-                    "created_at": datetime.utcnow().isoformat() + "Z"
+                    "created_at": now.isoformat()
                 },
                 {
                     "name": "Meera Iyer",
@@ -165,11 +158,9 @@ class HomePageInfoRepository(BaseRepository):
                     "rating": 5,
                     "comment": "Real-time order tracking and inventory management features are outstanding. We can now serve more customers efficiently and reduce wastage significantly.",
                     "avatar": "MI",
-                    "created_at": datetime.utcnow().isoformat() + "Z"
+                    "created_at": now.isoformat()
                 }
             ],
-            
-            # Contact information
             'contact': {
                 "email": "contact@dino.restaurant",
                 "phone": "+1 (555) 123-4567",
@@ -179,84 +170,60 @@ class HomePageInfoRepository(BaseRepository):
                 "country": "United States",
                 "postal_code": "94102"
             },
-            
-            # Metadata
-            'created_at': datetime.utcnow(),
-            'updated_at': datetime.utcnow(),
+            'created_at': now,
+            'updated_at': now,
             'is_deleted': False,
             'is_active': True
         }
-        
-        # Create document
-        doc_ref = self.collection.document()
-        default_data['id'] = doc_ref.id
-        doc_ref.set(default_data)
-        
-        return self.get_by_id(doc_ref.id)
-    
+
+        created = self.create(default_data)
+        return self.get_by_id(created['id'])
+
     def update_homepage_info(self, data: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Update home page info (creates if doesn't exist)
-        Supports partial updates - only updates provided fields
+        Update home page info (creates if doesn't exist).
+        Supports partial updates — only the provided fields are written.
         """
-        from datetime import datetime
-        
         existing = self.get_homepage_info()
-        
-        # Add updated timestamp
-        data['updated_at'] = datetime.utcnow()
-        
+
+        data['updated_at'] = datetime.now(timezone.utc)
+
         if existing:
-            # Merge with existing data for partial updates
-            updated_data = {**existing, **data}
-            self.update(existing['id'], updated_data)
+            self.update(existing['id'], data)
             return self.get_by_id(existing['id'])
         else:
-            # Create new with provided data
-            data['created_at'] = datetime.utcnow()
-            homepage_id = self.create(data)
-            return self.get_by_id(homepage_id)
-    
+            data['created_at'] = datetime.now(timezone.utc)
+            created = self.create(data)
+            return self.get_by_id(created['id'])
+
     def update_stats(self, stats: List[Dict[str, Any]]) -> Dict[str, Any]:
-        """
-        Update only the stats array
-        """
+        """Update only the stats array"""
         return self.update_homepage_info({"stats": stats})
-    
+
     def update_testimonials(self, testimonials: List[Dict[str, Any]]) -> Dict[str, Any]:
-        """
-        Update only the testimonials array
-        """
+        """Update only the testimonials array"""
         return self.update_homepage_info({"testimonials": testimonials})
-    
+
     def update_contact(self, contact: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Update only the contact information
-        """
+        """Update only the contact information"""
         return self.update_homepage_info({"contact": contact})
-    
+
     def get_stats(self) -> List[Dict[str, Any]]:
-        """
-        Get stats array from homepage_info
-        """
+        """Get stats array from homepage_info"""
         info = self.get_or_create_homepage_info()
         return info.get('stats', [])
-    
+
     def get_testimonials(self, limit: Optional[int] = None) -> List[Dict[str, Any]]:
-        """
-        Get testimonials array from homepage_info
-        """
+        """Get testimonials array from homepage_info"""
         info = self.get_or_create_homepage_info()
         testimonials = info.get('testimonials', [])
-        
+
         if limit and limit > 0:
             return testimonials[:limit]
-        
+
         return testimonials
-    
+
     def get_contact(self) -> Dict[str, Any]:
-        """
-        Get contact information from homepage_info
-        """
+        """Get contact information from homepage_info"""
         info = self.get_or_create_homepage_info()
         return info.get('contact', {})

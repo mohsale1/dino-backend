@@ -190,7 +190,7 @@ class ApplicationInitializer:
             logger.info("=" * 70)
             logger.info("You can now login with:")
             logger.info(f"  Email: {superadmin_email}")
-            logger.info(f"  Password: {superadmin_password}")
+            logger.info("  Password: [set via SUPERADMIN_PASSWORD environment variable]")
             logger.info("=" * 70)
             
             return created_user
@@ -293,7 +293,7 @@ class ApplicationInitializer:
         
         try:
             from src.repositories.HomePageInfoRepository import HomePageInfoRepository
-            from datetime import datetime
+            from datetime import datetime, timezone
             
             repo = HomePageInfoRepository()
             
@@ -354,7 +354,7 @@ class ApplicationInitializer:
                         "rating": 5,
                         "comment": "Dino transformed our restaurant operations completely. Orders are faster, more accurate, and our customers love the digital menu experience. Highly recommended!",
                         "avatar": "RK",
-                        "created_at": datetime.utcnow().isoformat() + "Z"
+                        "created_at": datetime.now(timezone.utc).isoformat() + "Z"
                     },
                     {
                         "name": "Priya Sharma",
@@ -364,7 +364,7 @@ class ApplicationInitializer:
                         "rating": 5,
                         "comment": "The analytics dashboard gives us incredible insights into our business. We've increased our revenue by 30% since implementing Dino. Best decision ever!",
                         "avatar": "PS",
-                        "created_at": datetime.utcnow().isoformat() + "Z"
+                        "created_at": datetime.now(timezone.utc).isoformat() + "Z"
                     },
                     {
                         "name": "Amit Patel",
@@ -374,7 +374,7 @@ class ApplicationInitializer:
                         "rating": 5,
                         "comment": "Managing multiple outlets was a challenge until we found Dino. Now everything is centralized and efficient. Our staff loves how easy it is to use.",
                         "avatar": "AP",
-                        "created_at": datetime.utcnow().isoformat() + "Z"
+                        "created_at": datetime.now(timezone.utc).isoformat() + "Z"
                     },
                     {
                         "name": "Sneha Reddy",
@@ -384,7 +384,7 @@ class ApplicationInitializer:
                         "rating": 5,
                         "comment": "The QR code ordering system is a game-changer! Our customers can browse the menu and place orders seamlessly. Customer satisfaction has gone up significantly.",
                         "avatar": "SR",
-                        "created_at": datetime.utcnow().isoformat() + "Z"
+                        "created_at": datetime.now(timezone.utc).isoformat() + "Z"
                     },
                     {
                         "name": "Vikram Singh",
@@ -394,7 +394,7 @@ class ApplicationInitializer:
                         "rating": 5,
                         "comment": "Dino helped us go digital without any hassle. The support team is amazing and the platform is very user-friendly. Our business has grown 40% in just 6 months!",
                         "avatar": "VS",
-                        "created_at": datetime.utcnow().isoformat() + "Z"
+                        "created_at": datetime.now(timezone.utc).isoformat() + "Z"
                     },
                     {
                         "name": "Meera Iyer",
@@ -404,7 +404,7 @@ class ApplicationInitializer:
                         "rating": 5,
                         "comment": "Real-time order tracking and inventory management features are outstanding. We can now serve more customers efficiently and reduce wastage significantly.",
                         "avatar": "MI",
-                        "created_at": datetime.utcnow().isoformat() + "Z"
+                        "created_at": datetime.now(timezone.utc).isoformat() + "Z"
                     }
                 ],
                 
@@ -420,12 +420,13 @@ class ApplicationInitializer:
                 },
                 
                 # Metadata
-                'created_at': datetime.utcnow(),
-                'updated_at': datetime.utcnow(),
+                'created_at': datetime.now(timezone.utc),
+                'updated_at': datetime.now(timezone.utc),
                 'is_deleted': False
             }
             
-            homepage_id = repo.create(default_data)
+            created_homepage = repo.create(default_data)
+            homepage_id = created_homepage.get('id')
             
             logger.info("=" * 70)
             logger.info("✓ Homepage information created successfully!")

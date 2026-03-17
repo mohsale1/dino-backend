@@ -21,6 +21,7 @@ class BaseUser(BaseModel):
     def to_dict(self, include_password: bool = False) -> dict:
         """Convert user to dictionary"""
         data = super().to_dict()
+        data['full_name'] = self.full_name
         if not include_password:
             data.pop('password_hash', None)
         return data

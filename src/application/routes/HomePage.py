@@ -10,7 +10,7 @@ The homepage_info collection contains:
 
 from fastapi import APIRouter, HTTPException
 from typing import Optional, List, Dict, Any
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field, field_validator
 from src.application.services.HomePage import HomePageService
 
 router = APIRouter(prefix="/home", tags=["Home Page"])
@@ -46,7 +46,8 @@ class TestimonialItem(BaseModel):
     avatar: Optional[str] = Field(None, max_length=500, description="Avatar URL or initials")
     created_at: Optional[str] = Field(None, description="Creation timestamp")
     
-    @validator('rating')
+    @field_validator('rating')
+    @classmethod
     def validate_rating(cls, v):
         if v < 1 or v > 5:
             raise ValueError('Rating must be between 1 and 5')
@@ -255,7 +256,7 @@ async def update_stats(data: StatsUpdate):
     """
     try:
         service = HomePageService()
-        stats_list = [stat.dict() for stat in data.stats]
+        stats_list = [stat.model_dump() for stat in data.stats]
         result = service.update_stats(stats_list)
         
         return {
@@ -303,7 +304,7 @@ async def update_testimonials(data: TestimonialsUpdate):
     """
     try:
         service = HomePageService()
-        testimonials_list = [t.dict() for t in data.testimonials]
+        testimonials_list = [t.model_dump() for t in data.testimonials]
         result = service.update_testimonials(testimonials_list)
         
         return {
@@ -347,7 +348,7 @@ async def update_contact_info(data: ContactInfoUpdate):
     """
     try:
         service = HomePageService()
-        result = service.update_contact_info(data.contact.dict(exclude_none=True))
+        result = service.update_contact_info(data.contact.model_dump(exclude_none=True))
         
         return {
             "success": True,
@@ -393,11 +394,11 @@ async def update_all_homepage_data(data: HomePageDataUpdate):
         
         update_data = {}
         if data.stats is not None:
-            update_data['stats'] = [stat.dict() for stat in data.stats]
+            update_data['stats'] = [stat.model_dump() for stat in data.stats]
         if data.testimonials is not None:
-            update_data['testimonials'] = [t.dict() for t in data.testimonials]
+            update_data['testimonials'] = [t.model_dump() for t in data.testimonials]
         if data.contact is not None:
-            update_data['contact'] = data.contact.dict(exclude_none=True)
+            update_data['contact'] = data.contact.model_dump(exclude_none=True)
         
         result = service.update_all_homepage_data(update_data)
         
