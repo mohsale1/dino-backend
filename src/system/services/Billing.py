@@ -1,7 +1,7 @@
 from src.base.BaseService import BaseService
 from src.repositories.WorkspaceRepository import WorkspaceRepository
 from typing import Dict, Any, List
-from datetime import datetime, timedelta
+from datetime import datetime, timezone, timedelta
 
 class BillingService(BaseService):
     """Billing service"""
@@ -43,6 +43,8 @@ class BillingService(BaseService):
         if subscription_status not in ['active', 'trial']:
             return None
         
+        now = datetime.now(timezone.utc)
+
         # Check if next_billing_date is already set and in the future
         existing_next_billing = workspace.get('next_billing_date')
         if existing_next_billing:
@@ -52,10 +54,14 @@ class BillingService(BaseService):
                 else:
                     next_billing_dt = existing_next_billing
                 
+                # Ensure aware datetime for comparison
+                if next_billing_dt.tzinfo is None:
+                    next_billing_dt = next_billing_dt.replace(tzinfo=timezone.utc)
+
                 # If it's in the future, return it
-                if next_billing_dt > datetime.utcnow():
+                if next_billing_dt > now:
                     return next_billing_dt.isoformat()
-            except:
+            except (ValueError, TypeError, AttributeError):
                 pass
         
         # Calculate based on subscription_start_date or created_at
@@ -66,11 +72,15 @@ class BillingService(BaseService):
             if isinstance(start_date, str):
                 try:
                     start_dt = datetime.fromisoformat(start_date.replace('Z', '+00:00'))
-                except:
-                    start_dt = datetime.utcnow()
+                except (ValueError, TypeError, AttributeError):
+                    start_dt = now
             else:
                 start_dt = start_date
             
+            # Ensure aware datetime for comparison
+            if start_dt.tzinfo is None:
+                start_dt = start_dt.replace(tzinfo=timezone.utc)
+
             # Calculate billing interval
             if billing_cycle.lower() == 'yearly':
                 days_interval = 365
@@ -81,14 +91,14 @@ class BillingService(BaseService):
             next_billing = start_dt + timedelta(days=days_interval)
             
             # If next billing is in the past, calculate the next future billing date
-            while next_billing < datetime.utcnow():
+            while next_billing < now:
                 next_billing += timedelta(days=days_interval)
             
             return next_billing.isoformat()
         
         # Default to 30 days from now for monthly, 365 for yearly
         days = 365 if billing_cycle.lower() == 'yearly' else 30
-        return (datetime.utcnow() + timedelta(days=days)).isoformat()
+        return (now + timedelta(days=days)).isoformat()
     
     def get_workspace_billing(self, workspace_id: str) -> Dict[str, Any]:
         """Get workspace billing information"""
@@ -155,7 +165,7 @@ class BillingService(BaseService):
         
         # If changing to active status and no start date, set it
         if status.lower() == 'active' and not workspace.get('subscription_start_date'):
-            update_data['subscription_start_date'] = datetime.utcnow()
+            update_data['subscription_start_date'] = datetime.now(timezone.utc).isoformat()
         
         # Recalculate next billing date
         workspace_updated = {**workspace, **update_data}
@@ -193,18 +203,20 @@ class BillingService(BaseService):
         billing_cycle = workspace.get('billing_cycle', 'Monthly')
         amount = self._get_plan_amount(subscription_plan, billing_cycle)
         
+        now = datetime.now(timezone.utc)
+
         # Update last billing date and calculate next billing date
         update_data = {
-            "last_billing_date": datetime.utcnow()
+            "last_billing_date": now.isoformat()
         }
         
         # Calculate next billing date
         if billing_cycle.lower() == 'yearly':
-            next_billing = datetime.utcnow() + timedelta(days=365)
+            next_billing = now + timedelta(days=365)
         else:
-            next_billing = datetime.utcnow() + timedelta(days=30)
+            next_billing = now + timedelta(days=30)
         
-        update_data['next_billing_date'] = next_billing
+        update_data['next_billing_date'] = next_billing.isoformat()
         
         # Reset payment failed count on successful billing
         update_data['payment_failed_count'] = 0
@@ -300,6 +312,8 @@ class BillingService(BaseService):
                 else:
                     monthly_revenue += self._get_plan_amount(plan, 'Monthly')
         
+        now = datetime.now(timezone.utc)
+
         # Calculate total invoices (estimate based on subscription age)
         total_invoices = 0
         for ws in workspaces:
@@ -308,13 +322,17 @@ class BillingService(BaseService):
                 if isinstance(start_date, str):
                     try:
                         start_dt = datetime.fromisoformat(start_date.replace('Z', '+00:00'))
-                    except:
-                        start_dt = datetime.utcnow()
+                    except (ValueError, TypeError, AttributeError):
+                        start_dt = now
                 else:
                     start_dt = start_date
                 
+                # Ensure aware datetime for subtraction
+                if start_dt.tzinfo is None:
+                    start_dt = start_dt.replace(tzinfo=timezone.utc)
+
                 # Calculate months since start
-                months_active = max(1, int((datetime.utcnow() - start_dt).days / 30))
+                months_active = max(1, int((now - start_dt).days / 30))
                 
                 # If yearly billing, count as 1 invoice per year
                 if ws.get('billing_cycle', 'Monthly').lower() == 'yearly':
@@ -339,7 +357,8 @@ class BillingService(BaseService):
         workspaces = self.get_all()
         upcoming = []
         
-        cutoff_date = datetime.utcnow() + timedelta(days=days)
+        now = datetime.now(timezone.utc)
+        cutoff_date = now + timedelta(days=days)
         
         for ws in workspaces:
             if ws.get('subscription_status', '').lower() != 'active':
@@ -349,7 +368,12 @@ class BillingService(BaseService):
             if next_billing:
                 try:
                     next_billing_dt = datetime.fromisoformat(next_billing.replace('Z', '+00:00'))
-                    if datetime.utcnow() <= next_billing_dt <= cutoff_date:
+
+                    # Ensure aware datetime for comparison
+                    if next_billing_dt.tzinfo is None:
+                        next_billing_dt = next_billing_dt.replace(tzinfo=timezone.utc)
+
+                    if now <= next_billing_dt <= cutoff_date:
                         upcoming.append({
                             "workspace_id": ws.get('id'),
                             "workspace_name": ws.get('name'),
@@ -358,7 +382,7 @@ class BillingService(BaseService):
                             "currency": ws.get('currency', 'USD'),
                             "billing_email": ws.get('billing_email')
                         })
-                except:
+                except (ValueError, TypeError, AttributeError):
                     pass
         
         return upcoming

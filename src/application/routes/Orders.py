@@ -5,6 +5,7 @@ from src.base.BaseSchema import BaseResponse
 from src.application.middleware.RoleCheck import ApplicationRoleCheck
 from src.repositories.OrganizationRepository import OrganizationRepository
 from src.repositories.TableRepository import TableRepository
+from src.repositories.ItemRepository import ItemRepository
 from typing import Dict, Any, List, Optional
 from pydantic import BaseModel, Field
 
@@ -65,7 +66,10 @@ async def get_all_orders(
     
     user_role = user.get('role', {}).get('name')
     
-    if user_role == 'Manager':
+    if user_role == 'Admin':
+        # Admin is scoped to their own workspace
+        filters['workspace_id'] = user.get('workspace_id')
+    elif user_role == 'Manager':
         # Manager can only see orders from their organization
         filters['organization_id'] = user.get('organization_id')
     elif user_role == 'Operator':
@@ -425,18 +429,53 @@ async def create_public_order(
         )
     
     # Verify table belongs to organization
-    if table.get('workspace_id') != organization.get('workspace_id'):
+    if table.get('organization_id') != organization_id:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Table does not belong to this organization"
         )
-    
-    # Calculate totals
-    subtotal = sum(item.total_price for item in order.items)
+
+    # Look up each item's authoritative price from the database and validate
+    item_repo = ItemRepository()
+    validated_items = []
+
+    for order_item in order.items:
+        db_item = item_repo.get_by_id(order_item.item_id)
+        if not db_item or not db_item.get('is_active', False):
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Item '{order_item.item_id}' not found or unavailable"
+            )
+
+        server_unit_price = float(db_item.get('price', 0))
+        expected_total = round(server_unit_price * order_item.quantity, 2)
+        submitted_total = round(order_item.total_price, 2)
+
+        if abs(submitted_total - expected_total) > 0.01:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    f"Price mismatch for item '{db_item.get('name', order_item.item_id)}': "
+                    f"expected total {expected_total} "
+                    f"(unit price {server_unit_price} x qty {order_item.quantity}), "
+                    f"got {submitted_total}"
+                )
+            )
+
+        validated_items.append({
+            "item_id": order_item.item_id,
+            "item_name": db_item.get('name', order_item.item_name),
+            "quantity": order_item.quantity,
+            "unit_price": server_unit_price,
+            "total_price": expected_total,
+        })
+
+    # Calculate totals using server-fetched prices
+    subtotal = sum(item['total_price'] for item in validated_items)
     tax_amount = subtotal * 0.05  # 5% tax (adjust as needed)
     service_charge = subtotal * 0.10  # 10% service charge (adjust as needed)
     total_amount = subtotal + tax_amount + service_charge
-    
+
     # Prepare order data
     order_data = {
         "organization_id": organization_id,
@@ -445,11 +484,11 @@ async def create_public_order(
         "area_id": table.get('area_id'),
         "customer_name": order.customer_name,
         "customer_phone": order.customer_phone,
-        "items": [item.model_dump() for item in order.items],
-        "subtotal": subtotal,
-        "tax_amount": tax_amount,
-        "service_charge": service_charge,
-        "total_amount": total_amount,
+        "items": validated_items,
+        "subtotal": round(subtotal, 2),
+        "tax_amount": round(tax_amount, 2),
+        "service_charge": round(service_charge, 2),
+        "total_amount": round(total_amount, 2),
         "currency": "INR",
         "order_type": 0,  # Online order
         "status": "pending",
@@ -524,3 +563,4 @@ async def get_public_orders(
         "message": "Orders retrieved successfully",
         "data": orders
     }
+r

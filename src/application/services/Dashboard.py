@@ -1,5 +1,5 @@
 from typing import Dict, Any, List, Optional
-from datetime import datetime, timedelta
+from datetime import datetime, timezone, timedelta
 from src.application.services.Order import OrderService
 from src.application.services.Item import ItemService
 from src.application.services.Table import TableService
@@ -77,7 +77,7 @@ class DashboardService:
                     "todays_orders": stats.get("todays_orders", 0),
                     "avg_order_value": stats.get("avg_order_value", 0),
                     "table_occupancy_rate": stats.get("table_occupancy_rate", 0),
-                    "occupied_tables": len([t for t in tables if t.get("table_status") == "occupied"]),
+                    "occupied_tables": len([t for t in tables if t.get("status") == "occupied"]),
                     "pending_orders": len([o for o in orders if o.get("status") == "pending"]),
                     "preparing_orders": len([o for o in orders if o.get("status") == "preparing"]),
                     "ready_orders": len([o for o in orders if o.get("status") == "ready"]),
@@ -145,26 +145,29 @@ class DashboardService:
         # Calculate total revenue
         total_revenue = sum(order.get("total_amount", 0) for order in orders)
         
-        # Calculate today's stats
-        today = datetime.utcnow().date()
+        # Calculate today's stats using timezone-aware UTC date
+        today = datetime.now(timezone.utc).date()
         todays_orders = []
         todays_revenue = 0
         
         for order in orders:
-            order_date = order.get("created_at") or order.get("order_date")
-            if order_date:
-                if isinstance(order_date, str):
-                    order_date = datetime.fromisoformat(order_date.replace('Z', '+00:00'))
-                
-                if order_date.date() == today:
-                    todays_orders.append(order)
-                    todays_revenue += order.get("total_amount", 0)
+            order_date = self._get_order_date(order)
+            if order_date is None:
+                continue
+
+            # Ensure order_date is timezone-aware before comparing
+            if order_date.tzinfo is None:
+                order_date = order_date.replace(tzinfo=timezone.utc)
+
+            if order_date.date() == today:
+                todays_orders.append(order)
+                todays_revenue += order.get("total_amount", 0)
         
         # Calculate average order value
         avg_order_value = total_revenue / len(orders) if orders else 0
         
-        # Calculate table occupancy rate
-        occupied_tables = len([t for t in tables if t.get("table_status") == "occupied"])
+        # Calculate table occupancy rate using correct 'status' field
+        occupied_tables = len([t for t in tables if t.get("status") == "occupied"])
         table_occupancy_rate = (occupied_tables / len(tables) * 100) if tables else 0
         
         return {
@@ -215,14 +218,19 @@ class DashboardService:
     def _calculate_revenue_trend(self, orders: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """Calculate revenue trend for last 30 days"""
         trend = []
-        today = datetime.utcnow().date()
+        today = datetime.now(timezone.utc).date()
         
         for i in range(29, -1, -1):
             date = today - timedelta(days=i)
-            day_orders = [
-                o for o in orders 
-                if self._get_order_date(o).date() == date
-            ]
+            day_orders = []
+            for o in orders:
+                order_date = self._get_order_date(o)
+                if order_date is None:
+                    continue
+                if order_date.tzinfo is None:
+                    order_date = order_date.replace(tzinfo=timezone.utc)
+                if order_date.date() == date:
+                    day_orders.append(o)
             
             revenue = sum(o.get("total_amount", 0) for o in day_orders)
             
@@ -399,10 +407,11 @@ class DashboardService:
         
         for order in orders:
             order_date = self._get_order_date(order)
-            hour = order_date.hour
-            
-            hours[hour]["orders"] += 1
-            hours[hour]["revenue"] += order.get("total_amount", 0)
+            if order_date is None:
+                continue
+
+            hours[order_date.hour]["orders"] += 1
+            hours[order_date.hour]["revenue"] += order.get("total_amount", 0)
         
         # Build peak hours list
         peak_list = []
@@ -421,16 +430,17 @@ class DashboardService:
     def _get_recent_activity(self, orders: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """Get recent order activity"""
         
-        # Sort orders by date (most recent first)
+        # Sort orders by date (most recent first), treating None dates as oldest
         sorted_orders = sorted(
             orders,
-            key=lambda o: self._get_order_date(o),
+            key=lambda o: self._get_order_date(o) or datetime.min.replace(tzinfo=timezone.utc),
             reverse=True
         )
         
         # Return top 10 recent orders
         recent = []
         for order in sorted_orders[:10]:
+            order_date = self._get_order_date(order)
             recent.append({
                 "id": order.get("id"),
                 "order_number": order.get("order_number"),
@@ -441,7 +451,7 @@ class DashboardService:
                 "total_amount": order.get("total_amount", 0),
                 "table_number": order.get("table_number"),
                 "venue_name": order.get("venue_name", ""),
-                "createdAt": self._get_order_date(order).isoformat()
+                "createdAt": order_date.isoformat() if order_date is not None else None
             })
         
         return recent
@@ -454,7 +464,7 @@ class DashboardService:
             statuses.append({
                 "id": table.get("id"),
                 "table_number": table.get("table_number"),
-                "status": table.get("table_status", "available"),
+                "status": table.get("status", "available"),
                 "capacity": table.get("capacity"),
                 "area_id": table.get("area_id"),
                 "current_order_id": table.get("current_order_id"),
@@ -463,8 +473,8 @@ class DashboardService:
         
         return statuses
     
-    def _get_order_date(self, order: Dict[str, Any]) -> datetime:
-        """Get order date as datetime object"""
+    def _get_order_date(self, order: Dict[str, Any]) -> Optional[datetime]:
+        """Get order date as datetime object, or None if not present"""
         order_date = order.get("created_at") or order.get("order_date")
         
         if isinstance(order_date, str):
@@ -472,4 +482,4 @@ class DashboardService:
         elif isinstance(order_date, datetime):
             return order_date
         else:
-            return datetime.utcnow()
+            return None

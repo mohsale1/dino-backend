@@ -1,6 +1,13 @@
-from pydantic_settings import BaseSettings
-from typing import List
+import logging
 import warnings
+from typing import List
+
+from pydantic_settings import BaseSettings
+
+logger = logging.getLogger(__name__)
+
+_DEFAULT_SECRET_KEY = "dev-secret-key-change-in-production-use-openssl-rand-hex-32"
+
 
 class Settings(BaseSettings):
     APP_NAME: str = "DINO"
@@ -12,8 +19,8 @@ class Settings(BaseSettings):
     PORT: int = 8080
 
     # JWT Settings - SECRET_KEY should be set in production
-    ENABLE_JWT: bool = False
-    SECRET_KEY: str = "dev-secret-key-change-in-production-use-openssl-rand-hex-32"
+    ENABLE_JWT: bool = True
+    SECRET_KEY: str = _DEFAULT_SECRET_KEY
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7
@@ -51,33 +58,59 @@ class Settings(BaseSettings):
         super().__init__(**kwargs)
 
         # Log configuration on startup
-        print(f"Configuration loaded:")
-        print(f"   Environment: {self.ENVIRONMENT}")
-        print(f"   Debug: {self.DEBUG}")
-        print(f"   Port: {self.PORT}")
-        print(f"   Firebase Project: {self.FIREBASE_PROJECT_ID}")
-        print(f"   CORS Origins: {self.CORS_ORIGINS}")
-        print(f"   Create Default SuperAdmin: {self.CREATE_DEFAULT_SUPERADMIN}")
-        print(f"   JWT Enabled: {self.ENABLE_JWT}")
+        logger.info("Configuration loaded:")
+        logger.info(f"   Environment: {self.ENVIRONMENT}")
+        logger.info(f"   Debug: {self.DEBUG}")
+        logger.info(f"   Port: {self.PORT}")
+        logger.info(f"   Firebase Project: {self.FIREBASE_PROJECT_ID}")
+        logger.info(f"   CORS Origins: {self.CORS_ORIGINS}")
+        logger.info(f"   Create Default SuperAdmin: {self.CREATE_DEFAULT_SUPERADMIN}")
+        logger.info(f"   JWT Enabled: {self.ENABLE_JWT}")
 
         # Warn if using default values in production
-        if self.ENVIRONMENT == "production" and self.SECRET_KEY == "dev-secret-key-change-in-production-use-openssl-rand-hex-32":
+        if self.ENVIRONMENT == "production" and self.SECRET_KEY == _DEFAULT_SECRET_KEY:
             warnings.warn(
                 "WARNING: Using default SECRET_KEY in production! "
                 "Please set a secure SECRET_KEY in environment variables.",
-                UserWarning
+                UserWarning,
             )
 
         if self.ENVIRONMENT == "production" and self.FIREBASE_PROJECT_ID == "dev-project-id":
             warnings.warn(
                 "WARNING: Using default FIREBASE_PROJECT_ID in production! "
                 "Please set FIREBASE_PROJECT_ID in environment variables.",
-                UserWarning
+                UserWarning,
             )
 
         # Log SuperAdmin auto-creation status
         if self.CREATE_DEFAULT_SUPERADMIN:
-            print(f"   SuperAdmin Auto-Creation: Enabled")
-            print(f"   SuperAdmin Email: {self.SUPERADMIN_EMAIL}")
+            logger.info("   SuperAdmin Auto-Creation: Enabled")
+
+        # Startup validation
+        self._validate_production_config()
+
+    def _validate_production_config(self) -> None:
+        """Raise RuntimeError for unsafe configurations in production."""
+        if self.ENVIRONMENT != "production":
+            return
+
+        if not self.ENABLE_JWT:
+            raise RuntimeError(
+                "ENABLE_JWT must not be False in production. "
+                "JWT authentication is required for a production deployment."
+            )
+
+        if self.SECRET_KEY == _DEFAULT_SECRET_KEY:
+            raise RuntimeError(
+                "SECRET_KEY is set to the default development value in production. "
+                "Generate a secure key with: openssl rand -hex 32"
+            )
+
+        if self.CORS_ORIGINS == "*":
+            raise RuntimeError(
+                "CORS_ORIGINS is set to '*' in production. "
+                "Restrict CORS_ORIGINS to specific trusted origins."
+            )
+
 
 settings = Settings()

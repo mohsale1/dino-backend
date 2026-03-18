@@ -8,10 +8,11 @@ The homepage_info collection contains:
 - contact: contact information object
 """
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from typing import Optional, List, Dict, Any
 from pydantic import BaseModel, Field, field_validator
 from src.application.services.HomePage import HomePageService
+from src.application.middleware.RoleCheck import ApplicationRoleCheck
 
 router = APIRouter(prefix="/home", tags=["Home Page"])
 
@@ -222,7 +223,7 @@ async def get_all_home_data():
 # PUT ENDPOINTS (Public - no authentication required)
 # ============================================================================
 
-@router.put("/stats")
+@router.put("/stats", dependencies=[Depends(ApplicationRoleCheck.require_admin)])
 async def update_stats(data: StatsUpdate):
     """
     Update stats array in homepage_info collection
@@ -268,7 +269,7 @@ async def update_stats(data: StatsUpdate):
         raise HTTPException(status_code=400, detail=str(e))
 
 
-@router.put("/testimonials")
+@router.put("/testimonials", dependencies=[Depends(ApplicationRoleCheck.require_admin)])
 async def update_testimonials(data: TestimonialsUpdate):
     """
     Update testimonials array in homepage_info collection
@@ -316,7 +317,7 @@ async def update_testimonials(data: TestimonialsUpdate):
         raise HTTPException(status_code=400, detail=str(e))
 
 
-@router.put("/contact")
+@router.put("/contact", dependencies=[Depends(ApplicationRoleCheck.require_admin)])
 async def update_contact_info(data: ContactInfoUpdate):
     """
     Update contact information in homepage_info collection
@@ -359,7 +360,7 @@ async def update_contact_info(data: ContactInfoUpdate):
         raise HTTPException(status_code=400, detail=str(e))
 
 
-@router.put("/all")
+@router.put("/all", dependencies=[Depends(ApplicationRoleCheck.require_admin)])
 async def update_all_homepage_data(data: HomePageDataUpdate):
     """
     Update entire homepage_info document (partial updates supported)

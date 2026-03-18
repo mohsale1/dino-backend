@@ -20,7 +20,7 @@ async def get_current_user_data(current_user: Dict[str, Any] = Depends(get_curre
     from src.repositories.WorkspaceRepository import WorkspaceRepository
     from src.repositories.OrganizationRepository import OrganizationRepository
     
-    user_repo = UserRepository()
+    user_repo = UserRepository('application_users')
     workspace_repo = WorkspaceRepository()
     org_repo = OrganizationRepository()
     
@@ -458,4 +458,3 @@ async def update_user_role(user_id: str, request: UpdateRoleRequest):
         "success": True,
         "message": "User role updated successfully"
     }
-

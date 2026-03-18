@@ -1,11 +1,14 @@
+import logging
 from typing import Optional
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from jose import JWTError, jwt
+from jose import JWTError, jwt, ExpiredSignatureError
 from src.config.Settings import settings
 import hashlib
 import base64
 import bcrypt
+
+logger = logging.getLogger(__name__)
 
 security = HTTPBearer(auto_error=False)
 
@@ -72,12 +75,22 @@ def get_password_hash(password: str) -> str:
     return hashed.decode('utf-8')
 
 def decode_token(token: str) -> Optional[dict]:
-    """Decode JWT token"""
+    """Decode JWT token. Returns payload dict or raises HTTPException."""
     try:
         payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
         return payload
-    except JWTError:
-        return None
+    except ExpiredSignatureError:
+        logger.warning("JWT decode failed: ExpiredSignatureError")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token has expired"
+        )
+    except JWTError as exc:
+        logger.warning("JWT decode failed: %s", type(exc).__name__)
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid token"
+        )
 
 async def get_current_user_token(
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(security),
@@ -97,7 +110,10 @@ async def get_current_user_token(
 
 def verify_token_type(token: str, expected_type: str) -> bool:
     """Verify token type (access or refresh)"""
-    payload = decode_token(token)
-    if not payload:
+    try:
+        payload = decode_token(token)
+        if not payload:
+            return False
+        return payload.get("type") == expected_type
+    except HTTPException:
         return False
-    return payload.get("type") == expected_type

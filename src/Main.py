@@ -5,7 +5,7 @@ from contextlib import asynccontextmanager
 import logging
 
 from src.config.Settings import settings
-from src.config.Database import initialize_firestore, close_firestore
+from src.config.Database import initialize_firestore, close_firestore, get_firestore_client
 from src.core.Initializer import initialize_application
 
 from src.system.routes import Auth as SystemAuth
@@ -35,40 +35,48 @@ from src.application.routes import Users as ApplicationUsers
 logging.basicConfig(level=settings.LOG_LEVEL)
 logger = logging.getLogger(__name__)
 
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan events"""
     logger.info("Starting application...")
-    
-    # Initialize Firestore
+
+    # Initialize Firestore — abort startup on failure
     try:
         initialize_firestore()
-        logger.info("✓ Firestore initialized successfully")
+        logger.info("Firestore initialized successfully.")
     except Exception as e:
         logger.error(f"Failed to initialize Firestore: {e}")
-        logger.warning("Application will start without Firestore connection")
-    
+        raise
+
     # Initialize application resources (SuperAdmin role, etc.)
     try:
         await initialize_application()
-        logger.info("✓ Application resources initialized successfully")
+        logger.info("Application resources initialized successfully.")
     except Exception as e:
         logger.error(f"Failed to initialize application resources: {e}")
-        logger.warning("Application will continue despite initialization errors")
-    
+        logger.warning("Application will continue despite initialization errors.")
+
     yield
-    
+
     logger.info("Shutting down application...")
     try:
         close_firestore()
     except Exception as e:
         logger.error(f"Error closing Firestore: {e}")
 
+
+# Hide API docs in production
+_docs_url = None if settings.ENVIRONMENT == "production" else "/docs"
+_redoc_url = None if settings.ENVIRONMENT == "production" else "/redoc"
+
 app = FastAPI(
     title=settings.APP_NAME,
     version=settings.APP_VERSION,
     description="A modular two-tier order management system with role-based access control",
-    lifespan=lifespan
+    lifespan=lifespan,
+    docs_url=_docs_url,
+    redoc_url=_redoc_url,
 )
 
 app.add_middleware(
@@ -79,6 +87,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
     """Global exception handler"""
@@ -88,29 +97,49 @@ async def global_exception_handler(request: Request, exc: Exception):
         content={
             "success": False,
             "message": "Internal server error",
-            "error": str(exc) if settings.DEBUG else "An error occurred"
-        }
+            "error": str(exc) if settings.DEBUG else "An error occurred",
+        },
     )
+
 
 @app.get("/")
 async def root():
     """Root endpoint"""
-    return {
+    response: dict = {
         "success": True,
         "message": f"Welcome to {settings.APP_NAME}",
         "version": settings.APP_VERSION,
-        "docs": "/docs",
-        "redoc": "/redoc"
     }
+    if settings.ENVIRONMENT != "production":
+        response["docs"] = "/docs"
+        response["redoc"] = "/redoc"
+    return response
+
 
 @app.get("/health")
 async def health_check():
-    """Health check endpoint"""
+    """Health check endpoint — probes live Firestore connectivity"""
+    try:
+        db = get_firestore_client()
+        db.collection("_health").limit(1).get()
+    except Exception as e:
+        logger.error(f"Health check failed — Firestore unreachable: {e}")
+        return JSONResponse(
+            status_code=503,
+            content={
+                "success": False,
+                "status": "unhealthy",
+                "version": settings.APP_VERSION,
+                "detail": "Firestore connectivity check failed",
+            },
+        )
+
     return {
         "success": True,
         "status": "healthy",
-        "version": settings.APP_VERSION
+        "version": settings.APP_VERSION,
     }
+
 
 app.include_router(SystemAuth.router, prefix="/api/v1/system", tags=["System"])
 app.include_router(SystemDashboard.router, prefix="/api/v1/system", tags=["System"])
@@ -134,7 +163,6 @@ app.include_router(ApplicationTables.router, prefix="/api/v1/application", tags=
 app.include_router(ApplicationCoupons.router, prefix="/api/v1/application", tags=["Application"])
 app.include_router(ApplicationDashboard.router, prefix="/api/v1/application", tags=["Application"])
 app.include_router(ApplicationReviews.router, prefix="/api/v1/application", tags=["Application"])
-
 app.include_router(ApplicationHomePage.router, prefix="/api/v1/application", tags=["Application"])
 
 if __name__ == "__main__":
@@ -143,5 +171,5 @@ if __name__ == "__main__":
         "src.Main:app",
         host=settings.HOST,
         port=settings.PORT,
-        reload=settings.DEBUG
+        reload=settings.DEBUG,
     )

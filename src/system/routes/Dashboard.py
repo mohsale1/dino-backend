@@ -2,23 +2,26 @@
 System Dashboard Routes
 Provides endpoints for system-level analytics and statistics
 """
+import logging
 from fastapi import APIRouter, Depends, HTTPException, status
-from typing import Dict, Any, List
+from typing import Dict, Any
 
 from src.core.Dependencies import get_current_system_user
-from src.models import SystemUser
+from src.system.middleware.RoleCheck import SystemRoleCheck
 from src.system.services.Dashboard import SystemDashboardService
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/dashboard", tags=["System Dashboard"])
 
 
-@router.get("", response_model=Dict[str, Any])
+@router.get("", response_model=Dict[str, Any], dependencies=[Depends(SystemRoleCheck.require_super_admin)])
 async def get_system_dashboard(
-    current_user: SystemUser = Depends(get_current_system_user)
+    current_user: Dict[str, Any] = Depends(get_current_system_user)
 ):
     """
     Get comprehensive system dashboard data
-    
+
     Returns:
     - System statistics
     - Workspace growth trend
@@ -29,7 +32,6 @@ async def get_system_dashboard(
     - Registration code stats
     """
     try:
-        # Get all dashboard data
         stats = SystemDashboardService.get_system_stats()
         workspace_growth = SystemDashboardService.get_workspace_growth_trend(days=30)
         user_distribution = SystemDashboardService.get_user_distribution()
@@ -37,7 +39,7 @@ async def get_system_dashboard(
         recent_activity = SystemDashboardService.get_recent_activity(limit=20)
         subscription_stats = SystemDashboardService.get_subscription_stats()
         code_stats = SystemDashboardService.get_registration_code_stats()
-        
+
         return {
             "success": True,
             "data": {
@@ -51,15 +53,16 @@ async def get_system_dashboard(
             }
         }
     except Exception as e:
+        logger.error("Failed to fetch dashboard data: %s", str(e), exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to fetch dashboard data: {str(e)}"
+            detail="Internal server error"
         )
 
 
-@router.get("/stats", response_model=Dict[str, Any])
+@router.get("/stats", response_model=Dict[str, Any], dependencies=[Depends(SystemRoleCheck.require_super_admin)])
 async def get_system_stats(
-    current_user: SystemUser = Depends(get_current_system_user)
+    current_user: Dict[str, Any] = Depends(get_current_system_user)
 ):
     """Get overall system statistics"""
     try:
@@ -69,16 +72,17 @@ async def get_system_stats(
             "data": stats
         }
     except Exception as e:
+        logger.error("Failed to fetch system stats: %s", str(e), exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to fetch system stats: {str(e)}"
+            detail="Internal server error"
         )
 
 
-@router.get("/workspace-growth", response_model=Dict[str, Any])
+@router.get("/workspace-growth", response_model=Dict[str, Any], dependencies=[Depends(SystemRoleCheck.require_super_admin)])
 async def get_workspace_growth(
     days: int = 30,
-    current_user: SystemUser = Depends(get_current_system_user)
+    current_user: Dict[str, Any] = Depends(get_current_system_user)
 ):
     """Get workspace growth trend"""
     try:
@@ -88,15 +92,16 @@ async def get_workspace_growth(
             "data": growth_data
         }
     except Exception as e:
+        logger.error("Failed to fetch workspace growth: %s", str(e), exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to fetch workspace growth: {str(e)}"
+            detail="Internal server error"
         )
 
 
-@router.get("/user-distribution", response_model=Dict[str, Any])
+@router.get("/user-distribution", response_model=Dict[str, Any], dependencies=[Depends(SystemRoleCheck.require_super_admin)])
 async def get_user_distribution(
-    current_user: SystemUser = Depends(get_current_system_user)
+    current_user: Dict[str, Any] = Depends(get_current_system_user)
 ):
     """Get user distribution by role"""
     try:
@@ -106,16 +111,17 @@ async def get_user_distribution(
             "data": distribution
         }
     except Exception as e:
+        logger.error("Failed to fetch user distribution: %s", str(e), exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to fetch user distribution: {str(e)}"
+            detail="Internal server error"
         )
 
 
-@router.get("/top-onboarders", response_model=Dict[str, Any])
+@router.get("/top-onboarders", response_model=Dict[str, Any], dependencies=[Depends(SystemRoleCheck.require_super_admin)])
 async def get_top_onboarders(
     limit: int = 5,
-    current_user: SystemUser = Depends(get_current_system_user)
+    current_user: Dict[str, Any] = Depends(get_current_system_user)
 ):
     """Get top user onboarders"""
     try:
@@ -125,16 +131,17 @@ async def get_top_onboarders(
             "data": onboarders
         }
     except Exception as e:
+        logger.error("Failed to fetch top onboarders: %s", str(e), exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to fetch top onboarders: {str(e)}"
+            detail="Internal server error"
         )
 
 
-@router.get("/recent-activity", response_model=Dict[str, Any])
+@router.get("/recent-activity", response_model=Dict[str, Any], dependencies=[Depends(SystemRoleCheck.require_super_admin)])
 async def get_recent_activity(
     limit: int = 20,
-    current_user: SystemUser = Depends(get_current_system_user)
+    current_user: Dict[str, Any] = Depends(get_current_system_user)
 ):
     """Get recent system activity (last 24 hours)"""
     try:
@@ -144,7 +151,8 @@ async def get_recent_activity(
             "data": activity
         }
     except Exception as e:
+        logger.error("Failed to fetch recent activity: %s", str(e), exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to fetch recent activity: {str(e)}"
+            detail="Internal server error"
         )

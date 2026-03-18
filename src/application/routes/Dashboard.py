@@ -6,7 +6,7 @@ from typing import Optional, Dict, Any
 
 router = APIRouter(prefix="/dashboard", tags=["Application Dashboard"])
 
-@router.get("", dependencies=[Depends(ApplicationRoleCheck.require_operator)])
+@router.get("")
 async def get_dashboard(
     workspace_id: str = Query(..., description="Workspace ID"),
     organization_id: Optional[str] = Query(None, description="Organization ID (optional)"),
@@ -34,6 +34,12 @@ async def get_dashboard(
     try:
         # Get user's role for access control
         user_role = user.get('role', {}).get('name')
+        
+        # Admin: scope to their workspace's organization
+        if user_role == 'Admin':
+            user_workspace = user.get('workspace_id')
+            if not organization_id and user_workspace:
+                organization_id = user.get('organization_id')
         
         # If user is Manager or Operator, ensure they can only see their organization's data
         if user_role in ['Manager', 'Operator']:
@@ -63,7 +69,7 @@ async def get_dashboard(
             detail=f"Failed to retrieve dashboard data: {str(e)}"
         )
 
-@router.get("/stats", dependencies=[Depends(ApplicationRoleCheck.require_operator)])
+@router.get("/stats")
 async def get_dashboard_stats(
     workspace_id: str = Query(..., description="Workspace ID"),
     organization_id: Optional[str] = Query(None, description="Organization ID (optional)"),
@@ -81,6 +87,12 @@ async def get_dashboard_stats(
     try:
         # Get user's role for access control
         user_role = user.get('role', {}).get('name')
+        
+        # Admin: scope to their workspace's organization
+        if user_role == 'Admin':
+            user_workspace = user.get('workspace_id')
+            if not organization_id and user_workspace:
+                organization_id = user.get('organization_id')
         
         # If user is Manager or Operator, ensure they can only see their organization's data
         if user_role in ['Manager', 'Operator']:
@@ -114,7 +126,7 @@ async def get_dashboard_stats(
             detail=f"Failed to retrieve dashboard stats: {str(e)}"
         )
 
-@router.get("/analytics", dependencies=[Depends(ApplicationRoleCheck.require_operator)])
+@router.get("/analytics")
 async def get_dashboard_analytics(
     workspace_id: str = Query(..., description="Workspace ID"),
     organization_id: Optional[str] = Query(None, description="Organization ID (optional)"),
@@ -136,6 +148,12 @@ async def get_dashboard_analytics(
     try:
         # Get user's role for access control
         user_role = user.get('role', {}).get('name')
+        
+        # Admin: scope to their workspace's organization
+        if user_role == 'Admin':
+            user_workspace = user.get('workspace_id')
+            if not organization_id and user_workspace:
+                organization_id = user.get('organization_id')
         
         # If user is Manager or Operator, ensure they can only see their organization's data
         if user_role in ['Manager', 'Operator']:

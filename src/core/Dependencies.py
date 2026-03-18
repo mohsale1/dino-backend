@@ -1,5 +1,5 @@
-from typing import Optional, Dict, Any
-from fastapi import Depends, HTTPException, status, Request
+from typing import Dict, Any
+from fastapi import Depends, HTTPException, status
 from src.core.Security import get_current_user_token, decode_token
 from src.config.Settings import settings
 from src.repositories.UserRepository import UserRepository
@@ -7,6 +7,12 @@ from src.repositories.RoleRepository import RoleRepository
 
 async def get_current_user(token: str = Depends(get_current_user_token)) -> Dict[str, Any]:
     """Get current user from token (works for both system and application users)"""
+    if not settings.ENABLE_JWT:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authentication required"
+        )
+
     payload = decode_token(token)
 
     if not payload:
@@ -47,13 +53,18 @@ async def get_current_user(token: str = Depends(get_current_user_token)) -> Dict
     return user
 
 async def get_current_system_user(token: str = Depends(get_current_user_token)) -> Dict[str, Any]:
-    """Get current system user from token (or bypass if JWT disabled)"""
-    # If JWT is disabled, get the default SuperAdmin user from database
+    """Get current system user from token (or bypass if JWT disabled in non-production)"""
     if not settings.ENABLE_JWT:
+        if settings.ENVIRONMENT == 'production':
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="JWT must be enabled in production"
+            )
+
+        # Dev-only bypass: resolve the default SuperAdmin from the database
         user_repo = UserRepository("system_users")
         role_repo = RoleRepository()
 
-        # Get first SuperAdmin user from database
         users = user_repo.get_all(filters={"email": settings.SUPERADMIN_EMAIL}, limit=1)
         if users:
             user = users[0]
@@ -62,7 +73,6 @@ async def get_current_system_user(token: str = Depends(get_current_user_token)) 
                 user['role'] = role
             return user
 
-        # If no SuperAdmin exists, raise error
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="No SuperAdmin user found in database. Please run initialization."
@@ -110,23 +120,11 @@ async def get_current_system_user(token: str = Depends(get_current_user_token)) 
     return user
 
 async def get_current_application_user(token: str = Depends(get_current_user_token)) -> Dict[str, Any]:
-    """Get current application user from token (or bypass if JWT disabled)"""
-    # If JWT is disabled, get the default SuperAdmin user from the application_users collection
+    """Get current application user from token"""
     if not settings.ENABLE_JWT:
-        user_repo = UserRepository("application_users")
-        role_repo = RoleRepository()
-
-        users = user_repo.get_all(filters={"email": settings.SUPERADMIN_EMAIL}, limit=1)
-        if users:
-            user = users[0]
-            role = role_repo.get_by_id(user.get('role_id', ''))
-            if role:
-                user['role'] = role
-            return user
-
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="No default application user found in database. Please run initialization."
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authentication required"
         )
 
     # Normal JWT flow

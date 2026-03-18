@@ -2,6 +2,7 @@ from src.base.BaseService import BaseService
 from src.repositories.WorkspaceRepository import WorkspaceRepository
 from src.repositories.UserRepository import UserRepository
 from src.repositories.OrganizationRepository import OrganizationRepository
+from google.cloud import firestore
 from typing import Dict, Any, List
 
 class WorkspaceService(BaseService):
@@ -49,34 +50,24 @@ class WorkspaceService(BaseService):
         return workspace
     
     def add_organization(self, workspace_id: str, organization_id: str) -> bool:
-        """Add an organization to workspace's organization_ids list"""
-        workspace = self.get_by_id(workspace_id)
-        if not workspace:
+        """Add an organization to workspace's organization_ids list atomically"""
+        try:
+            self.repository.collection.document(workspace_id).update({
+                'organization_ids': firestore.ArrayUnion([organization_id])
+            })
+            return True
+        except Exception:
             return False
-        
-        organization_ids = workspace.get('organization_ids', [])
-        
-        # Add organization if not already in list
-        if organization_id not in organization_ids:
-            organization_ids.append(organization_id)
-            return self.update(workspace_id, {"organization_ids": organization_ids})
-        
-        return True  # Already exists
     
     def remove_organization(self, workspace_id: str, organization_id: str) -> bool:
-        """Remove an organization from workspace's organization_ids list"""
-        workspace = self.get_by_id(workspace_id)
-        if not workspace:
+        """Remove an organization from workspace's organization_ids list atomically"""
+        try:
+            self.repository.collection.document(workspace_id).update({
+                'organization_ids': firestore.ArrayRemove([organization_id])
+            })
+            return True
+        except Exception:
             return False
-        
-        organization_ids = workspace.get('organization_ids', [])
-        
-        # Remove organization if in list
-        if organization_id in organization_ids:
-            organization_ids.remove(organization_id)
-            return self.update(workspace_id, {"organization_ids": organization_ids})
-        
-        return True  # Already removed
     
     def get_organizations(self, workspace_id: str) -> List[Dict[str, Any]]:
         """Get all organizations for a workspace"""
