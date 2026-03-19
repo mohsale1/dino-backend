@@ -18,6 +18,12 @@ class Settings(BaseSettings):
     HOST: str = "0.0.0.0"
     PORT: int = 8080
 
+    # Deployment identity — injected at build time via Docker --build-arg or Cloud Run env vars
+    # BUILD_ID   : git SHA, image tag, or CI pipeline run ID
+    # DEPLOYED_AT: ISO timestamp set at build time (e.g. 2026-03-19T10:00:00Z)
+    BUILD_ID: str = "local"
+    DEPLOYED_AT: str = "unknown"
+
     # JWT Settings - SECRET_KEY should be set in production
     ENABLE_JWT: bool = True
     SECRET_KEY: str = _DEFAULT_SECRET_KEY
