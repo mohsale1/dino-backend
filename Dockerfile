@@ -2,6 +2,18 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
+# Deployment identity — injected at build time via --build-arg
+# Baked into the image so every startup log shows exactly which build is running
+ARG BUILD_ID=local
+ARG DEPLOYED_AT=unknown
+ENV BUILD_ID=${BUILD_ID}
+ENV DEPLOYED_AT=${DEPLOYED_AT}
+
+# Prevent Python from writing .pyc bytecode files into the image layer
+# and force stdout/stderr to be unbuffered so logs appear immediately
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+
 # Install system dependencies
 RUN apt-get update && apt-get install -y \
     gcc \
