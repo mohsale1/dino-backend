@@ -92,31 +92,35 @@ class Settings(BaseSettings):
         if self.CREATE_DEFAULT_SUPERADMIN:
             logger.info("   SuperAdmin Auto-Creation: Enabled")
 
-        # Startup validation
-        self._validate_production_config()
-
     def _validate_production_config(self) -> None:
         """Raise RuntimeError for unsafe configurations in production."""
         if self.ENVIRONMENT != "production":
             return
 
+        errors = []
+
         if not self.ENABLE_JWT:
-            raise RuntimeError(
+            errors.append(
                 "ENABLE_JWT must not be False in production. "
                 "JWT authentication is required for a production deployment."
             )
 
         if self.SECRET_KEY == _DEFAULT_SECRET_KEY:
-            raise RuntimeError(
-                "SECRET_KEY is set to the default development value in production. "
+            errors.append(
+                "SECRET_KEY is set to the default development value. "
                 "Generate a secure key with: openssl rand -hex 32"
             )
 
         if self.CORS_ORIGINS == "*":
-            raise RuntimeError(
-                "CORS_ORIGINS is set to '*' in production. "
+            errors.append(
+                "CORS_ORIGINS is set to '*'. "
                 "Restrict CORS_ORIGINS to specific trusted origins."
             )
+
+        if errors:
+            msg = "Production configuration errors:\n" + "\n".join(f"  - {e}" for e in errors)
+            raise RuntimeError(msg)
+
 
 
 settings = Settings()
