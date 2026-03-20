@@ -78,36 +78,40 @@ class BaseRepository:
         order_direction: str = "asc"
     ) -> Tuple[List[Dict[str, Any]], int, int]:
         """
-        Get paginated documents
+        Get paginated documents.
         Returns: (items, total_count, total_pages)
+
+        Sorting and pagination are performed in Python after a single Firestore
+        fetch to avoid composite index requirements (Firestore requires a
+        composite index whenever a where() filter is combined with order_by()).
         """
         query = self.collection
-        
-        # Always filter out soft-deleted unless explicitly requested
+
+        # Single-field filter — no composite index needed
         if not include_deleted:
             query = query.where(filter=FieldFilter("is_deleted", "==", False))
-        
+
         if filters:
             for field, value in filters.items():
                 query = query.where(filter=FieldFilter(field, "==", value))
-        
-        # Get total count
-        all_docs = query.get()
+
+        # Fetch all matching documents once
+        all_docs = [doc.to_dict() for doc in query.get()]
         total_count = len(all_docs)
-        total_pages = (total_count + page_size - 1) // page_size
-        
-        # Apply ordering
+        total_pages = max(1, (total_count + page_size - 1) // page_size)
+
+        # Sort in Python — no Firestore index required
         if order_by:
-            direction = Query.DESCENDING if order_direction.lower() == "desc" else Query.ASCENDING
-            query = query.order_by(order_by, direction=direction)
-        
-        # Apply pagination
+            reverse = order_direction.lower() == "desc"
+            all_docs.sort(
+                key=lambda d: (d.get(order_by) is None, d.get(order_by)),
+                reverse=reverse
+            )
+
+        # Paginate in Python
         offset = (page - 1) * page_size
-        query = query.limit(page_size).offset(offset)
-        
-        docs = query.get()
-        items = [doc.to_dict() for doc in docs]
-        
+        items = all_docs[offset: offset + page_size]
+
         return items, total_count, total_pages
     
     def update(self, doc_id: str, data: Dict[str, Any]) -> bool:
