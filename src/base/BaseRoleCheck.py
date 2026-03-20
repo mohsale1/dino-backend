@@ -25,10 +25,10 @@ class BaseRoleCheck:
         if required_permission in permissions:
             return True
         
-        # Check for wildcard in permission category
-        permission_parts = required_permission.split(':')
+        # Check for wildcard in permission category (dot-notation: e.g. "application.orders.*")
+        permission_parts = required_permission.split('.')
         if len(permission_parts) > 1:
-            wildcard_permission = f"{permission_parts[0]}:*"
+            wildcard_permission = f"{permission_parts[0]}.*"
             if wildcard_permission in permissions:
                 return True
         

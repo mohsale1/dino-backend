@@ -5,59 +5,55 @@ from src.core.Dependencies import get_current_application_user, get_current_user
 
 class ApplicationRoleCheck(BaseRoleCheck):
     """Application role checking middleware"""
-    
+
     @staticmethod
     def require_admin(user: Dict[str, Any] = Depends(get_current_application_user)):
-        """Require Admin role"""
-        BaseRoleCheck.require_role(user, ["Admin"])
+        """Require Owner role (full application admin)"""
+        BaseRoleCheck.require_role(user, ["Owner"])
         return user
-    
+
     @staticmethod
     def require_manager(user: Dict[str, Any] = Depends(get_current_application_user)):
-        """Require Manager role"""
-        BaseRoleCheck.require_role(user, ["Admin", "Manager"])
+        """Require Owner or Manager role"""
+        BaseRoleCheck.require_role(user, ["Owner", "Manager"])
         return user
-    
+
     @staticmethod
     def require_operator(user: Dict[str, Any] = Depends(get_current_application_user)):
-        """Require Operator role (or higher)"""
-        BaseRoleCheck.require_role(user, ["Admin", "Manager", "Operator"])
+        """Require Owner, Manager, or User role (any authenticated application user)"""
+        BaseRoleCheck.require_role(user, ["Owner", "Manager", "User"])
         return user
-    
+
     @staticmethod
     def require_manager_or_superadmin(user: Dict[str, Any] = Depends(get_current_user)):
-        """Require Manager role (application) or SuperAdmin (system)"""
+        """Require Owner/Manager (application) or SuperAdmin (system)"""
         user_type = user.get('user_type', 'application')
         role_name = user.get('role', {}).get('name', '')
-        
-        # Allow SuperAdmin (system users)
+
         if user_type == 'system' and role_name == 'SuperAdmin':
             return user
-        
-        # Allow Admin and Manager (application users)
-        if user_type == 'application' and role_name in ['Admin', 'Manager']:
+
+        if user_type == 'application' and role_name in ['Owner', 'Manager']:
             return user
-        
+
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Insufficient permissions. Requires Manager/Admin (application) or SuperAdmin (system) role."
+            detail="Insufficient permissions. Requires Owner/Manager (application) or SuperAdmin (system) role."
         )
-    
+
     @staticmethod
     def require_admin_or_superadmin(user: Dict[str, Any] = Depends(get_current_user)):
-        """Require Admin role (application) or SuperAdmin (system)"""
+        """Require Owner (application) or SuperAdmin (system)"""
         user_type = user.get('user_type', 'application')
         role_name = user.get('role', {}).get('name', '')
-        
-        # Allow SuperAdmin (system users)
+
         if user_type == 'system' and role_name == 'SuperAdmin':
             return user
-        
-        # Allow Admin (application users)
-        if user_type == 'application' and role_name == 'Admin':
+
+        if user_type == 'application' and role_name == 'Owner':
             return user
-        
+
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Insufficient permissions. Requires Admin (application) or SuperAdmin (system) role."
+            detail="Insufficient permissions. Requires Owner (application) or SuperAdmin (system) role."
         )
