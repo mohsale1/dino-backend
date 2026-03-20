@@ -17,78 +17,71 @@ class SystemDashboardService:
     def get_system_stats() -> Dict[str, Any]:
         """Get overall system statistics"""
         db = get_firestore_client()
-
-        # Total workspaces
-        workspaces_ref = db.collection('workspaces')
-        total_workspaces = len([doc for doc in workspaces_ref.where('is_deleted', '==', False).stream()])
-
-        # Active workspaces (with recent activity - last 30 days)
         thirty_days_ago = datetime.now(timezone.utc) - timedelta(days=30)
-        active_workspaces = len([
-            doc for doc in workspaces_ref
-            .where('is_deleted', '==', False)
-            .where('updated_at', '>=', thirty_days_ago)
-            .stream()
-        ])
+        sixty_days_ago = datetime.now(timezone.utc) - timedelta(days=60)
 
-        # Total system users
+        # Fetch all non-deleted workspaces once, then filter in Python
+        # to avoid Firestore composite index requirements on compound queries
+        workspaces_ref = db.collection('workspaces')
+        all_workspaces = [
+            doc.to_dict() for doc in workspaces_ref.where('is_deleted', '==', False).stream()
+        ]
+
+        total_workspaces = len(all_workspaces)
+
+        active_workspaces = sum(
+            1 for w in all_workspaces
+            if w.get('updated_at') and w['updated_at'] >= thirty_days_ago
+        )
+
+        workspaces_last_30 = sum(
+            1 for w in all_workspaces
+            if w.get('created_at') and w['created_at'] >= thirty_days_ago
+        )
+
+        workspaces_prev_30 = sum(
+            1 for w in all_workspaces
+            if w.get('created_at') and sixty_days_ago <= w['created_at'] < thirty_days_ago
+        )
+
+        workspace_growth = calculate_growth_percentage(workspaces_prev_30, workspaces_last_30)
+
+        # Fetch all non-deleted system users once
         system_users_ref = db.collection('system_users')
-        total_system_users = len([doc for doc in system_users_ref.where('is_deleted', '==', False).stream()])
+        all_system_users = [
+            doc.to_dict() for doc in system_users_ref.where('is_deleted', '==', False).stream()
+        ]
 
-        # Active system users (logged in last 30 days)
-        active_system_users = len([
-            doc for doc in system_users_ref
-            .where('is_deleted', '==', False)
-            .where('last_login', '>=', thirty_days_ago)
-            .stream()
-        ])
+        total_system_users = len(all_system_users)
 
-        # Total application users
+        active_system_users = sum(
+            1 for u in all_system_users
+            if u.get('last_login') and u['last_login'] >= thirty_days_ago
+        )
+
+        # Fetch all non-deleted application users once
         app_users_ref = db.collection('application_users')
-        total_app_users = len([doc for doc in app_users_ref.where('is_deleted', '==', False).stream()])
+        all_app_users = [
+            doc.to_dict() for doc in app_users_ref.where('is_deleted', '==', False).stream()
+        ]
+
+        total_app_users = len(all_app_users)
+
+        users_last_30 = sum(
+            1 for u in all_app_users
+            if u.get('created_at') and u['created_at'] >= thirty_days_ago
+        )
+
+        users_prev_30 = sum(
+            1 for u in all_app_users
+            if u.get('created_at') and sixty_days_ago <= u['created_at'] < thirty_days_ago
+        )
+
+        user_growth = calculate_growth_percentage(users_prev_30, users_last_30)
 
         # Total organizations
         orgs_ref = db.collection('organizations')
         total_organizations = len([doc for doc in orgs_ref.where('is_deleted', '==', False).stream()])
-
-        # Calculate growth rates (last 30 days vs previous 30 days)
-        sixty_days_ago = datetime.now(timezone.utc) - timedelta(days=60)
-
-        # Workspace growth
-        workspaces_last_30 = len([
-            doc for doc in workspaces_ref
-            .where('is_deleted', '==', False)
-            .where('created_at', '>=', thirty_days_ago)
-            .stream()
-        ])
-
-        workspaces_prev_30 = len([
-            doc for doc in workspaces_ref
-            .where('is_deleted', '==', False)
-            .where('created_at', '>=', sixty_days_ago)
-            .where('created_at', '<', thirty_days_ago)
-            .stream()
-        ])
-
-        workspace_growth = calculate_growth_percentage(workspaces_prev_30, workspaces_last_30)
-
-        # User growth
-        users_last_30 = len([
-            doc for doc in app_users_ref
-            .where('is_deleted', '==', False)
-            .where('created_at', '>=', thirty_days_ago)
-            .stream()
-        ])
-
-        users_prev_30 = len([
-            doc for doc in app_users_ref
-            .where('is_deleted', '==', False)
-            .where('created_at', '>=', sixty_days_ago)
-            .where('created_at', '<', thirty_days_ago)
-            .stream()
-        ])
-
-        user_growth = calculate_growth_percentage(users_prev_30, users_last_30)
 
         return {
             "total_workspaces": total_workspaces,
@@ -211,93 +204,110 @@ class SystemDashboardService:
         twenty_four_hours_ago = datetime.now(timezone.utc) - timedelta(hours=24)
         activities = []
 
-        # Recent system user logins
+        # Fetch all non-deleted system users once, filter in Python
+        # to avoid composite index on (is_deleted, last_login, order_by last_login)
         system_users_ref = db.collection('system_users')
+        all_system_users = [
+            doc.to_dict() for doc in system_users_ref.where('is_deleted', '==', False).stream()
+        ]
+
         recent_logins = [
-            doc.to_dict() for doc in system_users_ref
-            .where('is_deleted', '==', False)
-            .where('last_login', '>=', twenty_four_hours_ago)
-            .order_by('last_login', direction=firestore.Query.DESCENDING)
-            .limit(10)
-            .stream()
+            u for u in all_system_users
+            if u.get('last_login') and u['last_login'] >= twenty_four_hours_ago
         ]
+        recent_logins.sort(key=lambda u: u['last_login'], reverse=True)
 
-        for user in recent_logins:
-            if user.get('last_login'):
-                time_diff = get_time_ago(user['last_login'])
-                activities.append({
-                    "id": f"login_{user.get('id', '')}",
-                    "type": "login",
-                    "user": user.get('email', ''),
-                    "action": "Logged in",
-                    "target": "",
-                    "time": time_diff,
-                    "timestamp": user['last_login'].isoformat() if isinstance(user['last_login'], datetime) else str(user['last_login'])
-                })
+        for user in recent_logins[:10]:
+            time_diff = get_time_ago(user['last_login'])
+            activities.append({
+                "id": f"login_{user.get('id', '')}",
+                "type": "login",
+                "user": user.get('email', ''),
+                "action": "Logged in",
+                "target": "",
+                "time": time_diff,
+                "timestamp": user['last_login'].isoformat() if isinstance(user['last_login'], datetime) else str(user['last_login'])
+            })
 
-        # Recent workspace creations
+        # Fetch all non-deleted workspaces, filter in Python
+        # to avoid composite index on (is_deleted, created_at, order_by created_at)
         workspaces_ref = db.collection('workspaces')
+        all_workspaces = [
+            doc.to_dict() for doc in workspaces_ref.where('is_deleted', '==', False).stream()
+        ]
+
         recent_workspaces = [
-            doc.to_dict() for doc in workspaces_ref
-            .where('is_deleted', '==', False)
-            .where('created_at', '>=', twenty_four_hours_ago)
-            .order_by('created_at', direction=firestore.Query.DESCENDING)
-            .limit(10)
-            .stream()
+            w for w in all_workspaces
+            if w.get('created_at') and w['created_at'] >= twenty_four_hours_ago
         ]
+        recent_workspaces.sort(key=lambda w: w['created_at'], reverse=True)
 
-        for workspace in recent_workspaces:
-            if workspace.get('created_at'):
-                time_diff = get_time_ago(workspace['created_at'])
+        # Build a lookup map from the already-fetched system users
+        system_users_map = {u.get('id', ''): u for u in all_system_users}
 
-                creator_email = "System"
-                if workspace.get('created_by'):
-                    creator_doc = system_users_ref.document(workspace['created_by']).get()
+        for workspace in recent_workspaces[:10]:
+            time_diff = get_time_ago(workspace['created_at'])
+
+            creator_email = "System"
+            created_by = workspace.get('created_by')
+            if created_by:
+                creator = system_users_map.get(created_by)
+                if creator:
+                    creator_email = creator.get('email', 'System')
+                else:
+                    # Fallback: fetch individually if not in the non-deleted set
+                    creator_doc = system_users_ref.document(created_by).get()
                     if creator_doc.exists:
                         creator_email = creator_doc.to_dict().get('email', 'System')
 
-                activities.append({
-                    "id": f"workspace_{workspace.get('id', '')}",
-                    "type": "workspace_created",
-                    "user": creator_email,
-                    "action": "Created new workspace",
-                    "target": workspace.get('name', ''),
-                    "time": time_diff,
-                    "timestamp": workspace['created_at'].isoformat() if isinstance(workspace['created_at'], datetime) else str(workspace['created_at'])
-                })
+            activities.append({
+                "id": f"workspace_{workspace.get('id', '')}",
+                "type": "workspace_created",
+                "user": creator_email,
+                "action": "Created new workspace",
+                "target": workspace.get('name', ''),
+                "time": time_diff,
+                "timestamp": workspace['created_at'].isoformat() if isinstance(workspace['created_at'], datetime) else str(workspace['created_at'])
+            })
 
-        # Recent application user creations
+        # Fetch all non-deleted application users, filter in Python
+        # to avoid composite index on (is_deleted, created_at, order_by created_at)
         app_users_ref = db.collection('application_users')
-        recent_app_users = [
-            doc.to_dict() for doc in app_users_ref
-            .where('is_deleted', '==', False)
-            .where('created_at', '>=', twenty_four_hours_ago)
-            .order_by('created_at', direction=firestore.Query.DESCENDING)
-            .limit(10)
-            .stream()
+        all_app_users = [
+            doc.to_dict() for doc in app_users_ref.where('is_deleted', '==', False).stream()
         ]
 
-        for app_user in recent_app_users:
-            if app_user.get('created_at'):
-                time_diff = get_time_ago(app_user['created_at'])
+        recent_app_users = [
+            u for u in all_app_users
+            if u.get('created_at') and u['created_at'] >= twenty_four_hours_ago
+        ]
+        recent_app_users.sort(key=lambda u: u['created_at'], reverse=True)
 
-                creator_email = "System"
-                if app_user.get('created_by'):
-                    creator_doc = system_users_ref.document(app_user['created_by']).get()
+        for app_user in recent_app_users[:10]:
+            time_diff = get_time_ago(app_user['created_at'])
+
+            creator_email = "System"
+            created_by = app_user.get('created_by')
+            if created_by:
+                creator = system_users_map.get(created_by)
+                if creator:
+                    creator_email = creator.get('email', 'System')
+                else:
+                    creator_doc = system_users_ref.document(created_by).get()
                     if creator_doc.exists:
                         creator_email = creator_doc.to_dict().get('email', 'System')
 
-                activities.append({
-                    "id": f"user_{app_user.get('id', '')}",
-                    "type": "user_created",
-                    "user": creator_email,
-                    "action": "Created new user",
-                    "target": app_user.get('email', ''),
-                    "time": time_diff,
-                    "timestamp": app_user['created_at'].isoformat() if isinstance(app_user['created_at'], datetime) else str(app_user['created_at'])
-                })
+            activities.append({
+                "id": f"user_{app_user.get('id', '')}",
+                "type": "user_created",
+                "user": creator_email,
+                "action": "Created new user",
+                "target": app_user.get('email', ''),
+                "time": time_diff,
+                "timestamp": app_user['created_at'].isoformat() if isinstance(app_user['created_at'], datetime) else str(app_user['created_at'])
+            })
 
-        # Sort all activities by timestamp
+        # Sort all activities by timestamp and return top N
         activities.sort(key=lambda x: x.get('timestamp', ''), reverse=True)
 
         return activities[:limit]

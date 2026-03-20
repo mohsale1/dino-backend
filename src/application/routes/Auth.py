@@ -177,7 +177,7 @@ async def get_current_user(current_user: Dict[str, Any] = Depends(get_current_ap
     from src.repositories.WorkspaceRepository import WorkspaceRepository
     from src.repositories.OrganizationRepository import OrganizationRepository
     
-    user_repo = UserRepository()
+    user_repo = UserRepository("application_users")
     workspace_repo = WorkspaceRepository()
     org_repo = OrganizationRepository()
     

@@ -563,4 +563,3 @@ async def get_public_orders(
         "message": "Orders retrieved successfully",
         "data": orders
     }
-r
