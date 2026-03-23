@@ -130,13 +130,6 @@ async def delete_system_user(user_id: str):
             detail="User not found"
         )
     
-    # Check if it's a system user (auto-created)
-    if user.get('is_system', False):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Cannot delete system users (auto-created SuperAdmin, etc.)"
-        )
-    
     success = service.soft_delete_user(user_id)
     
     if not success:

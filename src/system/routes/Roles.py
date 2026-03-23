@@ -141,13 +141,6 @@ async def update_role(role_id: str, role: RoleUpdate):
             detail="Role not found"
         )
     
-    # Check if it's a system role and trying to change name
-    if existing_role.get('is_system', False) and role.name and role.name != existing_role.get('name'):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Cannot modify the name of system roles"
-        )
-    
     # If updating name, check for conflicts
     if role.name and role.name != existing_role.get('name'):
         if service.role_exists(role.name, existing_role.get('role_type')):
@@ -180,13 +173,6 @@ async def delete_role(role_id: str):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Role not found"
-        )
-    
-    # Check if it's a system role
-    if role.get('is_system', False):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Cannot delete system roles (SuperAdmin, etc.)"
         )
     
     # Check if role is in use

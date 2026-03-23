@@ -31,6 +31,7 @@ from src.application.routes import HomePage as ApplicationHomePage
 from src.application.routes import Dashboard as ApplicationDashboard
 from src.application.routes import Reviews as ApplicationReviews
 from src.application.routes import Users as ApplicationUsers
+from src.application.routes import Permissions as ApplicationPermissions
 
 logging.basicConfig(level=settings.LOG_LEVEL)
 logger = logging.getLogger(__name__)
@@ -179,6 +180,7 @@ app.include_router(SystemSettings.router, prefix="/api/v1/system", tags=["System
 
 app.include_router(ApplicationAuth.router, prefix="/api/v1/application", tags=["Application"])
 app.include_router(ApplicationUsers.router, prefix="/api/v1/application", tags=["Application"])
+app.include_router(ApplicationPermissions.router, prefix="/api/v1/application", tags=["Application"])
 app.include_router(ApplicationOrders.router, prefix="/api/v1/application", tags=["Application"])
 app.include_router(ApplicationOrganizations.router, prefix="/api/v1/application", tags=["Application"])
 app.include_router(ApplicationMenu.router, prefix="/api/v1/application", tags=["Application"])

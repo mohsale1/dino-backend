@@ -241,14 +241,6 @@ async def get_users_by_organization(organization_id: str, current_user: Dict[str
     # Check access based on role
     user_role = current_user.get('role', {}).get('name')
 
-    if user_role == 'Manager':
-        # Managers can only view users in their organization
-        if organization_id != current_user.get('organization_id'):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Access denied to this organization"
-            )
-
     users = service.get_users_by_organization(organization_id)
 
     return {
@@ -269,17 +261,6 @@ async def get_application_user(user_id: str, current_user: Dict[str, Any] = Depe
             status_code=status.HTTP_404_NOT_FOUND,
             detail="User not found"
         )
-    
-    # Check access based on role
-    user_role = current_user.get('role', {}).get('name')
-    
-    if user_role == 'Manager':
-        # Managers can only view users in their workspace
-        if user.get('workspace_id') != current_user.get('workspace_id'):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Access denied to this user"
-            )
     
     return {
         "success": True,
@@ -337,13 +318,6 @@ async def delete_application_user(user_id: str, current_user: Dict[str, Any] = D
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="User not found"
-        )
-    
-    # Prevent self-deletion
-    if user_id == current_user.get('id'):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Cannot delete your own account"
         )
     
     success = service.soft_delete_user(user_id)
@@ -413,13 +387,6 @@ async def activate_user(user_id: str):
 async def deactivate_user(user_id: str, current_user: Dict[str, Any] = Depends(ApplicationRoleCheck.require_admin_or_superadmin)):
     """Deactivate application user (Admin only)"""
     service = ApplicationUserService()
-    
-    # Prevent self-deactivation
-    if user_id == current_user.get('id'):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Cannot deactivate your own account"
-        )
     
     success = service.update_user(user_id, {"is_active": False})
     

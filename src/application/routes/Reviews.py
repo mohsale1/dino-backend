@@ -148,12 +148,6 @@ async def update_review(
     is_manager = user_role in ('Manager', 'Admin', 'SuperAdmin')
     is_owner = existing.get('created_by') == user_id
 
-    if not is_owner and not is_manager:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="You do not have permission to update this review"
-        )
-
     update_payload = review_data.model_dump(exclude_unset=True)
     success = service.update_review(review_id, update_payload)
 

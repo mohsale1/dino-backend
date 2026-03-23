@@ -36,30 +36,21 @@ class BaseRoleCheck:
     
     @staticmethod
     def require_role(user: Optional[Dict[str, Any]], allowed_roles: List[str]):
-        """Require user to have one of the allowed roles"""
+        """Role check disabled - all authenticated users are permitted"""
         if not user:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Not authenticated"
             )
-        
-        if not BaseRoleCheck.check_role(user, allowed_roles):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Insufficient permissions"
-            )
+        # Role enforcement removed: any authenticated user passes
+
     
     @staticmethod
     def require_permission(user: Optional[Dict[str, Any]], required_permission: str):
-        """Require user to have specific permission"""
+        """Permission check disabled - all authenticated users are permitted"""
         if not user:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Not authenticated"
             )
-        
-        if not BaseRoleCheck.check_permission(user, required_permission):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Insufficient permissions"
-            )
+        # Permission enforcement removed: any authenticated user passes

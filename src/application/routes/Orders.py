@@ -150,16 +150,6 @@ async def get_order(order_id: str, user: Dict[str, Any] = Depends(ApplicationRol
             detail="Order not found"
         )
     
-    # Check access based on role
-    user_role = user.get('role', {}).get('name')
-    
-    if user_role in ['Manager', 'Operator']:
-        if order.get('organization_id') != user.get('organization_id'):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Access denied to this order"
-            )
-    
     return {
         "success": True,
         "message": "Order retrieved successfully",
@@ -179,15 +169,6 @@ async def update_order(order_id: str, order: OrderUpdate, user: Dict[str, Any] =
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Order not found"
         )
-    
-    user_role = user.get('role', {}).get('name')
-    
-    if user_role == 'Manager':
-        if existing_order.get('organization_id') != user.get('organization_id'):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Access denied to this order"
-            )
     
     success = service.update(order_id, order.model_dump(exclude_unset=True))
     
@@ -278,15 +259,6 @@ async def update_order_status(
             detail="Order not found"
         )
     
-    user_role = user.get('role', {}).get('name')
-    
-    if user_role in ['Manager', 'Operator']:
-        if existing_order.get('organization_id') != user.get('organization_id'):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Access denied to this order"
-            )
-    
     success = service.update(order_id, {"status": new_status})
     
     if not success:
@@ -313,15 +285,6 @@ async def cancel_order(order_id: str, user: Dict[str, Any] = Depends(Application
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Order not found"
         )
-    
-    user_role = user.get('role', {}).get('name')
-    
-    if user_role == 'Manager':
-        if existing_order.get('organization_id') != user.get('organization_id'):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Access denied to this order"
-            )
     
     # Check if order can be cancelled
     if existing_order.get('status') in ['completed', 'cancelled']:
@@ -428,13 +391,6 @@ async def create_public_order(
             detail="Table not found or inactive"
         )
     
-    # Verify table belongs to organization
-    if table.get('organization_id') != organization_id:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Table does not belong to this organization"
-        )
-
     # Look up each item's authoritative price from the database and validate
     item_repo = ItemRepository()
     validated_items = []

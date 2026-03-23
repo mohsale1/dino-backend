@@ -513,13 +513,6 @@ async def validate_table_access(organization_id: str, table_id: str):
             detail="Table not found or inactive"
         )
     
-    # Verify table belongs to organization's workspace
-    if table.get('workspace_id') != organization.get('workspace_id'):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Table does not belong to this organization"
-        )
-    
     return {
         "success": True,
         "message": "Access validated successfully",

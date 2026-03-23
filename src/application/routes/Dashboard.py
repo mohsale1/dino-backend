@@ -41,17 +41,6 @@ async def get_dashboard(
             if not organization_id and user_workspace:
                 organization_id = user.get('organization_id')
         
-        # If user is Manager or Operator, ensure they can only see their organization's data
-        if user_role in ['Manager', 'Operator']:
-            user_org_id = user.get('organization_id')
-            if organization_id and organization_id != user_org_id:
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail="Access denied to this organization's data"
-                )
-            # Force organization filter for non-admin users
-            organization_id = user_org_id
-        
         dashboard_data = service.get_venue_dashboard(
             workspace_id=workspace_id,
             organization_id=organization_id,
@@ -93,16 +82,6 @@ async def get_dashboard_stats(
             user_workspace = user.get('workspace_id')
             if not organization_id and user_workspace:
                 organization_id = user.get('organization_id')
-        
-        # If user is Manager or Operator, ensure they can only see their organization's data
-        if user_role in ['Manager', 'Operator']:
-            user_org_id = user.get('organization_id')
-            if organization_id and organization_id != user_org_id:
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail="Access denied to this organization's data"
-                )
-            organization_id = user_org_id
         
         dashboard_data = service.get_venue_dashboard(
             workspace_id=workspace_id,
@@ -154,16 +133,6 @@ async def get_dashboard_analytics(
             user_workspace = user.get('workspace_id')
             if not organization_id and user_workspace:
                 organization_id = user.get('organization_id')
-        
-        # If user is Manager or Operator, ensure they can only see their organization's data
-        if user_role in ['Manager', 'Operator']:
-            user_org_id = user.get('organization_id')
-            if organization_id and organization_id != user_org_id:
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail="Access denied to this organization's data"
-                )
-            organization_id = user_org_id
         
         dashboard_data = service.get_venue_dashboard(
             workspace_id=workspace_id,

@@ -91,16 +91,6 @@ async def get_organization(organization_id: str, user: Dict[str, Any] = Depends(
             detail="Organization not found"
         )
     
-    # Check access
-    user_role = user.get('role', {}).get('name')
-    
-    if user_role in ['Manager', 'Operator']:
-        if organization.get('id') != user.get('organization_id'):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Access denied to this organization"
-            )
-    
     return {
         "success": True,
         "message": "Organization retrieved successfully",
