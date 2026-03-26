@@ -111,11 +111,6 @@ class Settings(BaseSettings):
                 "Generate a secure key with: openssl rand -hex 32"
             )
 
-        if self.CORS_ORIGINS == "*":
-            errors.append(
-                "CORS_ORIGINS is set to '*'. "
-                "Restrict CORS_ORIGINS to specific trusted origins."
-            )
 
         if errors:
             msg = "Production configuration errors:\n" + "\n".join(f"  - {e}" for e in errors)
