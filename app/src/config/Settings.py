@@ -111,7 +111,6 @@ class Settings(BaseSettings):
                 "Generate a secure key with: openssl rand -hex 32"
             )
 
-
         if errors:
             msg = "Production configuration errors:\n" + "\n".join(f"  - {e}" for e in errors)
             raise RuntimeError(msg)
