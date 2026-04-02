@@ -23,6 +23,7 @@ from src.application.routes import (
     Reviews,
     Users,
     Permissions,
+    Roles,
 )
 
 logging.basicConfig(
@@ -86,6 +87,7 @@ app.include_router(Dashboard.router, prefix=PREFIX)
 app.include_router(Reviews.router, prefix=PREFIX)
 app.include_router(Users.router, prefix=PREFIX)
 app.include_router(Permissions.router, prefix=PREFIX)
+app.include_router(Roles.router, prefix=PREFIX)
 
 
 @app.exception_handler(Exception)

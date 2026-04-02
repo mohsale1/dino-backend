@@ -19,7 +19,7 @@ class PermissionBase(BaseModel):
     
     @validator('action')
     def validate_action(cls, v):
-        valid_actions = ['create', 'read', 'update', 'delete', 'list', 'manage', 'moderate', 'status', 'payment', 'subscription']
+        valid_actions = ['view', 'create', 'read', 'update', 'delete', 'list', 'manage', 'moderate', 'status', 'payment', 'subscription']
         if v not in valid_actions:
             raise ValueError(f'Action must be one of: {", ".join(valid_actions)}')
         return v
@@ -46,7 +46,7 @@ class PermissionUpdate(BaseModel):
     @validator('action')
     def validate_action(cls, v):
         if v is not None:
-            valid_actions = ['create', 'read', 'update', 'delete', 'list', 'manage', 'moderate', 'status', 'payment', 'subscription']
+            valid_actions = ['view', 'create', 'read', 'update', 'delete', 'list', 'manage', 'moderate', 'status', 'payment', 'subscription']
             if v not in valid_actions:
                 raise ValueError(f'Action must be one of: {", ".join(valid_actions)}')
         return v
