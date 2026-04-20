@@ -1,12 +1,14 @@
+from typing import Any, Dict, List
+
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from src.base.BaseRepository import BaseRepository
-from typing import List, Dict, Any
+from src.models.Workspace import Workspace
+
 
 class WorkspaceRepository(BaseRepository):
-    """Workspace repository"""
-    
-    def __init__(self):
-        super().__init__("workspaces")
-    
-    def get_by_owner(self, owner_id: str) -> List[Dict[str, Any]]:
-        """Get all workspaces by owner"""
-        return self.get_all(filters={"owner_id": owner_id})
+    def __init__(self, db: AsyncSession) -> None:
+        super().__init__(Workspace, db)
+
+    async def get_by_owner(self, owner_id: str) -> List[Dict[str, Any]]:
+        return await self.get_all(filters={"owner_id": owner_id})

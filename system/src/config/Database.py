@@ -1,76 +1,70 @@
 """
-Firestore Database Configuration
+PostgreSQL async database configuration using SQLAlchemy 2.x + asyncpg.
 """
 
 import logging
+from typing import AsyncGenerator
+from urllib.parse import urlparse
 
-import firebase_admin
-from google.cloud import firestore
-from google.cloud.firestore import Client
-from typing import Optional
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from src.config.Settings import settings
 
 logger = logging.getLogger(__name__)
 
-_db: Optional[Client] = None
+engine = None
+async_session_factory = None
 
 
-def initialize_firestore() -> Client:
-    """Initialize Firestore connection using Application Default Credentials"""
-    global _db
+async def initialize_db() -> None:
+    """Create the async engine and session factory."""
+    global engine, async_session_factory
 
-    if _db is not None:
-        return _db
+    parsed = urlparse(settings.DATABASE_URL)
+    logger.info("Connecting to PostgreSQL...")
+    logger.info(f"   Host: {parsed.hostname}:{parsed.port}")
+    logger.info(f"   Database: {parsed.path.lstrip('/')}")
 
-    try:
-        logger.info("Connecting to Firestore...")
-        logger.info(f"Project ID: {settings.FIREBASE_PROJECT_ID}")
-        logger.info(f"Database Name: {settings.FIREBASE_DATABASE_ID}")
+    engine = create_async_engine(
+        settings.DATABASE_URL,
+        pool_size=10,
+        max_overflow=20,
+        pool_pre_ping=True,
+        pool_recycle=3600,
+        echo=settings.DEBUG,
+    )
 
-        # Initialize Firebase Admin SDK
+    async_session_factory = async_sessionmaker(
+        engine,
+        class_=AsyncSession,
+        expire_on_commit=False,
+    )
+
+    logger.info("PostgreSQL engine initialised successfully.")
+
+
+async def get_db() -> AsyncGenerator[AsyncSession, None]:
+    """FastAPI dependency that yields a managed AsyncSession."""
+    if async_session_factory is None:
+        raise RuntimeError("Database not initialised. Call initialize_db() on startup.")
+
+    async with async_session_factory() as session:
         try:
-            firebase_admin.initialize_app(options={
-                "projectId": settings.FIREBASE_PROJECT_ID,
-            })
-        except ValueError:
-            # Already initialized
-            pass
-
-        # Connect to Firestore with database name
-        database_name = settings.FIREBASE_DATABASE_ID if settings.FIREBASE_DATABASE_ID else "(default)"
-
-        _db = firestore.Client(
-            project=settings.FIREBASE_PROJECT_ID,
-            database=database_name,
-        )
-
-        logger.info("Firestore connected successfully.")
-        return _db
-
-    except Exception as e:
-        logger.error(f"Error initializing Firestore: {e}")
-        raise
+            yield session
+            await session.commit()
+        except Exception:
+            await session.rollback()
+            raise
+        finally:
+            await session.close()
 
 
-def get_firestore_client() -> Client:
-    """Get Firestore client instance"""
-    global _db
+async def close_db() -> None:
+    """Dispose the engine and release all pooled connections."""
+    global engine, async_session_factory
 
-    if _db is None:
-        _db = initialize_firestore()
-
-    return _db
-
-
-def close_firestore():
-    """Close Firestore connection"""
-    global _db
-
-    if _db is not None:
-        try:
-            firebase_admin.delete_app(firebase_admin.get_app())
-        except Exception as e:
-            logger.warning(f"Error closing Firebase app: {e}")
-        _db = None
-        logger.info("Firestore connection closed.")
+    if engine is not None:
+        await engine.dispose()
+        engine = None
+        async_session_factory = None
+        logger.info("PostgreSQL engine disposed.")

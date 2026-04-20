@@ -1,8 +1,10 @@
 from fastapi import APIRouter, HTTPException, status, Depends, Query
+from sqlalchemy.ext.asyncio import AsyncSession
 from src.schemas.Coupon import CouponCreate, CouponUpdate, CouponResponse
 from src.application.services.Coupon import CouponService
 from src.base.BaseSchema import BaseResponse
-from src.application.middleware.RoleCheck import ApplicationRoleCheck
+from src.application.middleware.RoleCheck import ApplicationPermissionCheck
+from src.config.Database import get_db
 from typing import Optional
 from pydantic import BaseModel
 
@@ -12,19 +14,22 @@ router = APIRouter(prefix="/coupons", tags=["Application Coupons"])
 class ValidateCouponRequest(BaseModel):
     """Validate coupon request"""
     code: str
-    workspace_id: str
+    workspace_id: int
     order_amount: float
 
 
 # ==================== COLLECTION ENDPOINTS ====================
 
-@router.post("", response_model=BaseResponse, dependencies=[Depends(ApplicationRoleCheck.require_admin)])
-async def create_coupon(coupon: CouponCreate):
+@router.post("", response_model=BaseResponse, dependencies=[Depends(ApplicationPermissionCheck.require('coupons:create'))])
+async def create_coupon(
+    coupon: CouponCreate,
+    db: AsyncSession = Depends(get_db)
+):
     """Create new coupon (Admin only)"""
-    service = CouponService()
+    service = CouponService(db)
 
     try:
-        coupon_id = service.create_coupon(coupon.model_dump())
+        coupon_id = await service.create_coupon(coupon.model_dump())
 
         return {
             "success": True,
@@ -37,14 +42,16 @@ async def create_coupon(coupon: CouponCreate):
             detail=str(e)
         )
 
-@router.get("", dependencies=[Depends(ApplicationRoleCheck.require_operator)])
+
+@router.get("", dependencies=[Depends(ApplicationPermissionCheck.require('coupons:read'))])
 async def get_all_coupons(
-    workspace_id: str = Query(..., description="Workspace ID"),
+    workspace_id: int = Query(..., description="Workspace ID"),
     page: int = Query(1, ge=1, description="Page number"),
     page_size: int = Query(10, ge=1, le=100, description="Items per page"),
     is_available: Optional[bool] = Query(None, description="Filter by availability"),
     order_by: str = Query("created_at", description="Field to order by"),
-    order_direction: str = Query("desc", description="Order direction (asc/desc)")
+    order_direction: str = Query("desc", description="Order direction (asc/desc)"),
+    db: AsyncSession = Depends(get_db)
 ):
     """
     Get all coupons with pagination
@@ -57,12 +64,12 @@ async def get_all_coupons(
     - order_by: Field to order by (default: created_at)
     - order_direction: Order direction (asc/desc, default: desc)
     """
-    service = CouponService()
+    service = CouponService(db)
 
     if page_size > 100:
         page_size = 100
 
-    items, total, total_pages = service.get_paginated_coupons(
+    items, total, total_pages = await service.get_paginated_coupons(
         workspace_id=workspace_id,
         page=page,
         page_size=page_size,
@@ -88,15 +95,16 @@ async def get_all_coupons(
 
 # ==================== STATIC-PATH ENDPOINTS (must be BEFORE /{coupon_id}) ====================
 
-@router.get("/code/{code}", response_model=BaseResponse, dependencies=[Depends(ApplicationRoleCheck.require_operator)])
+@router.get("/code/{code}", response_model=BaseResponse, dependencies=[Depends(ApplicationPermissionCheck.require('coupons:read'))])
 async def get_coupon_by_code(
     code: str,
-    workspace_id: str = Query(..., description="Workspace ID")
+    workspace_id: int = Query(..., description="Workspace ID"),
+    db: AsyncSession = Depends(get_db)
 ):
     """Get coupon by code"""
-    service = CouponService()
+    service = CouponService(db)
 
-    coupon = service.get_coupon_by_code(code, workspace_id)
+    coupon = await service.get_coupon_by_code(code, workspace_id)
 
     if not coupon:
         raise HTTPException(
@@ -110,12 +118,16 @@ async def get_coupon_by_code(
         "data": coupon
     }
 
-@router.post("/validate", response_model=BaseResponse, dependencies=[Depends(ApplicationRoleCheck.require_operator)])
-async def validate_coupon(request: ValidateCouponRequest):
-    """Validate if a coupon can be applied to an order"""
-    service = CouponService()
 
-    result = service.validate_coupon(
+@router.post("/validate", response_model=BaseResponse, dependencies=[Depends(ApplicationPermissionCheck.require('coupons:read'))])
+async def validate_coupon(
+    request: ValidateCouponRequest,
+    db: AsyncSession = Depends(get_db)
+):
+    """Validate if a coupon can be applied to an order"""
+    service = CouponService(db)
+
+    result = await service.validate_coupon(
         code=request.code,
         workspace_id=request.workspace_id,
         order_amount=request.order_amount
@@ -134,12 +146,15 @@ async def validate_coupon(request: ValidateCouponRequest):
 
 # ==================== COUPON-SCOPED ENDPOINTS (/{coupon_id}) ====================
 
-@router.get("/{coupon_id}", response_model=BaseResponse, dependencies=[Depends(ApplicationRoleCheck.require_operator)])
-async def get_coupon(coupon_id: str):
+@router.get("/{coupon_id}", response_model=BaseResponse, dependencies=[Depends(ApplicationPermissionCheck.require('coupons:read'))])
+async def get_coupon(
+    coupon_id: int,
+    db: AsyncSession = Depends(get_db)
+):
     """Get coupon by ID"""
-    service = CouponService()
+    service = CouponService(db)
 
-    coupon = service.get_coupon_by_id(coupon_id)
+    coupon = await service.get_coupon_by_id(coupon_id)
 
     if not coupon:
         raise HTTPException(
@@ -153,12 +168,17 @@ async def get_coupon(coupon_id: str):
         "data": coupon
     }
 
-@router.put("/{coupon_id}", response_model=BaseResponse, dependencies=[Depends(ApplicationRoleCheck.require_admin)])
-async def update_coupon(coupon_id: str, coupon: CouponUpdate):
-    """Update coupon (Admin only)"""
-    service = CouponService()
 
-    existing_coupon = service.get_coupon_by_id(coupon_id)
+@router.put("/{coupon_id}", response_model=BaseResponse, dependencies=[Depends(ApplicationPermissionCheck.require('coupons:update'))])
+async def update_coupon(
+    coupon_id: int,
+    coupon: CouponUpdate,
+    db: AsyncSession = Depends(get_db)
+):
+    """Update coupon (Admin only)"""
+    service = CouponService(db)
+
+    existing_coupon = await service.get_coupon_by_id(coupon_id)
     if not existing_coupon:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -166,7 +186,7 @@ async def update_coupon(coupon_id: str, coupon: CouponUpdate):
         )
 
     try:
-        success = service.update_coupon(coupon_id, coupon.model_dump(exclude_unset=True))
+        success = await service.update_coupon(coupon_id, coupon.model_dump(exclude_unset=True))
 
         if not success:
             raise HTTPException(
@@ -184,19 +204,23 @@ async def update_coupon(coupon_id: str, coupon: CouponUpdate):
             detail=str(e)
         )
 
-@router.delete("/{coupon_id}", response_model=BaseResponse, dependencies=[Depends(ApplicationRoleCheck.require_admin)])
-async def delete_coupon(coupon_id: str):
-    """Soft delete coupon (Admin only)"""
-    service = CouponService()
 
-    coupon = service.get_coupon_by_id(coupon_id)
+@router.delete("/{coupon_id}", response_model=BaseResponse, dependencies=[Depends(ApplicationPermissionCheck.require('coupons:delete'))])
+async def delete_coupon(
+    coupon_id: int,
+    db: AsyncSession = Depends(get_db)
+):
+    """Soft delete coupon (Admin only)"""
+    service = CouponService(db)
+
+    coupon = await service.get_coupon_by_id(coupon_id)
     if not coupon:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Coupon not found"
         )
 
-    success = service.soft_delete_coupon(coupon_id)
+    success = await service.soft_delete_coupon(coupon_id)
 
     if not success:
         raise HTTPException(
@@ -209,25 +233,29 @@ async def delete_coupon(coupon_id: str):
         "message": "Coupon soft deleted successfully"
     }
 
-@router.put("/{coupon_id}/restore", response_model=BaseResponse, dependencies=[Depends(ApplicationRoleCheck.require_admin)])
-async def restore_coupon(coupon_id: str):
-    """Restore soft-deleted coupon (Admin only)"""
-    service = CouponService()
 
-    coupon = service.get_coupon_by_id(coupon_id, include_deleted=True)
+@router.put("/{coupon_id}/restore", response_model=BaseResponse, dependencies=[Depends(ApplicationPermissionCheck.require('coupons:restore'))])
+async def restore_coupon(
+    coupon_id: int,
+    db: AsyncSession = Depends(get_db)
+):
+    """Restore soft-deleted coupon (Admin only)"""
+    service = CouponService(db)
+
+    coupon = await service.get_coupon_by_id(coupon_id, include_deleted=True)
     if not coupon:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Coupon not found"
         )
 
-    if not coupon.get('is_deleted', False):
+    if coupon.get('is_active', True):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Coupon is not deleted"
         )
 
-    success = service.restore_coupon(coupon_id)
+    success = await service.restore_coupon(coupon_id)
 
     if not success:
         raise HTTPException(
@@ -240,19 +268,23 @@ async def restore_coupon(coupon_id: str):
         "message": "Coupon restored successfully"
     }
 
-@router.post("/{coupon_id}/apply", response_model=BaseResponse, dependencies=[Depends(ApplicationRoleCheck.require_operator)])
-async def apply_coupon(coupon_id: str):
-    """Increment usage count when coupon is applied"""
-    service = CouponService()
 
-    coupon = service.get_coupon_by_id(coupon_id)
+@router.post("/{coupon_id}/apply", response_model=BaseResponse, dependencies=[Depends(ApplicationPermissionCheck.require('coupons:update'))])
+async def apply_coupon(
+    coupon_id: int,
+    db: AsyncSession = Depends(get_db)
+):
+    """Increment usage count when coupon is applied"""
+    service = CouponService(db)
+
+    coupon = await service.get_coupon_by_id(coupon_id)
     if not coupon:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Coupon not found"
         )
 
-    success = service.apply_coupon(coupon_id)
+    success = await service.apply_coupon(coupon_id)
 
     if not success:
         raise HTTPException(

@@ -1,43 +1,109 @@
+from typing import Any, Dict, List, Optional
+
+from sqlalchemy import and_, select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from src.base.BaseModel import row_to_dict
 from src.base.BaseRepository import BaseRepository
-from typing import List, Dict, Any, Optional
-from google.cloud.firestore_v1 import FieldFilter, Query
+from src.models.Review import Review
 
 
 class ReviewRepository(BaseRepository):
-    """Review repository"""
+    """Review repository — async SQLAlchemy 2.x."""
 
-    def __init__(self):
-        super().__init__("reviews")
+    def __init__(self, db: AsyncSession) -> None:
+        super().__init__(Review, db)
 
-    def get_approved_reviews(self, limit: Optional[int] = None) -> List[Dict[str, Any]]:
-        """Get approved reviews ordered by latest"""
-        query = self.collection.where(filter=FieldFilter("is_deleted", "==", False)).where(filter=FieldFilter("is_approved", "==", True))
-        query = query.order_by("created_at", direction=Query.DESCENDING)
+    # ------------------------------------------------------------------
+    # Specialised read methods
+    # ------------------------------------------------------------------
 
-        if limit:
-            query = query.limit(limit)
+    async def get_approved_reviews(
+        self,
+        limit: Optional[int] = None,
+    ) -> List[Dict[str, Any]]:
+        """
+        Return approved, active reviews ordered by newest first.
 
-        docs = query.get()
-        return [doc.to_dict() for doc in docs]
+        Parameters
+        ----------
+        limit:
+            When provided, caps the result set to this many rows.
+        """
+        stmt = (
+            select(Review)
+            .where(
+                and_(
+                    Review.is_active == True,  # noqa: E712
+                    Review.is_approved == True,  # noqa: E712
+                )
+            )
+            .order_by(Review.created_at.desc())
+        )
+        if limit is not None:
+            stmt = stmt.limit(limit)
 
-    def get_by_workspace(self, workspace_id: str, limit: Optional[int] = None) -> List[Dict[str, Any]]:
-        """Get reviews by workspace"""
-        query = self.collection.where(filter=FieldFilter("is_deleted", "==", False)).where(filter=FieldFilter("workspace_id", "==", workspace_id))
-        query = query.order_by("created_at", direction=Query.DESCENDING)
+        result = await self.db.execute(stmt)
+        return [row_to_dict(row) for row in result.scalars().all()]
 
-        if limit:
-            query = query.limit(limit)
+    async def get_by_workspace(
+        self,
+        workspace_id: str,
+        limit: Optional[int] = None,
+    ) -> List[Dict[str, Any]]:
+        """
+        Return active reviews for a workspace, newest first.
 
-        docs = query.get()
-        return [doc.to_dict() for doc in docs]
+        Parameters
+        ----------
+        workspace_id:
+            Scope filter.
+        limit:
+            When provided, caps the result set to this many rows.
+        """
+        stmt = (
+            select(Review)
+            .where(
+                and_(
+                    Review.is_active == True,  # noqa: E712
+                    Review.workspace_id == workspace_id,
+                )
+            )
+            .order_by(Review.created_at.desc())
+        )
+        if limit is not None:
+            stmt = stmt.limit(limit)
 
-    def get_by_organization(self, organization_id: str, limit: Optional[int] = None) -> List[Dict[str, Any]]:
-        """Get reviews by organization"""
-        query = self.collection.where(filter=FieldFilter("is_deleted", "==", False)).where(filter=FieldFilter("organization_id", "==", organization_id))
-        query = query.order_by("created_at", direction=Query.DESCENDING)
+        result = await self.db.execute(stmt)
+        return [row_to_dict(row) for row in result.scalars().all()]
 
-        if limit:
-            query = query.limit(limit)
+    async def get_by_persona(
+        self,
+        persona_id: str,
+        limit: Optional[int] = None,
+    ) -> List[Dict[str, Any]]:
+        """
+        Return active reviews for a persona, newest first.
 
-        docs = query.get()
-        return [doc.to_dict() for doc in docs]
+        Parameters
+        ----------
+        persona_id:
+            Scope filter.
+        limit:
+            When provided, caps the result set to this many rows.
+        """
+        stmt = (
+            select(Review)
+            .where(
+                and_(
+                    Review.is_active == True,  # noqa: E712
+                    Review.persona_id == persona_id,
+                )
+            )
+            .order_by(Review.created_at.desc())
+        )
+        if limit is not None:
+            stmt = stmt.limit(limit)
+
+        result = await self.db.execute(stmt)
+        return [row_to_dict(row) for row in result.scalars().all()]

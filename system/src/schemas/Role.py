@@ -2,6 +2,7 @@ from pydantic import BaseModel, Field
 from typing import List, Optional
 from datetime import datetime
 
+
 class RoleBase(BaseModel):
     """Base role schema"""
     name: str = Field(..., min_length=1, max_length=100)
@@ -9,9 +10,11 @@ class RoleBase(BaseModel):
     description: Optional[str] = None
     permissions: List[str] = []
 
+
 class RoleCreate(RoleBase):
     """Create role schema"""
     pass
+
 
 class RoleUpdate(BaseModel):
     """Update role schema"""
@@ -20,12 +23,13 @@ class RoleUpdate(BaseModel):
     permissions: Optional[List[str]] = None
     is_active: Optional[bool] = None
 
+
 class RoleResponse(RoleBase):
     """Role response schema"""
-    id: str
+    id: int
     created_at: datetime
-    updated_at: datetime
+    updated_at: Optional[datetime] = None
     is_active: bool
-    
+
     class Config:
         from_attributes = True

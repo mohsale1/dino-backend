@@ -1,109 +1,181 @@
+"""
+BaseAuth — async authentication helpers.
+
+Token creation and verification are synchronous (no DB calls).
+All user/role lookups are async and delegate to injected repositories.
+"""
+
 from datetime import datetime, timedelta, timezone
-from typing import Optional, Dict, Any
+from typing import Any, Dict, Optional
+
+from fastapi import HTTPException, status
 from jose import JWTError, jwt
-from src.config.Settings import settings
-from src.core.Security import verify_password, get_password_hash
+from sqlalchemy import select
+from sqlalchemy.orm import selectinload
+
 from src.base.BaseRepository import BaseRepository
+from src.base.BaseUser import SENSITIVE_USER_FIELDS
+from src.config.Settings import settings
+from src.core.Security import get_password_hash, verify_password
+from src.models.Role import Role
+
 
 class BaseAuth:
-    """Base authentication service"""
-    
-    def __init__(self, user_repository: BaseRepository, role_repository: BaseRepository):
+    """Base authentication service. Concrete auth services extend this class."""
+
+    def __init__(
+        self,
+        user_repository: BaseRepository,
+        role_repository: BaseRepository,
+    ) -> None:
         self.user_repository = user_repository
         self.role_repository = role_repository
-    
-    def authenticate_user(self, email: str, password: str) -> Optional[Dict[str, Any]]:
-        """Authenticate user with email and password"""
-        user = self.user_repository.get_by_field("email", email)
-        
+
+    # ------------------------------------------------------------------
+    # Authentication
+    # ------------------------------------------------------------------
+
+    async def authenticate_user(
+        self,
+        email: str,
+        password: str,
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Verify *email* + *password* against the database.
+
+        On success, stamps ``last_login`` on the user record and returns the
+        user dict.  Returns ``None`` on any authentication failure.
+        """
+        user = await self.user_repository.get_by_field("email", email.lower())
+
         if not user:
             return None
-        
-        if not user.get('is_active', False):
+
+        if not user.get("is_active", False):
             return None
-        
-        if not verify_password(password, user.get('password_hash', '')):
+
+        if not verify_password(password, user.get("password_hash", "")):
             return None
-        
+
+        # Stamp last_login — best-effort; do not let a failed update block login.
+        now = datetime.now(timezone.utc)
+        await self.user_repository.update(user["id"], {"last_login": now})
+        user["last_login"] = now.isoformat()
+
         return user
-    
-    def create_access_token(self, data: dict, expires_delta: Optional[timedelta] = None) -> str:
-        """Create JWT access token"""
+
+    # ------------------------------------------------------------------
+    # Token operations (synchronous — no DB access)
+    # ------------------------------------------------------------------
+
+    def create_access_token(
+        self,
+        data: dict,
+        expires_delta: Optional[timedelta] = None,
+    ) -> str:
+        """Encode a signed JWT access token."""
         to_encode = data.copy()
-        
-        if expires_delta:
-            expire = datetime.now(timezone.utc) + expires_delta
-        else:
-            expire = datetime.now(timezone.utc) + timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
-        
+        expire = datetime.now(timezone.utc) + (
+            expires_delta
+            if expires_delta is not None
+            else timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
+        )
         to_encode.update({"exp": expire, "type": "access"})
-        encoded_jwt = jwt.encode(to_encode, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
-        return encoded_jwt
-    
+        return jwt.encode(to_encode, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
+
     def create_refresh_token(self, data: dict) -> str:
-        """Create JWT refresh token"""
+        """Encode a signed JWT refresh token."""
         to_encode = data.copy()
         expire = datetime.now(timezone.utc) + timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS)
         to_encode.update({"exp": expire, "type": "refresh"})
-        encoded_jwt = jwt.encode(to_encode, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
-        return encoded_jwt
-    
+        return jwt.encode(to_encode, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
+
     def verify_token(self, token: str) -> Optional[Dict[str, Any]]:
-        """Verify JWT token"""
+        """Decode and verify a JWT token. Returns the payload or None."""
         try:
-            payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
-            return payload
+            return jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
         except JWTError:
             return None
-    
-    def get_user_with_role(self, user_id: str) -> Optional[Dict[str, Any]]:
-        """Get user with role information (sanitized for response)"""
-        user = self.user_repository.get_by_id(user_id)
-        
+
+    # ------------------------------------------------------------------
+    # User helpers
+    # ------------------------------------------------------------------
+
+    async def get_user_with_role(self, user_id: str) -> Optional[Dict[str, Any]]:
+        """
+        Fetch a user by ID and attach a sanitised role sub-dict.
+
+        Issues a single ``selectinload`` query for the role and its permissions
+        so that permission codenames are available without a second round-trip.
+        Sensitive fields are stripped before returning.
+        """
+        user = await self.user_repository.get_by_id(user_id)
         if not user:
             return None
-        
-        role = self.role_repository.get_by_id(user.get('role_id', ''))
-        
-        # Remove sensitive fields
-        user.pop('password_hash', None)
-        user.pop('is_deleted', None)
-        user.pop('created_by', None)
-        user.pop('is_system', None)
-        
-        # Clean role data
-        if role:
-            role_clean = {
-                'id': role.get('id'),
-                'name': role.get('name'),
-                'role_type': role.get('role_type'),
-                'permissions': role.get('permissions', [])
-            }
-            user['role'] = role_clean
-            # Also add role name as string for frontend compatibility
-            user['role_name'] = role.get('name')
-        
+
+        # Strip sensitive / internal fields (whitelist approach via exclusion
+        # of the known-sensitive set defined in BaseUser).
+        for field in SENSITIVE_USER_FIELDS | {"created_by", "is_system"}:
+            user.pop(field, None)
+
+        role_id = user.get("role_id")
+        if role_id:
+            # Use a selectinload query directly on the repository's session so
+            # that Role.permissions ORM objects are available for codename extraction.
+            stmt = (
+                select(Role)
+                .where(Role.id == role_id, Role.is_active.is_(True))
+                .options(selectinload(Role.permissions))
+            )
+            result = await self.role_repository.db.execute(stmt)
+            role_obj: Optional[Role] = result.scalar_one_or_none()
+
+            if role_obj is not None:
+                codenames = [
+                    perm.codename
+                    for perm in role_obj.permissions
+                    if perm.codename
+                ]
+                user["role"] = {
+                    "id": role_obj.id,
+                    "name": role_obj.name,
+                    "role_type": role_obj.role_type,
+                    "permissions": codenames,
+                }
+                user["role_name"] = role_obj.name
+
         return user
-    
-    def change_password(self, user_id: str, old_password: str, new_password: str) -> bool:
-        """Change user password"""
-        # Get user
-        user = self.user_repository.get_by_id(user_id)
-        
+
+    async def change_password(
+        self,
+        user_id: str,
+        old_password: str,
+        new_password: str,
+    ) -> bool:
+        """
+        Verify *old_password* then replace it with *new_password*.
+
+        Raises
+        ------
+        HTTPException 404
+            If the user is not found.
+        HTTPException 400
+            If the old password is incorrect.
+        """
+        user = await self.user_repository.get_by_id(user_id)
         if not user:
-            raise Exception("User not found")
-        
-        # Verify old password
-        if not verify_password(old_password, user.get('password_hash', '')):
-            raise Exception("Current password is incorrect")
-        
-        # Hash new password
-        new_password_hash = get_password_hash(new_password)
-        
-        # Update password
-        success = self.user_repository.update(user_id, {
-            'password_hash': new_password_hash,
-            'updated_at': datetime.now(timezone.utc)
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="User not found",
+            )
+
+        if not verify_password(old_password, user.get("password_hash", "")):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Current password is incorrect",
+            )
+
+        return await self.user_repository.update(user_id, {
+            "password_hash": get_password_hash(new_password),
+            "updated_at": datetime.now(timezone.utc),
         })
-        
-        return success

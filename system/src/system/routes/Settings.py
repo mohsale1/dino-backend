@@ -4,24 +4,26 @@ Endpoints for managing system-wide settings
 """
 
 from fastapi import APIRouter, HTTPException, status, Depends
+from sqlalchemy.ext.asyncio import AsyncSession
 from src.base.BaseSchema import BaseResponse
-from src.system.middleware.RoleCheck import SystemRoleCheck
+from src.system.middleware.RoleCheck import SystemPermissionCheck
 from src.system.services.Settings import SettingsService
 from src.schemas.HomePageInfo import HomePageInfoUpdateSchema
+from src.config.Database import get_db
 
 router = APIRouter(prefix="/settings", tags=["System Settings"])
 
 
 @router.get("/homepage", response_model=BaseResponse)
-async def get_homepage_settings():
+async def get_homepage_settings(db: AsyncSession = Depends(get_db)):
     """
     Get home page settings (Public endpoint)
     Anyone can view home page settings
     """
     try:
-        service = SettingsService()
-        homepage_info = service.get_homepage_info()
-        
+        service = SettingsService(db)
+        homepage_info = await service.get_homepage_info()
+
         return {
             "success": True,
             "message": "Home page settings retrieved successfully",
@@ -34,29 +36,20 @@ async def get_homepage_settings():
         )
 
 
-@router.put("/homepage", response_model=BaseResponse, dependencies=[Depends(SystemRoleCheck.require_super_admin)])
-async def update_homepage_settings(data: HomePageInfoUpdateSchema):
+@router.put("/homepage", response_model=BaseResponse, dependencies=[Depends(SystemPermissionCheck.require('settings:update'))])
+async def update_homepage_settings(data: HomePageInfoUpdateSchema, db: AsyncSession = Depends(get_db)):
     """
     Update home page settings (SuperAdmin only)
-    
+
     Body Parameters:
-    - company: Company information (name, tagline, description, etc.)
     - contact: Contact information (email, phone, address, etc.)
-    - social_media: Social media links (facebook, twitter, instagram, etc.)
-    - hero: Hero section configuration
-    - features: Features section configuration
     - testimonials: Testimonials section configuration
     - stats: Stats section configuration
-    - faq: FAQ section configuration
-    - cta: CTA section configuration
-    - seo: SEO information
-    - theme: Theme colors
-    - settings: General settings (buttons, maintenance mode, etc.)
     """
     try:
-        service = SettingsService()
-        updated_info = service.update_homepage_info(data.model_dump(exclude_none=True))
-        
+        service = SettingsService(db)
+        updated_info = await service.update_homepage_info(data.model_dump(exclude_none=True))
+
         return {
             "success": True,
             "message": "Home page settings updated successfully",
@@ -70,16 +63,16 @@ async def update_homepage_settings(data: HomePageInfoUpdateSchema):
 
 
 @router.get("/homepage/company", response_model=BaseResponse)
-async def get_company_info():
-    """Get company information (Public endpoint)"""
+async def get_company_info(db: AsyncSession = Depends(get_db)):
+    """Get contact information via the legacy /company endpoint (Public endpoint)"""
     try:
-        service = SettingsService()
-        homepage_info = service.get_homepage_info()
-        
+        service = SettingsService(db)
+        homepage_info = await service.get_homepage_info()
+
         return {
             "success": True,
             "message": "Company information retrieved successfully",
-            "data": homepage_info.get('company', {})
+            "data": homepage_info.get('contact', {})
         }
     except Exception as e:
         raise HTTPException(
@@ -89,12 +82,12 @@ async def get_company_info():
 
 
 @router.get("/homepage/contact", response_model=BaseResponse)
-async def get_contact_info():
+async def get_contact_info(db: AsyncSession = Depends(get_db)):
     """Get contact information (Public endpoint)"""
     try:
-        service = SettingsService()
-        homepage_info = service.get_homepage_info()
-        
+        service = SettingsService(db)
+        homepage_info = await service.get_homepage_info()
+
         return {
             "success": True,
             "message": "Contact information retrieved successfully",

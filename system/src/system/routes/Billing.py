@@ -1,7 +1,10 @@
-from fastapi import APIRouter, HTTPException, status, Depends
+from fastapi import APIRouter, Body, HTTPException, status, Depends
+from sqlalchemy.ext.asyncio import AsyncSession
 from src.system.services.Billing import BillingService
+from src.system.services.Workspace import WorkspaceService
 from src.base.BaseSchema import BaseResponse
-from src.system.middleware.RoleCheck import SystemRoleCheck
+from src.system.middleware.RoleCheck import SystemPermissionCheck
+from src.config.Database import get_db
 from pydantic import BaseModel
 from typing import Dict, Any
 
@@ -11,35 +14,36 @@ class UpdateSubscriptionRequest(BaseModel):
     plan: str
     status: str
 
-@router.get("/workspaces", dependencies=[Depends(SystemRoleCheck.require_billing_manager)])
+@router.get("/workspaces", dependencies=[Depends(SystemPermissionCheck.require('billing:read'))])
 async def get_all_billing_info(
     page: int = 1,
     page_size: int = 10,
     order_by: str = "created_at",
-    order_direction: str = "desc"
+    order_direction: str = "desc",
+    db: AsyncSession = Depends(get_db)
 ):
     """
     Get billing info for all workspaces with pagination (BillingManager, SuperAdmin)
-    
+
     Query Parameters:
     - page: Page number (default: 1)
     - page_size: Items per page (default: 10, max: 100)
     - order_by: Field to order by (default: created_at)
     - order_direction: Order direction (asc/desc, default: desc)
     """
-    service = BillingService()
-    
+    billing_service = BillingService(db)
+
     # Validate page_size
     if page_size > 100:
         page_size = 100
-    
-    items, total, total_pages = service.get_paginated_billing_info(
+
+    items, total, total_pages = await billing_service.get_paginated_billing_info(
         page=page,
         page_size=page_size,
         order_by=order_by,
         order_direction=order_direction
     )
-    
+
     return {
         "success": True,
         "message": "Billing information retrieved successfully",
@@ -54,70 +58,68 @@ async def get_all_billing_info(
         }
     }
 
-@router.get("/workspaces/{workspace_id}", response_model=BaseResponse, dependencies=[Depends(SystemRoleCheck.require_billing_manager)])
-async def get_workspace_billing(workspace_id: str):
+@router.get("/workspaces/{workspace_id}", response_model=BaseResponse, dependencies=[Depends(SystemPermissionCheck.require('billing:read'))])
+async def get_workspace_billing(workspace_id: int, db: AsyncSession = Depends(get_db)):
     """Get workspace billing information (BillingManager, SuperAdmin)"""
-    service = BillingService()
-    
-    billing_info = service.get_workspace_billing(workspace_id)
-    
+    billing_service = BillingService(db)
+
+    billing_info = await billing_service.get_workspace_billing(workspace_id)
+
     if not billing_info:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Workspace not found"
         )
-    
+
     return {
         "success": True,
         "message": "Billing information retrieved successfully",
         "data": billing_info
     }
 
-@router.put("/workspaces/{workspace_id}/subscription", response_model=BaseResponse, dependencies=[Depends(SystemRoleCheck.require_billing_manager)])
-async def update_subscription(workspace_id: str, request: UpdateSubscriptionRequest):
+@router.put("/workspaces/{workspace_id}/subscription", response_model=BaseResponse, dependencies=[Depends(SystemPermissionCheck.require('billing:update'))])
+async def update_subscription(workspace_id: int, request: UpdateSubscriptionRequest, db: AsyncSession = Depends(get_db)):
     """Update workspace subscription (BillingManager, SuperAdmin)"""
-    service = BillingService()
-    
-    success = service.update_subscription(workspace_id, request.plan, request.status)
-    
+    billing_service = BillingService(db)
+
+    success = await billing_service.update_subscription(workspace_id, request.plan, request.status)
+
     if not success:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Workspace not found"
         )
-    
+
     return {
         "success": True,
         "message": "Subscription updated successfully"
     }
 
-@router.put("/workspaces/{workspace_id}/billing-info", response_model=BaseResponse, dependencies=[Depends(SystemRoleCheck.require_billing_manager)])
-async def update_billing_info(workspace_id: str, billing_info: Dict[str, Any]):
+@router.put("/workspaces/{workspace_id}/billing-info", response_model=BaseResponse, dependencies=[Depends(SystemPermissionCheck.require('billing:update'))])
+async def update_billing_info(workspace_id: int, billing_info: Dict[str, Any] = Body(...), db: AsyncSession = Depends(get_db)):
     """Update workspace billing information (BillingManager, SuperAdmin)"""
-    from src.system.services.Workspace import WorkspaceService
-    
-    service = WorkspaceService()
-    
-    success = service.update_billing_info(workspace_id, billing_info)
-    
+    workspace_service = WorkspaceService(db)
+
+    success = await workspace_service.update_billing_info(workspace_id, billing_info)
+
     if not success:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Workspace not found"
         )
-    
+
     return {
         "success": True,
         "message": "Billing information updated successfully"
     }
 
-@router.get("/stats", response_model=BaseResponse, dependencies=[Depends(SystemRoleCheck.require_billing_manager)])
-async def get_billing_stats():
+@router.get("/stats", response_model=BaseResponse, dependencies=[Depends(SystemPermissionCheck.require('billing:read'))])
+async def get_billing_stats(db: AsyncSession = Depends(get_db)):
     """Get billing statistics (BillingManager, SuperAdmin)"""
-    service = BillingService()
-    
-    stats = service.get_billing_stats()
-    
+    billing_service = BillingService(db)
+
+    stats = await billing_service.get_billing_stats()
+
     return {
         "success": True,
         "message": "Billing statistics retrieved successfully",

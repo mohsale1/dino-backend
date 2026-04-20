@@ -4,26 +4,29 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from sqlalchemy import text
 
+from src.config.Database import async_session_factory, close_db, initialize_db
 from src.config.Settings import settings
-from src.config.Database import initialize_firestore, close_firestore
 
 from src.application.routes import (
-    Auth,
-    Orders,
-    Organizations,
-    Menu,
     Areas,
+    Auth,
     Categories,
-    Items,
-    Tables,
     Coupons,
-    HomePage,
+    Customers,
     Dashboard,
-    Reviews,
-    Users,
+    HomePage,
+    Items,
+    Menu,
+    Orders,
+    Personas,
     Permissions,
+    Reviews,
     Roles,
+    Tables,
+    Users,
+    Workspaces,
 )
 
 logging.basicConfig(
@@ -42,16 +45,14 @@ async def lifespan(app: FastAPI):
     logger.info(f"Deployed At: {settings.DEPLOYED_AT}")
     logger.info(f"Environment: {settings.ENVIRONMENT}")
 
-    # Initialize Firestore connection
-    initialize_firestore()
-    logger.info("Firestore initialized.")
+    await initialize_db()
+    logger.info("PostgreSQL connection pool initialized.")
 
     yield
 
-    # Shutdown
     logger.info("Shutting down dino-application service...")
-    close_firestore()
-    logger.info("Firestore connection closed.")
+    await close_db()
+    logger.info("PostgreSQL connection pool closed.")
 
 
 app = FastAPI(
@@ -75,7 +76,8 @@ PREFIX = "/api/v1/application"
 
 app.include_router(Auth.router, prefix=PREFIX)
 app.include_router(Orders.router, prefix=PREFIX)
-app.include_router(Organizations.router, prefix=PREFIX)
+app.include_router(Customers.router, prefix=PREFIX)
+app.include_router(Personas.router, prefix=PREFIX)
 app.include_router(Menu.router, prefix=PREFIX)
 app.include_router(Areas.router, prefix=PREFIX)
 app.include_router(Categories.router, prefix=PREFIX)
@@ -88,6 +90,7 @@ app.include_router(Reviews.router, prefix=PREFIX)
 app.include_router(Users.router, prefix=PREFIX)
 app.include_router(Permissions.router, prefix=PREFIX)
 app.include_router(Roles.router, prefix=PREFIX)
+app.include_router(Workspaces.router, prefix=PREFIX)
 
 
 @app.exception_handler(Exception)
@@ -118,23 +121,23 @@ async def root():
     return response
 
 
-
 @app.get("/health")
 async def health():
-    """Health check endpoint — probes live Firestore connectivity."""
-    from src.config.Database import get_firestore_client
+    """Health check endpoint — probes live PostgreSQL connectivity."""
+    if async_session_factory is None:
+        return {"status": "starting"}
     try:
-        db = get_firestore_client()
-        db.collection("_health").limit(1).get()
+        async with async_session_factory() as db:
+            await db.execute(text("SELECT 1"))
     except Exception as e:
-        logger.error(f"Health check failed — Firestore unreachable: {e}")
+        logger.error(f"Health check failed — PostgreSQL unreachable: {e}")
         return JSONResponse(
             status_code=503,
             content={
                 "success": False,
                 "status": "unhealthy",
                 "version": settings.APP_VERSION,
-                "detail": "Firestore connectivity check failed",
+                "detail": "PostgreSQL connectivity check failed",
             },
         )
     return {

@@ -1,12 +1,14 @@
 import logging
 import warnings
-from typing import List
+from typing import List, Optional
+from urllib.parse import urlparse
 
 from pydantic_settings import BaseSettings
 
 logger = logging.getLogger(__name__)
 
 _DEFAULT_SECRET_KEY = "dev-secret-key-change-in-production-use-openssl-rand-hex-32"
+_DEFAULT_DATABASE_URL = "postgresql+asyncpg://postgres:postgres@localhost:5432/dino_application"
 
 
 class Settings(BaseSettings):
@@ -31,11 +33,14 @@ class Settings(BaseSettings):
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7
 
-    # Firebase Settings - Uses Application Default Credentials (ADC)
-    # ADC works automatically in Cloud Run, Cloud Functions, GCE
-    # For local dev: run 'gcloud auth application-default login'
-    FIREBASE_PROJECT_ID: str = "dev-project-id"
-    FIREBASE_DATABASE_ID: str = "(default)"
+    # PostgreSQL connection URL (asyncpg driver) — primary application DB
+    DATABASE_URL: str = _DEFAULT_DATABASE_URL
+
+    # Optional: URL for the dino-system PostgreSQL database.
+    # Used only for cross-service queries (referral validation, signup).
+    # When unset or identical to DATABASE_URL the primary session is reused,
+    # so no second connection pool is created in single-DB deployments.
+    SYSTEM_DATABASE_URL: Optional[str] = None
 
     # SuperAdmin User Settings - Auto-created on first startup
     # Default credentials (can be overridden via environment variables)
@@ -57,6 +62,26 @@ class Settings(BaseSettings):
             return ["*"]
         return [origin.strip() for origin in self.CORS_ORIGINS.split(",")]
 
+    @property
+    def effective_system_database_url(self) -> str:
+        """
+        Return the system DB URL to use for cross-service queries.
+
+        Falls back to DATABASE_URL when SYSTEM_DATABASE_URL is not configured
+        or is identical to the primary URL (single-DB dev deployments).
+        """
+        if not self.SYSTEM_DATABASE_URL or self.SYSTEM_DATABASE_URL == self.DATABASE_URL:
+            return self.DATABASE_URL
+        return self.SYSTEM_DATABASE_URL
+
+    @property
+    def uses_separate_system_db(self) -> bool:
+        """True when a distinct system DB URL has been configured."""
+        return bool(
+            self.SYSTEM_DATABASE_URL
+            and self.SYSTEM_DATABASE_URL != self.DATABASE_URL
+        )
+
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"
@@ -66,15 +91,19 @@ class Settings(BaseSettings):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
 
+        parsed = urlparse(self.DATABASE_URL)
+        db_host = f"{parsed.hostname}:{parsed.port}"
+
         # Log configuration on startup
         logger.info("Configuration loaded:")
         logger.info(f"   Environment: {self.ENVIRONMENT}")
         logger.info(f"   Debug: {self.DEBUG}")
         logger.info(f"   Port: {self.PORT}")
-        logger.info(f"   Firebase Project: {self.FIREBASE_PROJECT_ID}")
+        logger.info(f"   Database Host: {db_host}")
         logger.info(f"   CORS Origins: {self.CORS_ORIGINS}")
         logger.info(f"   Create Default SuperAdmin: {self.CREATE_DEFAULT_SUPERADMIN}")
         logger.info(f"   JWT Enabled: {self.ENABLE_JWT}")
+        logger.info(f"   Separate System DB: {self.uses_separate_system_db}")
 
         # Warn if using default values in production
         if self.ENVIRONMENT == "production" and self.SECRET_KEY == _DEFAULT_SECRET_KEY:
@@ -84,16 +113,18 @@ class Settings(BaseSettings):
                 UserWarning,
             )
 
-        if self.ENVIRONMENT == "production" and self.FIREBASE_PROJECT_ID == "dev-project-id":
+        if self.ENVIRONMENT == "production" and "localhost" in self.DATABASE_URL:
             warnings.warn(
-                "WARNING: Using default FIREBASE_PROJECT_ID in production! "
-                "Please set FIREBASE_PROJECT_ID in environment variables.",
+                "WARNING: DATABASE_URL points to localhost in production! "
+                "Please set DATABASE_URL to a remote PostgreSQL instance.",
                 UserWarning,
             )
 
         # Log SuperAdmin auto-creation status
         if self.CREATE_DEFAULT_SUPERADMIN:
             logger.info("   SuperAdmin Auto-Creation: Enabled")
+
+        self._validate_production_config()
 
     def _validate_production_config(self) -> None:
         """Raise RuntimeError for unsafe configurations in production."""
@@ -117,7 +148,6 @@ class Settings(BaseSettings):
         if errors:
             msg = "Production configuration errors:\n" + "\n".join(f"  - {e}" for e in errors)
             raise RuntimeError(msg)
-
 
 
 settings = Settings()

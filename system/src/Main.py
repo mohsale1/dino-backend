@@ -1,22 +1,24 @@
+import logging
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from contextlib import asynccontextmanager
-import logging
+from sqlalchemy import text
 
+from src.config.Database import async_session_factory, close_db, initialize_db
 from src.config.Settings import settings
-from src.config.Database import initialize_firestore, close_firestore, get_firestore_client
 from src.core.Initializer import initialize_application
 
 from src.system.routes import Auth as SystemAuth
-from src.system.routes import Dashboard as SystemDashboard
-from src.system.routes import Workspaces as SystemWorkspaces
 from src.system.routes import Billing as SystemBilling
-from src.system.routes import Registration as SystemRegistration
-from src.system.routes import Roles as SystemRoles
+from src.system.routes import Dashboard as SystemDashboard
 from src.system.routes import Permissions as SystemPermissions
-from src.system.routes import Users as SystemUsers
+from src.system.routes import Roles as SystemRoles
 from src.system.routes import Settings as SystemSettings
+from src.system.routes import Users as SystemUsers
+from src.system.routes import Workspaces as SystemWorkspaces
+from src.system.routes import Personas as SystemPersonas
 
 logging.basicConfig(level=settings.LOG_LEVEL)
 logger = logging.getLogger(__name__)
@@ -24,7 +26,7 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Application lifespan events"""
+    """Application lifespan events."""
     _banner = "=" * 60
     logger.info(_banner)
     logger.info("  DINO SYSTEM — STARTING UP")
@@ -34,7 +36,7 @@ async def lifespan(app: FastAPI):
     logger.info(f"  Deployed At  : {settings.DEPLOYED_AT}")
     logger.info(f"  Environment  : {settings.ENVIRONMENT}")
     logger.info(f"  Port         : {settings.PORT}")
-    logger.info(f"  Firebase     : {settings.FIREBASE_PROJECT_ID} / {settings.FIREBASE_DATABASE_ID}")
+    logger.info(f"  Database     : PostgreSQL (asyncpg)")
     logger.info(_banner)
 
     # Validate production config — runs after port is bound so errors appear in logs
@@ -45,17 +47,18 @@ async def lifespan(app: FastAPI):
         logger.critical(f"[FAIL] Invalid production configuration:\n{e}")
         raise
 
-    # Initialize Firestore — abort startup on failure
+    # Initialize PostgreSQL connection pool — abort startup on failure
     try:
-        initialize_firestore()
-        logger.info("[OK] Firestore connected")
+        await initialize_db()
+        logger.info("[OK] PostgreSQL connection pool initialized")
     except Exception as e:
-        logger.critical(f"[FAIL] Firestore connection failed: {e}")
+        logger.critical(f"[FAIL] PostgreSQL connection failed: {e}")
         raise
 
     # Initialize application resources (SuperAdmin role, etc.)
     try:
-        await initialize_application()
+        async with async_session_factory() as db:
+            await initialize_application(db)
         logger.info("[OK] Application resources initialized")
     except Exception as e:
         logger.error(f"[FAIL] Application resource initialization failed: {e}")
@@ -71,10 +74,10 @@ async def lifespan(app: FastAPI):
     logger.info("  DINO SYSTEM — SHUTTING DOWN")
     logger.info(_banner)
     try:
-        close_firestore()
-        logger.info("[OK] Firestore connection closed")
+        await close_db()
+        logger.info("[OK] PostgreSQL connection pool closed")
     except Exception as e:
-        logger.error(f"[FAIL] Error closing Firestore: {e}")
+        logger.error(f"[FAIL] Error closing database connection: {e}")
 
 
 # Hide API docs in production
@@ -129,22 +132,21 @@ async def root():
 
 @app.get("/health")
 async def health_check():
-    """Health check endpoint — probes live Firestore connectivity"""
+    """Health check endpoint — probes live PostgreSQL connectivity."""
     try:
-        db = get_firestore_client()
-        db.collection("_health").limit(1).get()
+        async with async_session_factory() as db:
+            await db.execute(text("SELECT 1"))
     except Exception as e:
-        logger.error(f"Health check failed — Firestore unreachable: {e}")
+        logger.error(f"Health check failed — PostgreSQL unreachable: {e}")
         return JSONResponse(
             status_code=503,
             content={
                 "success": False,
                 "status": "unhealthy",
                 "version": settings.APP_VERSION,
-                "detail": "Firestore connectivity check failed",
+                "detail": "PostgreSQL connectivity check failed",
             },
         )
-
     return {
         "success": True,
         "status": "healthy",
@@ -159,8 +161,8 @@ app.include_router(SystemPermissions.router, prefix="/api/v1/system", tags=["Sys
 app.include_router(SystemUsers.router, prefix="/api/v1/system", tags=["System"])
 app.include_router(SystemWorkspaces.router, prefix="/api/v1/system", tags=["System"])
 app.include_router(SystemBilling.router, prefix="/api/v1/system", tags=["System"])
-app.include_router(SystemRegistration.router, prefix="/api/v1/system", tags=["System"])
 app.include_router(SystemSettings.router, prefix="/api/v1/system", tags=["System"])
+app.include_router(SystemPersonas.router, prefix="/api/v1/system", tags=["System"])
 
 if __name__ == "__main__":
     import uvicorn

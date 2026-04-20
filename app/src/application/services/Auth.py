@@ -1,205 +1,296 @@
-from src.base.BaseAuth import BaseAuth
-from src.repositories.UserRepository import UserRepository
-from src.repositories.RoleRepository import RoleRepository
-from src.repositories.WorkspaceRepository import WorkspaceRepository
-from src.repositories.OrganizationRepository import OrganizationRepository
-from src.core.Security import get_password_hash
 from datetime import datetime, timezone
-from typing import Dict, Any
+from typing import Any, Dict, Optional
+
+from sqlalchemy import insert, text
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from src.base.BaseAuth import BaseAuth
+from src.core.Security import get_password_hash
+from src.models.Persona import workspace_personas
+from src.repositories.PersonaRepository import PersonaRepository
+from src.repositories.RoleRepository import RoleRepository
+from src.repositories.UserRepository import UserRepository
+from src.repositories.WorkspaceRepository import WorkspaceRepository
+
+# NOTE: Rate limiting for login and signup endpoints must be applied at the
+# API gateway or middleware level (e.g. slowapi, nginx limit_req, or a reverse
+# proxy).  Implementing it inside the service layer is insufficient because it
+# does not protect against distributed attacks and bypasses load-balancer
+# routing.
+
 
 class ApplicationAuthService(BaseAuth):
-    """Application authentication service"""
+    """Application authentication service — async SQLAlchemy 2.x."""
 
-    def __init__(self):
-        user_repo = UserRepository("application_users")
-        role_repo = RoleRepository()
+    def __init__(self, db: AsyncSession, system_db: Optional[AsyncSession] = None) -> None:
+        user_repo = UserRepository(db)
+        role_repo = RoleRepository(db)
         super().__init__(user_repo, role_repo)
-        # Store repositories as instance variables for easy access
+
+        self.db = db
+        # When no separate system DB session is provided fall back to the
+        # primary session (single-DB deployments share the same instance).
+        self.system_db: AsyncSession = system_db if system_db is not None else db
+
         self.user_repo = user_repo
         self.role_repo = role_repo
-        self.workspace_repo = WorkspaceRepository()
-        self.organization_repo = OrganizationRepository()
-        self.system_user_repo = UserRepository("system_users")
+        self.workspace_repo = WorkspaceRepository(db)
+        self.persona_repo = PersonaRepository(db)
 
-    def login(self, email: str, password: str):
-        """Login application user"""
-        user = self.authenticate_user(email, password)
+    # ------------------------------------------------------------------
+    # Login
+    # ------------------------------------------------------------------
+
+    async def login(self, email: str, password: str) -> Optional[Dict[str, Any]]:
+        """
+        Authenticate an application user and return tokens + user data.
+
+        Returns None when credentials are invalid.
+        Raises PermissionError when the user's workspace is inactive.
+        """
+        user = await self.authenticate_user(email, password)
 
         if not user:
             return None
 
-        # Create tokens with user_type
+        # Reject login when the workspace has been deactivated.
+        workspace_id = user.get("workspace_id")
+        if workspace_id is not None:
+            workspace = await self.workspace_repo.get_by_id(workspace_id)
+            if workspace is None or not workspace.get("is_active", False):
+                raise PermissionError(
+                    "Your workspace is inactive. Please contact support."
+                )
+
         token_data = {
-            "sub": user['id'],
-            "email": user['email'],
-            "user_type": "application"
+            "sub": user["id"],
+            "email": user["email"],
+            "user_type": "application",
         }
 
         access_token = self.create_access_token(token_data)
         refresh_token = self.create_refresh_token(token_data)
 
-        # Get user with role
-        user_with_role = self.get_user_with_role(user['id'])
+        user_with_role = await self.get_user_with_role(user["id"])
 
         return {
             "access_token": access_token,
             "refresh_token": refresh_token,
             "token_type": "bearer",
-            "user": user_with_role
+            "user": user_with_role,
         }
 
-    def signup(self, referral_code: str, workspace_data: Dict[str, Any], organization_data: Dict[str, Any], admin_data: Dict[str, Any], billing_data: Dict[str, Any] = None) -> Dict[str, Any]:
-        """
-        Complete signup process: create workspace, organization, and admin user.
-        Validates referral code and tracks who onboarded the workspace.
-        Performs compensating deletes on partial failure to avoid orphaned records.
-        """
-        created_workspace = None
-        created_organization = None
+    # ------------------------------------------------------------------
+    # System-user lookup (cross-service via system_db session)
+    # ------------------------------------------------------------------
 
+    async def get_system_user_by_id(self, user_id: str) -> Optional[Dict[str, Any]]:
+        """
+        Look up a system_users row by its 4-digit string ID.
+
+        Uses a raw SQL query so that dino-application does not need to import
+        the dino-system ORM models.  The query targets the system_users table
+        which lives in the system DB (or the shared DB in dev).
+        """
+        stmt = text(
+            "SELECT id, email, first_name, last_name, is_active "
+            "FROM system_users "
+            "WHERE id = :user_id AND is_active = TRUE "
+            "LIMIT 1"
+        )
+        result = await self.system_db.execute(stmt, {"user_id": user_id})
+        row = result.mappings().first()
+        if row is None:
+            return None
+        return dict(row)
+
+    # ------------------------------------------------------------------
+    # Signup
+    # ------------------------------------------------------------------
+
+    async def signup(
+        self,
+        referral_code: str,
+        workspace_data: Dict[str, Any],
+        persona_data: Dict[str, Any],
+        admin_data: Dict[str, Any],
+        billing_data: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """
+        Complete signup process: create workspace, persona, and admin user.
+
+        All writes are performed inside a single database transaction.  Any
+        failure causes a full rollback — no compensating deletes are needed.
+
+        Validates the referral code against system_users and tracks who
+        onboarded the workspace.
+
+        The workspace_personas join table is populated after both the
+        workspace and persona are successfully created.  The Workspace
+        ORM model has no persona_ids column — the many-to-many
+        relationship is managed exclusively through the join table.
+
+        Note: referred_by, subscription_plan, subscription_status, and
+        next_billing_date exist in the DB schema but are not mapped on the
+        Workspace ORM model.  referred_by is written via a raw SQL UPDATE
+        after the workspace row is created; the subscription fields rely on
+        their server-side defaults ('Free' / 'Active' / NULL).
+
+        Email uniqueness is enforced by the database unique constraint.  An
+        IntegrityError is caught and re-raised as a ValueError so callers
+        receive a clear, actionable message without relying on a racy
+        pre-check SELECT.
+        """
+        # 1. Validate referral code (4-digit system user ID) — done before
+        #    opening the transaction because it hits the system DB, not the
+        #    application DB, and has no side-effects to roll back.
+        if not referral_code or not referral_code.isdigit() or len(referral_code) != 4:
+            raise ValueError("Invalid referral code. Must be a 4-digit number.")
+
+        referred_by_user = await self.get_system_user_by_id(referral_code)
+        if not referred_by_user:
+            raise ValueError(
+                f"Invalid referral code '{referral_code}'. User not found."
+            )
+
+        if not referred_by_user.get("is_active", False):
+            raise ValueError(
+                f"Referral code '{referral_code}' is inactive. Please contact support."
+            )
+
+        # 2. Execute all writes in a single atomic transaction.
+        #    db.begin() is a no-op when the session already has an open
+        #    transaction (e.g. in tests that wrap everything in a savepoint),
+        #    so this is safe in all deployment configurations.
         try:
-            # 1. Validate referral code (4-digit system user ID)
-            if not referral_code or not referral_code.isdigit() or len(referral_code) != 4:
-                raise ValueError("Invalid referral code. Must be a 4-digit number.")
+            async with self.db.begin():
+                # 2a. Get or create Owner role.
+                owner_role = await self.role_repo.get_by_name_and_type("Owner", 1)
+                if not owner_role:
+                    now = datetime.now(timezone.utc)
+                    owner_role = await self.role_repo.create(
+                        {
+                            "name": "Owner",
+                            "role_type": 1,
+                            "description": "Workspace owner with full access to all resources",
+                            "permissions": ["workspace:*"],
+                            "is_system": True,
+                            "is_active": True,
+                            "created_at": now,
+                            "updated_at": now,
+                        }
+                    )
 
-            # Check if system user exists with this ID
-            referred_by_user = self.system_user_repo.get_by_id(referral_code)
-            if not referred_by_user:
-                raise ValueError(f"Invalid referral code '{referral_code}'. User not found.")
-
-            if not referred_by_user.get('is_active', False):
-                raise ValueError(f"Referral code '{referral_code}' is inactive. Please contact support.")
-
-            referred_by = referral_code
-
-            # 2. Check if admin email already exists
-            existing_user = self.user_repo.get_by_email(admin_data['email'])
-            if existing_user:
-                raise ValueError(f"User with email {admin_data['email']} already exists")
-
-            # 3. Get or create Owner role for application users
-            owner_role = self.role_repo.get_by_name_and_type("Owner", 1)
-            if not owner_role:
+                # 2b. Create workspace.
                 now = datetime.now(timezone.utc)
-                owner_role_data = {
-                    "name": "Owner",
-                    "role_type": 1,  # Application role
-                    "description": "Workspace owner with full access to all resources",
-                    "permissions": ["workspace:*"],
-                    "is_system": True,
+                workspace_payload: Dict[str, Any] = {
+                    "name": workspace_data["name"],
+                    "description": workspace_data.get("description"),
+                    "owner_id": None,  # Back-filled after user creation.
+                    "created_at": now,
+                    "updated_at": now,
                     "is_active": True,
-                    "created_at": now,
-                    "updated_at": now
                 }
-                owner_role = self.role_repo.create(owner_role_data)
 
-            # 4. Create workspace
-            now = datetime.now(timezone.utc)
-            workspace = {
-                "name": workspace_data['name'],
-                "description": workspace_data.get('description'),
-                "owner_id": "",  # Updated after admin user creation
-                "organization_ids": [],  # Updated after organization creation
-                "referred_by": referred_by,
-                "created_at": now,
-                "updated_at": now,
-                "is_active": True
-            }
+                if billing_data:
+                    workspace_payload.update(
+                        {
+                            "billing_name": billing_data.get("billing_name"),
+                            "billing_email": billing_data.get("billing_email"),
+                            "billing_phone": billing_data.get("billing_phone"),
+                            "billing_address": billing_data.get("billing_address"),
+                            "billing_city": billing_data.get("billing_city"),
+                            "billing_state": billing_data.get("billing_state"),
+                            "billing_postal_code": billing_data.get("billing_postal_code"),
+                            "billing_country": billing_data.get("billing_country"),
+                        }
+                    )
 
-            if billing_data:
-                workspace.update({
-                    "billing_name": billing_data.get('billing_name'),
-                    "billing_email": billing_data.get('billing_email'),
-                    "billing_phone": billing_data.get('billing_phone'),
-                    "billing_address": billing_data.get('billing_address'),
-                    "billing_city": billing_data.get('billing_city'),
-                    "billing_state": billing_data.get('billing_state'),
-                    "billing_postal_code": billing_data.get('billing_postal_code'),
-                    "billing_country": billing_data.get('billing_country'),
-                    "subscription_plan": "Free",
-                    "subscription_status": "Active",
-                    "next_billing_date": None
-                })
+                created_workspace = await self.workspace_repo.create(workspace_payload)
+                workspace_id = created_workspace["id"]
 
-            created_workspace = self.workspace_repo.create(workspace)
-            workspace_id = created_workspace['id']
+                # Write referred_by via raw SQL (column exists in DB but is
+                # not mapped on the Workspace ORM model).
+                await self.db.execute(
+                    text(
+                        "UPDATE workspaces SET referred_by = :referred_by "
+                        "WHERE id = :workspace_id"
+                    ),
+                    {"referred_by": referral_code, "workspace_id": workspace_id},
+                )
 
-            # 5. Create organization — rollback workspace on failure
-            try:
+                # 2c. Create persona.
                 now = datetime.now(timezone.utc)
-                organization = {
-                    "name": organization_data['name'],
-                    "description": organization_data.get('description'),
-                    "workspace_id": workspace_id,
-                    "address": organization_data.get('address'),
-                    "city": organization_data.get('city'),
-                    "state": organization_data.get('state'),
-                    "country": organization_data.get('country'),
-                    "postal_code": organization_data.get('postal_code'),
-                    "phone": organization_data.get('phone'),
-                    "email": organization_data.get('email'),
-                    "organization_type": organization_data.get('organization_type', 0),
-                    "order_type": organization_data.get('order_type', 0),
-                    "settings": {
-                        "enable_qr_ordering": True,
-                        "enable_counter_ordering": True,
-                        "allow_order_type_switch": True,
-                        "default_order_type": organization_data.get('order_type', 0),
-                        "qr_code_prefix": "",
-                        "table_qr_enabled": True,
-                        "auto_print_orders": False,
-                        "require_customer_details": False,
-                        "industry_specific_attributes": {}
-                    },
-                    "created_at": now,
-                    "updated_at": now,
-                    "is_active": True
-                }
-                created_organization = self.organization_repo.create(organization)
-            except Exception:
-                self.workspace_repo.delete(workspace_id)
-                raise
+                created_persona = await self.persona_repo.create(
+                    {
+                        "name": persona_data["name"],
+                        "description": persona_data.get("description"),
+                        "workspace_id": workspace_id,
+                        "address": persona_data.get("address"),
+                        "city": persona_data.get("city"),
+                        "state": persona_data.get("state"),
+                        "country": persona_data.get("country"),
+                        "postal_code": persona_data.get("postal_code"),
+                        "phone": persona_data.get("phone"),
+                        "email": persona_data.get("email"),
+                        "organization_type": persona_data.get("organization_type", 0),
+                        "order_type": persona_data.get("order_type", 0),
+                        "created_at": now,
+                        "updated_at": now,
+                        "is_active": True,
+                    }
+                )
+                persona_id = created_persona["id"]
 
-            organization_id = created_organization['id']
+                # 2d. Link workspace ↔ persona in the join table.
+                await self.db.execute(
+                    insert(workspace_personas).values(
+                        workspace_id=workspace_id,
+                        persona_id=persona_id,
+                    )
+                )
 
-            # 6. Create owner user — rollback workspace and organization on failure
-            try:
+                # 2e. Create owner user.
+                #     The DB unique constraint on (email) will raise
+                #     IntegrityError if the address is already taken; that is
+                #     caught below and surfaced as a ValueError.
                 now = datetime.now(timezone.utc)
-                owner_user = {
-                    "email": admin_data['email'],
-                    "password_hash": get_password_hash(admin_data['password']),
-                    "first_name": admin_data['first_name'],
-                    "last_name": admin_data['last_name'],
-                    "phone": admin_data.get('phone'),
-                    "role_id": owner_role['id'],
-                    "workspace_id": workspace_id,
-                    "organization_id": organization_id,
-                    "created_at": now,
-                    "updated_at": now,
-                    "is_active": True
-                }
-                created_owner = self.user_repo.create(owner_user)
-            except Exception:
-                self.organization_repo.delete(organization_id)
-                self.workspace_repo.delete(workspace_id)
-                raise
+                created_owner = await self.user_repo.create(
+                    {
+                        "email": admin_data["email"],
+                        "password_hash": get_password_hash(admin_data["password"]),
+                        "first_name": admin_data["first_name"],
+                        "last_name": admin_data["last_name"],
+                        "phone": admin_data.get("phone"),
+                        "role_id": owner_role["id"],
+                        "workspace_id": workspace_id,
+                        "persona_id": persona_id,
+                        "created_at": now,
+                        "updated_at": now,
+                        "is_active": True,
+                    }
+                )
 
-            # 7. Update workspace with owner_id and organization list
-            self.workspace_repo.update(workspace_id, {
-                "owner_id": created_owner['id'],
-                "organization_ids": [organization_id]
-            })
-            created_workspace['owner_id'] = created_owner['id']
-            created_workspace['organization_ids'] = [organization_id]
+                # 2f. Back-fill workspace.owner_id now that we have the user PK.
+                await self.workspace_repo.update(
+                    workspace_id,
+                    {"owner_id": created_owner["id"]},
+                )
+                created_workspace["owner_id"] = created_owner["id"]
 
-            # 8. Remove sensitive data from response
-            created_owner.pop('password_hash', None)
+        except IntegrityError as exc:
+            # The transaction is already rolled back by the context manager.
+            # Surface a clear message for duplicate-email violations.
+            raise ValueError(
+                f"User with email '{admin_data['email']}' already exists."
+            ) from exc
 
-            return {
-                "workspace": created_workspace,
-                "organization": created_organization,
-                "admin_user": created_owner
-            }
+        # 3. Strip sensitive data before returning.
+        created_owner.pop("password_hash", None)
 
-        except Exception:
-            raise
+        return {
+            "workspace": created_workspace,
+            "persona": created_persona,
+            "admin_user": created_owner,
+        }

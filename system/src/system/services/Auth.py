@@ -1,50 +1,48 @@
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from src.base.BaseAuth import BaseAuth
-from src.repositories.UserRepository import UserRepository
-from src.repositories.RoleRepository import RoleRepository
 from src.config.Settings import settings
+from src.repositories.RoleRepository import RoleRepository
+from src.repositories.UserRepository import UserRepository
+
 
 class SystemAuthService(BaseAuth):
-    """System authentication service"""
-    
-    def __init__(self):
-        user_repo = UserRepository("system_users")
-        role_repo = RoleRepository()
+    """System authentication service."""
+
+    def __init__(self, db: AsyncSession) -> None:
+        user_repo = UserRepository(db)
+        role_repo = RoleRepository(db)
         super().__init__(user_repo, role_repo)
-    
-    def login(self, email: str, password: str):
-        """Login system user"""
-        user = self.authenticate_user(email, password)
-        
+
+    async def login(self, email: str, password: str):
+        """Authenticate a system user and return tokens (or a token-less payload)."""
+        user = await self.authenticate_user(email, password)
         if not user:
             return None
-        
-        # Get user with role
-        user_with_role = self.get_user_with_role(user['id'])
-        
-        # If JWT is disabled, return user without tokens
+
+        user_with_role = await self.get_user_with_role(user["id"])
+
         if not settings.ENABLE_JWT:
             return {
                 "access_token": None,
                 "refresh_token": None,
                 "token_type": "none",
                 "user": user_with_role,
-                "jwt_enabled": False
+                "jwt_enabled": False,
             }
-        
-        # Create tokens with user_type
+
         token_data = {
-            "sub": user['id'],
-            "email": user['email'],
-            "user_type": "system"
+            "sub": str(user["id"]),
+            "email": user["email"],
+            "user_type": "system",
         }
-        
         access_token = self.create_access_token(token_data)
         refresh_token = self.create_refresh_token(token_data)
-        
+
         return {
             "access_token": access_token,
             "refresh_token": refresh_token,
             "token_type": "bearer",
             "user": user_with_role,
-            "jwt_enabled": True
+            "jwt_enabled": True,
         }

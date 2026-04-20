@@ -1,21 +1,32 @@
+from typing import Any, Dict, List, Optional
+
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from src.base.BaseModel import row_to_dict
 from src.base.BaseRepository import BaseRepository
-from typing import List, Dict, Any, Optional
-from google.cloud.firestore_v1 import FieldFilter
+from src.models.Role import Role
 
 
 class RoleRepository(BaseRepository):
-    """Role repository"""
+    def __init__(self, db: AsyncSession) -> None:
+        super().__init__(Role, db)
 
-    def __init__(self):
-        super().__init__("roles")
+    async def get_by_type(self, role_type: int) -> List[Dict[str, Any]]:
+        return await self.get_all(filters={"role_type": role_type})
 
-    def get_by_type(self, role_type: int) -> List[Dict[str, Any]]:
-        """Get all roles by type (0=System, 1=Application)"""
-        return self.get_all(filters={"role_type": role_type})
-
-    def get_by_name_and_type(self, name: str, role_type: int) -> Optional[Dict[str, Any]]:
-        """Get role by name and type"""
-        docs = self.collection.where(filter=FieldFilter("name", "==", name)).where(filter=FieldFilter("role_type", "==", role_type)).limit(1).get()
-        if docs:
-            return docs[0].to_dict()
-        return None
+    async def get_by_name_and_type(
+        self, name: str, role_type: int
+    ) -> Optional[Dict[str, Any]]:
+        stmt = (
+            select(Role)
+            .where(
+                Role.name == name,
+                Role.role_type == role_type,
+                Role.is_active == True,  # noqa: E712
+            )
+            .limit(1)
+        )
+        result = await self.db.execute(stmt)
+        row = result.scalars().first()
+        return row_to_dict(row) if row is not None else None

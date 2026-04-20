@@ -1,73 +1,82 @@
+"""
+PermissionRepository — async SQLAlchemy 2.x repository for the Permission model.
+"""
+
+from typing import Any, Dict, List, Optional, Tuple
+
+from sqlalchemy import distinct, func, or_, select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from src.base.BaseModel import row_to_dict
 from src.base.BaseRepository import BaseRepository
-from typing import Dict, Any, List, Optional, Tuple
-from google.cloud.firestore_v1 import FieldFilter
-from datetime import datetime, timezone
+from src.models.Permission import Permission
 
 
 class PermissionRepository(BaseRepository):
-    """Permission repository for database operations"""
+    """Repository for Permission entities."""
 
-    def __init__(self):
-        super().__init__("permissions")
+    def __init__(self, db: AsyncSession) -> None:
+        super().__init__(Permission, db)
 
-    def get_by_name(self, name: str) -> Optional[Dict[str, Any]]:
-        """Get permission by name"""
-        return self.get_by_field("name", name)
+    # ------------------------------------------------------------------
+    # Simple lookups
+    # ------------------------------------------------------------------
 
-    def get_by_category(self, category: str) -> List[Dict[str, Any]]:
-        """Get all permissions by category"""
-        return self.get_all(filters={"category": category})
+    async def get_by_name(self, name: str) -> Optional[Dict[str, Any]]:
+        """Return the first active permission with the given name."""
+        stmt = (
+            select(self.model)
+            .where(self.model.name == name)
+            .where(self.model.is_active == True)  # noqa: E712
+            .limit(1)
+        )
+        result = await self.db.execute(stmt)
+        row = result.scalars().first()
+        return row_to_dict(row) if row is not None else None
 
-    def get_by_resource(self, resource: str) -> List[Dict[str, Any]]:
-        """Get all permissions by resource"""
-        return self.get_all(filters={"resource": resource})
+    async def get_by_category(self, category: str) -> List[Dict[str, Any]]:
+        """Return all active permissions in the given category."""
+        return await self.get_all(filters={"category": category})
 
-    def get_by_action(self, action: str) -> List[Dict[str, Any]]:
-        """Get all permissions by action"""
-        return self.get_all(filters={"action": action})
+    async def get_by_resource(self, resource: str) -> List[Dict[str, Any]]:
+        """Return all active permissions targeting the given resource."""
+        return await self.get_all(filters={"resource": resource})
 
-    def search(self, query_text: str) -> List[Dict[str, Any]]:
+    async def get_by_action(self, action: str) -> List[Dict[str, Any]]:
+        """Return all active permissions with the given action."""
+        return await self.get_all(filters={"action": action})
+
+    async def get_system_permissions(self) -> List[Dict[str, Any]]:
+        """Return all active built-in (is_system=True) permissions."""
+        return await self.get_all(filters={"is_system": True})
+
+    # ------------------------------------------------------------------
+    # Existence check
+    # ------------------------------------------------------------------
+
+    async def permission_exists(
+        self, name: str, exclude_id: Optional[str] = None
+    ) -> bool:
         """
-        Search permissions by name or description.
-        Note: Firestore doesn't support full-text search natively,
-        so we fetch all and filter in memory.
+        Return True if an active permission with the given name exists.
+        Optionally exclude a specific record (useful for update validation).
         """
-        all_permissions = self.get_all()
-        query_lower = query_text.lower()
+        stmt = (
+            select(func.count())
+            .select_from(self.model)
+            .where(self.model.name == name)
+            .where(self.model.is_active == True)  # noqa: E712
+        )
+        if exclude_id is not None:
+            stmt = stmt.where(self.model.id != exclude_id)
+        result = await self.db.execute(stmt)
+        return (result.scalar_one() or 0) > 0
 
-        results = []
-        for perm in all_permissions:
-            name = perm.get('name', '').lower()
-            description = perm.get('description', '').lower()
+    # ------------------------------------------------------------------
+    # Paginated filtered query
+    # ------------------------------------------------------------------
 
-            if query_lower in name or query_lower in description:
-                results.append(perm)
-
-        return results
-
-    def get_system_permissions(self) -> List[Dict[str, Any]]:
-        """Get all system permissions (is_system=True)"""
-        return self.get_all(filters={"is_system": True})
-
-    def permission_exists(self, name: str, exclude_id: Optional[str] = None) -> bool:
-        """Check if permission with name exists"""
-        query = self.collection.where(filter=FieldFilter("name", "==", name))
-        query = query.where(filter=FieldFilter("is_deleted", "==", False))
-
-        docs = query.get()
-
-        if not docs:
-            return False
-
-        if exclude_id:
-            for doc in docs:
-                if doc.to_dict().get('id') != exclude_id:
-                    return True
-            return False
-
-        return True
-
-    def get_paginated_with_filters(
+    async def get_paginated_with_filters(
         self,
         page: int = 1,
         page_size: int = 10,
@@ -77,93 +86,104 @@ class PermissionRepository(BaseRepository):
         is_active: Optional[bool] = None,
         search_query: Optional[str] = None,
         order_by: str = "created_at",
-        order_direction: str = "desc"
-    ) -> Tuple[List[Dict[str, Any]], int, int]:
+        order_direction: str = "desc",
+    ) -> Tuple[List[Dict[str, Any]], int]:
         """
-        Get paginated permissions with advanced filtering.
+        Return (items, total_count) with optional filtering and pagination.
 
-        Returns: (items, total_count, total_pages)
+        When is_active is None (default), only active records are returned.
+        When is_active is explicitly provided, that value is used as the filter.
+
+        search_query performs a case-insensitive ILIKE match against
+        name, description, and resource columns.
         """
-        query = self.collection
-        query = query.where(filter=FieldFilter("is_deleted", "==", False))
+        base_conditions = []
 
-        if category:
-            query = query.where(filter=FieldFilter("category", "==", category))
+        # Default guard: show only active records unless caller explicitly filters
+        if is_active is None:
+            base_conditions.append(self.model.is_active == True)  # noqa: E712
+        else:
+            base_conditions.append(self.model.is_active == is_active)
 
-        if resource:
-            query = query.where(filter=FieldFilter("resource", "==", resource))
-
-        if action:
-            query = query.where(filter=FieldFilter("action", "==", action))
-
-        if is_active is not None:
-            query = query.where(filter=FieldFilter("is_active", "==", is_active))
-
-        all_docs = query.get()
-        all_items = [doc.to_dict() for doc in all_docs]
-
+        if category is not None:
+            base_conditions.append(self.model.category == category)
+        if resource is not None:
+            base_conditions.append(self.model.resource == resource)
+        if action is not None:
+            base_conditions.append(self.model.action == action)
         if search_query:
-            search_lower = search_query.lower()
-            all_items = [
-                item for item in all_items
-                if search_lower in item.get('name', '').lower() or
-                   search_lower in item.get('description', '').lower() or
-                   search_lower in item.get('resource', '').lower()
-            ]
+            pattern = f"%{search_query}%"
+            base_conditions.append(
+                or_(
+                    self.model.name.ilike(pattern),
+                    self.model.description.ilike(pattern),
+                    self.model.resource.ilike(pattern),
+                )
+            )
 
-        total = len(all_items)
-        total_pages = (total + page_size - 1) // page_size if total > 0 else 0
+        # COUNT query
+        count_stmt = (
+            select(func.count())
+            .select_from(self.model)
+            .where(*base_conditions)
+        )
+        count_result = await self.db.execute(count_stmt)
+        total = count_result.scalar_one() or 0
 
-        reverse = order_direction.lower() == "desc"
-        try:
-            all_items.sort(key=lambda x: x.get(order_by, ''), reverse=reverse)
-        except Exception:
-            all_items.sort(key=lambda x: x.get('created_at', ''), reverse=True)
+        # Data query
+        col = getattr(self.model, order_by, self.model.created_at)
+        order_col = col.desc() if order_direction.lower() == "desc" else col.asc()
+        offset = (page - 1) * page_size
 
-        start_idx = (page - 1) * page_size
-        end_idx = start_idx + page_size
-        items = all_items[start_idx:end_idx]
+        data_stmt = (
+            select(self.model)
+            .where(*base_conditions)
+            .order_by(order_col)
+            .limit(page_size)
+            .offset(offset)
+        )
+        data_result = await self.db.execute(data_stmt)
+        rows = data_result.scalars().all()
 
-        return items, total, total_pages
+        return [row_to_dict(r) for r in rows], total
 
-    def bulk_create(self, permissions: List[Dict[str, Any]]) -> List[str]:
-        """Bulk create permissions"""
-        if not permissions:
-            return []
+    # ------------------------------------------------------------------
+    # Bulk create
+    # ------------------------------------------------------------------
 
-        ids = []
-        batch = self.db.batch()
+    async def bulk_create_permissions(
+        self, permissions: List[Dict[str, Any]]
+    ) -> List[Dict[str, Any]]:
+        """Insert multiple permissions and return the created records."""
+        return await self.bulk_create(permissions)
 
-        for perm_data in permissions:
-            doc_ref = self.collection.document()
-            perm_data['id'] = doc_ref.id
-            perm_data['created_at'] = datetime.now(timezone.utc)
-            perm_data['updated_at'] = datetime.now(timezone.utc)
-            if 'is_active' not in perm_data:
-                perm_data['is_active'] = True
-            if 'is_deleted' not in perm_data:
-                perm_data['is_deleted'] = False
+    # ------------------------------------------------------------------
+    # Distinct value helpers
+    # ------------------------------------------------------------------
 
-            batch.set(doc_ref, perm_data)
-            ids.append(doc_ref.id)
+    async def get_categories(self) -> List[str]:
+        """Return all distinct active permission categories."""
+        stmt = (
+            select(distinct(self.model.category))
+            .where(self.model.is_active == True)  # noqa: E712
+        )
+        result = await self.db.execute(stmt)
+        return [row for (row,) in result.all() if row is not None]
 
-        batch.commit()
-        return ids
+    async def get_resources(self) -> List[str]:
+        """Return all distinct active permission resources."""
+        stmt = (
+            select(distinct(self.model.resource))
+            .where(self.model.is_active == True)  # noqa: E712
+        )
+        result = await self.db.execute(stmt)
+        return [row for (row,) in result.all() if row is not None]
 
-    def _get_distinct_field_values(self, field: str) -> List[str]:
-        """Return sorted distinct non-null values for a given field across all permissions."""
-        all_permissions = self.get_all()
-        values = {perm[field] for perm in all_permissions if field in perm}
-        return sorted(values)
-
-    def get_categories(self) -> List[str]:
-        """Get distinct categories"""
-        return self._get_distinct_field_values('category')
-
-    def get_resources(self) -> List[str]:
-        """Get distinct resources"""
-        return self._get_distinct_field_values('resource')
-
-    def get_actions(self) -> List[str]:
-        """Get distinct actions"""
-        return self._get_distinct_field_values('action')
+    async def get_actions(self) -> List[str]:
+        """Return all distinct active permission actions."""
+        stmt = (
+            select(distinct(self.model.action))
+            .where(self.model.is_active == True)  # noqa: E712
+        )
+        result = await self.db.execute(stmt)
+        return [row for (row,) in result.all() if row is not None]

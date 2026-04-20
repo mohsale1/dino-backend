@@ -31,11 +31,8 @@ class Settings(BaseSettings):
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7
 
-    # Firebase Settings - Uses Application Default Credentials (ADC)
-    # ADC works automatically in Cloud Run, Cloud Functions, GCE
-    # For local dev: run 'gcloud auth application-default login'
-    FIREBASE_PROJECT_ID: str = "dev-project-id"
-    FIREBASE_DATABASE_ID: str = "(default)"
+    # PostgreSQL database URL (asyncpg driver)
+    DATABASE_URL: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/dino_system"
 
     # SuperAdmin User Settings - Auto-created on first startup
     # Default credentials (can be overridden via environment variables)
@@ -63,12 +60,16 @@ class Settings(BaseSettings):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
 
+        from urllib.parse import urlparse
+        parsed = urlparse(self.DATABASE_URL)
+        db_host = f"{parsed.hostname}:{parsed.port}"
+
         # Log configuration on startup
         logger.info("Configuration loaded:")
         logger.info(f"   Environment: {self.ENVIRONMENT}")
         logger.info(f"   Debug: {self.DEBUG}")
         logger.info(f"   Port: {self.PORT}")
-        logger.info(f"   Firebase Project: {self.FIREBASE_PROJECT_ID}")
+        logger.info(f"   DB Host: {db_host}")
         logger.info(f"   CORS Origins: {self.CORS_ORIGINS}")
         logger.info(f"   Create Default SuperAdmin: {self.CREATE_DEFAULT_SUPERADMIN}")
         logger.info(f"   JWT Enabled: {self.ENABLE_JWT}")
@@ -81,16 +82,18 @@ class Settings(BaseSettings):
                 UserWarning,
             )
 
-        if self.ENVIRONMENT == "production" and self.FIREBASE_PROJECT_ID == "dev-project-id":
+        if self.ENVIRONMENT == "production" and "localhost" in self.DATABASE_URL:
             warnings.warn(
-                "WARNING: Using default FIREBASE_PROJECT_ID in production! "
-                "Please set FIREBASE_PROJECT_ID in environment variables.",
+                "WARNING: DATABASE_URL contains 'localhost' in production! "
+                "Please set a proper DATABASE_URL pointing to your PostgreSQL instance.",
                 UserWarning,
             )
 
         # Log SuperAdmin auto-creation status
         if self.CREATE_DEFAULT_SUPERADMIN:
             logger.info("   SuperAdmin Auto-Creation: Enabled")
+
+        self._validate_production_config()
 
     def _validate_production_config(self) -> None:
         """Raise RuntimeError for unsafe configurations in production."""
@@ -111,11 +114,9 @@ class Settings(BaseSettings):
                 "Generate a secure key with: openssl rand -hex 32"
             )
 
-
         if errors:
             msg = "Production configuration errors:\n" + "\n".join(f"  - {e}" for e in errors)
             raise RuntimeError(msg)
-
 
 
 settings = Settings()

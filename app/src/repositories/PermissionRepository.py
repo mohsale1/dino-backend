@@ -1,169 +1,174 @@
+"""
+PermissionRepository — dino-application.
+
+Handles CRUD and query operations for Permission records.
+Permissions are global (not workspace-scoped).
+"""
+
+from typing import Any, Dict, List, Optional, Tuple
+
+from sqlalchemy import and_, distinct, func, or_, select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from src.base.BaseModel import row_to_dict
 from src.base.BaseRepository import BaseRepository
-from typing import Dict, Any, List, Optional, Tuple
-from google.cloud.firestore_v1 import FieldFilter
-from datetime import datetime, timezone
+from src.models.Permission import Permission
 
 
 class PermissionRepository(BaseRepository):
-    """Permission repository for database operations"""
+    """Repository for global permission records."""
 
-    def __init__(self):
-        super().__init__("permissions")
+    def __init__(self, db: AsyncSession) -> None:
+        super().__init__(Permission, db)
 
-    def get_by_name(self, name: str) -> Optional[Dict[str, Any]]:
-        """Get permission by name"""
-        return self.get_by_field("name", name)
+    # ------------------------------------------------------------------
+    # Simple lookups (delegate to BaseRepository helpers)
+    # ------------------------------------------------------------------
 
-    def get_by_category(self, category: str) -> List[Dict[str, Any]]:
-        """Get all permissions by category"""
-        return self.get_all(filters={"category": category})
+    async def get_by_name(self, name: str) -> Optional[dict]:
+        """Return the permission with the given name, or None."""
+        return await self.get_by_field("name", name)
 
-    def get_by_resource(self, resource: str) -> List[Dict[str, Any]]:
-        """Get all permissions by resource"""
-        return self.get_all(filters={"resource": resource})
+    async def get_by_resource(self, resource: str) -> List[dict]:
+        """Return all permissions for a resource."""
+        return await self.get_all(filters={"resource": resource})
 
-    def get_by_action(self, action: str) -> List[Dict[str, Any]]:
-        """Get all permissions by action"""
-        return self.get_all(filters={"action": action})
+    async def get_by_action(self, action: str) -> List[dict]:
+        """Return all permissions for an action."""
+        return await self.get_all(filters={"action": action})
 
-    def search(self, query_text: str) -> List[Dict[str, Any]]:
+    # ------------------------------------------------------------------
+    # Existence check
+    # ------------------------------------------------------------------
+
+    async def permission_exists(
+        self,
+        name: str,
+        exclude_id=None,
+    ) -> bool:
         """
-        Search permissions by name or description.
-        Note: Firestore doesn't support full-text search natively,
-        so we fetch all and filter in memory.
+        Return True when a non-deleted permission with *name* already exists.
+        Pass *exclude_id* to skip the current record (update flow).
         """
-        all_permissions = self.get_all()
-        query_lower = query_text.lower()
+        clauses = [
+            Permission.name == name,
+            Permission.is_active == True,  # noqa: E712
+        ]
 
-        results = []
-        for perm in all_permissions:
-            name = perm.get('name', '').lower()
-            description = perm.get('description', '').lower()
+        if exclude_id is not None:
+            clauses.append(Permission.id != exclude_id)
 
-            if query_lower in name or query_lower in description:
-                results.append(perm)
+        stmt = (
+            select(func.count())
+            .select_from(Permission)
+            .where(and_(*clauses))
+        )
+        count: int = (await self.db.execute(stmt)).scalar_one()
+        return count > 0
 
-        return results
+    # ------------------------------------------------------------------
+    # Paginated / filtered query
+    # ------------------------------------------------------------------
 
-    def get_system_permissions(self) -> List[Dict[str, Any]]:
-        """Get all system permissions (is_system=True)"""
-        return self.get_all(filters={"is_system": True})
-
-    def permission_exists(self, name: str, exclude_id: Optional[str] = None) -> bool:
-        """Check if permission with name exists"""
-        query = self.collection.where(filter=FieldFilter("name", "==", name))
-        query = query.where(filter=FieldFilter("is_deleted", "==", False))
-
-        docs = query.get()
-
-        if not docs:
-            return False
-
-        if exclude_id:
-            for doc in docs:
-                if doc.to_dict().get('id') != exclude_id:
-                    return True
-            return False
-
-        return True
-
-    def get_paginated_with_filters(
+    async def get_paginated_with_filters(
         self,
         page: int = 1,
         page_size: int = 10,
-        category: Optional[str] = None,
         resource: Optional[str] = None,
         action: Optional[str] = None,
         is_active: Optional[bool] = None,
         search_query: Optional[str] = None,
         order_by: str = "created_at",
-        order_direction: str = "desc"
-    ) -> Tuple[List[Dict[str, Any]], int, int]:
+        order_direction: str = "desc",
+    ) -> Tuple[List[dict], int, int]:
         """
-        Get paginated permissions with advanced filtering.
+        Paginated permission listing with optional filters and ILIKE search.
 
-        Returns: (items, total_count, total_pages)
+        Returns
+        -------
+        (items, total_count, total_pages)
         """
-        query = self.collection
-        query = query.where(filter=FieldFilter("is_deleted", "==", False))
-
-        if category:
-            query = query.where(filter=FieldFilter("category", "==", category))
-
-        if resource:
-            query = query.where(filter=FieldFilter("resource", "==", resource))
-
-        if action:
-            query = query.where(filter=FieldFilter("action", "==", action))
-
+        # When is_active is explicitly passed use that value; otherwise default
+        # to showing only active (non-deleted) records.
         if is_active is not None:
-            query = query.where(filter=FieldFilter("is_active", "==", is_active))
+            clauses = [Permission.is_active == is_active]
+        else:
+            clauses = [Permission.is_active == True]  # noqa: E712
 
-        all_docs = query.get()
-        all_items = [doc.to_dict() for doc in all_docs]
+        if resource is not None:
+            clauses.append(Permission.resource == resource)
+
+        if action is not None:
+            clauses.append(Permission.action == action)
 
         if search_query:
-            search_lower = search_query.lower()
-            all_items = [
-                item for item in all_items
-                if search_lower in item.get('name', '').lower() or
-                   search_lower in item.get('description', '').lower() or
-                   search_lower in item.get('resource', '').lower()
-            ]
+            q = search_query.strip()
+            clauses.append(
+                or_(
+                    Permission.name.ilike(f"%{q}%"),
+                    Permission.description.ilike(f"%{q}%"),
+                    Permission.resource.ilike(f"%{q}%"),
+                )
+            )
 
-        total = len(all_items)
-        total_pages = (total + page_size - 1) // page_size if total > 0 else 0
+        where_expr = and_(*clauses)
 
-        reverse = order_direction.lower() == "desc"
-        try:
-            all_items.sort(key=lambda x: x.get(order_by, ''), reverse=reverse)
-        except Exception:
-            all_items.sort(key=lambda x: x.get('created_at', ''), reverse=True)
+        # COUNT query
+        count_stmt = (
+            select(func.count())
+            .select_from(Permission)
+            .where(where_expr)
+        )
+        total_count: int = (await self.db.execute(count_stmt)).scalar_one()
 
-        start_idx = (page - 1) * page_size
-        end_idx = start_idx + page_size
-        items = all_items[start_idx:end_idx]
+        total_pages = max(1, (total_count + page_size - 1) // page_size)
 
-        return items, total, total_pages
+        # DATA query
+        data_stmt = select(Permission).where(where_expr)
 
-    def bulk_create(self, permissions: List[Dict[str, Any]]) -> List[str]:
-        """Bulk create permissions"""
-        if not permissions:
-            return []
+        order_expr = self._order_column(order_by, order_direction)
+        if order_expr is not None:
+            data_stmt = data_stmt.order_by(order_expr)
 
-        ids = []
-        batch = self.db.batch()
+        data_stmt = data_stmt.limit(page_size).offset((page - 1) * page_size)
+        result = await self.db.execute(data_stmt)
+        items = [row_to_dict(row) for row in result.scalars().all()]
 
-        for perm_data in permissions:
-            doc_ref = self.collection.document()
-            perm_data['id'] = doc_ref.id
-            perm_data['created_at'] = datetime.now(timezone.utc)
-            perm_data['updated_at'] = datetime.now(timezone.utc)
-            if 'is_active' not in perm_data:
-                perm_data['is_active'] = True
-            if 'is_deleted' not in perm_data:
-                perm_data['is_deleted'] = False
+        return items, total_count, total_pages
 
-            batch.set(doc_ref, perm_data)
-            ids.append(doc_ref.id)
+    # ------------------------------------------------------------------
+    # Bulk create
+    # ------------------------------------------------------------------
 
-        batch.commit()
-        return ids
+    async def bulk_create_permissions(
+        self,
+        permissions: List[Dict[str, Any]],
+    ) -> List[dict]:
+        """Insert multiple permissions in a single round-trip."""
+        return await self.bulk_create(permissions)
 
-    def _get_distinct_field_values(self, field: str) -> List[str]:
-        """Return sorted distinct non-null values for a given field across all permissions."""
-        all_permissions = self.get_all()
-        values = {perm[field] for perm in all_permissions if field in perm}
-        return sorted(values)
+    # ------------------------------------------------------------------
+    # Distinct value helpers
+    # ------------------------------------------------------------------
 
-    def get_categories(self) -> List[str]:
-        """Get distinct categories"""
-        return self._get_distinct_field_values('category')
+    async def get_resources(self) -> List[str]:
+        """Return sorted distinct non-null resource values."""
+        stmt = (
+            select(distinct(Permission.resource))
+            .where(Permission.is_active == True)  # noqa: E712
+            .where(Permission.resource.isnot(None))
+            .order_by(Permission.resource)
+        )
+        result = await self.db.execute(stmt)
+        return [row for (row,) in result.all()]
 
-    def get_resources(self) -> List[str]:
-        """Get distinct resources"""
-        return self._get_distinct_field_values('resource')
-
-    def get_actions(self) -> List[str]:
-        """Get distinct actions"""
-        return self._get_distinct_field_values('action')
+    async def get_actions(self) -> List[str]:
+        """Return sorted distinct non-null action values."""
+        stmt = (
+            select(distinct(Permission.action))
+            .where(Permission.is_active == True)  # noqa: E712
+            .where(Permission.action.isnot(None))
+            .order_by(Permission.action)
+        )
+        result = await self.db.execute(stmt)
+        return [row for (row,) in result.all()]

@@ -1,22 +1,16 @@
 from pydantic import BaseModel, EmailStr, Field
-from typing import Optional, List, Dict, Any
+from typing import Optional, List
 from datetime import datetime
+
 
 class OrderItemSchema(BaseModel):
     """Order item schema"""
-    product_id: str
-    product_name: str
+    item_id: int
+    item_name: str
     quantity: int = Field(..., gt=0)
     unit_price: float = Field(..., gt=0)
     total_price: float = Field(..., gt=0)
 
-class ShippingAddressSchema(BaseModel):
-    """Shipping address schema"""
-    street: str
-    city: str
-    state: str
-    country: str
-    postal_code: str
 
 class OrderBase(BaseModel):
     """Base order schema"""
@@ -25,12 +19,22 @@ class OrderBase(BaseModel):
     customer_phone: Optional[str] = None
     items: List[OrderItemSchema]
     currency: str = "USD"
-    shipping_address: Optional[ShippingAddressSchema] = None
-    notes: Optional[str] = None
+    special_instructions: Optional[str] = None
+
 
 class OrderCreate(OrderBase):
     """Create order schema"""
-    organization_id: str
+    persona_id: int
+    workspace_id: Optional[int] = None
+    table_id: Optional[int] = None
+    area_id: Optional[int] = None
+    order_type: str = "dine_in"
+    subtotal: float = 0
+    tax_amount: float = 0
+    service_charge: float = 0
+    discount_amount: float = 0
+    payment_method: Optional[str] = None
+
 
 class OrderUpdate(BaseModel):
     """Update order schema"""
@@ -39,15 +43,15 @@ class OrderUpdate(BaseModel):
     customer_phone: Optional[str] = None
     status: Optional[str] = None
     payment_status: Optional[str] = None
-    shipping_address: Optional[ShippingAddressSchema] = None
-    notes: Optional[str] = None
+    special_instructions: Optional[str] = None
+
 
 class OrderResponse(OrderBase):
     """Order response schema"""
-    id: str
+    id: int
     order_number: str
-    workspace_id: str
-    organization_id: str
+    workspace_id: int
+    persona_id: int
     total_amount: float
     status: str
     payment_status: str
@@ -55,6 +59,6 @@ class OrderResponse(OrderBase):
     created_at: datetime
     updated_at: datetime
     is_active: bool
-    
+
     class Config:
         from_attributes = True

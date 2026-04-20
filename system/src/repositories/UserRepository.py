@@ -1,70 +1,107 @@
+"""
+UserRepository — async SQLAlchemy 2.x repository for the SystemUser model.
+
+Deletion strategy: SystemUser has no is_deleted column.
+A "deleted" user simply has is_active = False.
+All queries filter by is_active unless explicitly told not to.
+"""
+
+from typing import Any, Dict, List, Optional, Tuple
+
+from sqlalchemy import func, or_, select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from src.base.BaseModel import row_to_dict
 from src.base.BaseRepository import BaseRepository
-from google.cloud import firestore
-from typing import Dict, Any
-from datetime import datetime, timezone
-import random
+from src.models.SystemUser import SystemUser
+
 
 class UserRepository(BaseRepository):
-    """User repository for both system and application users"""
-    
-    def __init__(self, collection_name: str):
-        """
-        Initialize user repository
-        Args:
-            collection_name: Either 'system_users' or 'application_users'
-        """
-        super().__init__(collection_name)
-    
-    def generate_system_user_id(self) -> str:
-        """
-        Generate a unique 4-digit ID for system users using a Firestore
-        transaction to atomically check-and-reserve the ID, eliminating
-        any race condition between concurrent registrations.
-        Returns a string like '1000', '1001', etc.
-        """
-        max_attempts = 100
+    """Repository for SystemUser entities."""
 
-        for _ in range(max_attempts):
-            candidate_id = str(random.randint(1000, 9999))
-            doc_ref = self.collection.document(candidate_id)
+    def __init__(self, db: AsyncSession) -> None:
+        super().__init__(SystemUser, db)
 
-            @firestore.transactional
-            def _try_reserve(transaction, ref):
-                snapshot = ref.get(transaction=transaction)
-                if snapshot.exists:
-                    return None
-                # Reserve the slot with a sentinel so no other transaction
-                # can claim the same ID concurrently.
-                transaction.set(ref, {'_reserved': True})
-                return ref.id
+    # ------------------------------------------------------------------
+    # Simple lookups
+    # ------------------------------------------------------------------
 
-            transaction = self.db.transaction()
-            reserved_id = _try_reserve(transaction, doc_ref)
-            if reserved_id is not None:
-                return reserved_id
+    async def get_by_role(self, role_id: str) -> List[Dict[str, Any]]:
+        """Return all active system users assigned to the given role."""
+        return await self.get_all(filters={"role_id": role_id})
 
-        raise Exception("Unable to generate unique 4-digit user ID. All IDs may be taken.")
-    
-    def create_system_user(self, data: Dict[str, Any]) -> Dict[str, Any]:
+    # ------------------------------------------------------------------
+    # Existence check
+    # ------------------------------------------------------------------
+
+    async def email_exists(
+        self, email: str, exclude_id: Optional[str] = None
+    ) -> bool:
+        """Return True if a system user with the given email exists."""
+        stmt = (
+            select(func.count())
+            .select_from(self.model)
+            .where(self.model.email == email.lower())
+        )
+        if exclude_id is not None:
+            stmt = stmt.where(self.model.id != exclude_id)
+        result = await self.db.execute(stmt)
+        return (result.scalar_one() or 0) > 0
+
+    # ------------------------------------------------------------------
+    # Paginated filtered query
+    # ------------------------------------------------------------------
+
+    async def get_paginated_users(
+        self,
+        role_id: Optional[str] = None,
+        search_query: Optional[str] = None,
+        active_only: bool = True,
+        page: int = 1,
+        page_size: int = 10,
+        order_by: str = "created_at",
+        order_direction: str = "desc",
+    ) -> Tuple[List[Dict[str, Any]], int, int]:
         """
-        Create a new system user with a 4-digit ID.
-        generate_system_user_id() atomically reserves the document slot;
-        this method then writes the full user payload over it.
-        """
-        # Atomically reserve a unique 4-digit ID
-        user_id = self.generate_system_user_id()
-        
-        now = datetime.now(timezone.utc)
+        Return (items, total_count, total_pages) with optional filtering.
 
-        doc_ref = self.collection.document(user_id)
-        data['id'] = user_id
-        data['created_at'] = now.isoformat()
-        data['updated_at'] = now.isoformat()
-        if 'is_active' not in data:
-            data['is_active'] = True
-        if 'is_deleted' not in data:
-            data['is_deleted'] = False
-        
-        # Overwrite the reservation sentinel with the real user document
-        doc_ref.set(data)
-        return data
+        active_only=True  → only is_active = True users (default)
+        active_only=False → all users including deactivated/soft-deleted
+        """
+        conditions = []
+
+        if active_only:
+            conditions.append(self.model.is_active == True)  # noqa: E712
+
+        if role_id is not None:
+            conditions.append(self.model.role_id == role_id)
+
+        if search_query:
+            pattern = f"%{search_query}%"
+            conditions.append(
+                or_(
+                    self.model.email.ilike(pattern),
+                    self.model.first_name.ilike(pattern),
+                    self.model.last_name.ilike(pattern),
+                )
+            )
+
+        # COUNT query
+        count_stmt = select(func.count()).select_from(self.model)
+        if conditions:
+            count_stmt = count_stmt.where(*conditions)
+        total = (await self.db.execute(count_stmt)).scalar_one() or 0
+        total_pages = max(1, (total + page_size - 1) // page_size)
+
+        # Data query
+        col = getattr(self.model, order_by, self.model.created_at)
+        order_col = col.desc() if order_direction.lower() == "desc" else col.asc()
+        offset = (page - 1) * page_size
+
+        data_stmt = select(self.model)
+        if conditions:
+            data_stmt = data_stmt.where(*conditions)
+        data_stmt = data_stmt.order_by(order_col).limit(page_size).offset(offset)
+
+        rows = (await self.db.execute(data_stmt)).scalars().all()
+        return [row_to_dict(r) for r in rows], total, total_pages

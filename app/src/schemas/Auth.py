@@ -29,8 +29,8 @@ class ChangePasswordRequest(BaseModel):
     old_password: str = Field(..., min_length=6)
     new_password: str = Field(..., min_length=6)
 
-class OrganizationSignupData(BaseModel):
-    """Organization data for signup"""
+class PersonaSignupData(BaseModel):
+    """Persona data for signup"""
     name: str = Field(..., min_length=1, max_length=200)
     description: Optional[str] = None
     address: Optional[str] = None
@@ -56,7 +56,7 @@ class SignupRequest(BaseModel):
     referral_code: str = Field(..., min_length=4, max_length=4, description="4-digit referral code from system user")
     workspace_name: str = Field(..., min_length=1, max_length=200)
     workspace_description: Optional[str] = None
-    
+
     # Billing Information
     billing_name: Optional[str] = None
     billing_email: Optional[EmailStr] = None
@@ -66,13 +66,13 @@ class SignupRequest(BaseModel):
     billing_state: Optional[str] = None
     billing_postal_code: Optional[str] = None
     billing_country: Optional[str] = None
-    
-    organization: OrganizationSignupData
+
+    persona: PersonaSignupData
     admin_user: AdminUserSignupData
 
 class SignupResponse(BaseModel):
     """Signup response schema"""
     workspace: Dict[str, Any]
-    organization: Dict[str, Any]
+    persona: Dict[str, Any]
     admin_user: Dict[str, Any]
     message: str = "Signup successful"

@@ -2,7 +2,9 @@ from fastapi import APIRouter, HTTPException, status, Depends, Query, UploadFile
 from src.schemas.Item import ItemCreate, ItemUpdate, ItemResponse
 from src.application.services.Item import ItemService
 from src.base.BaseSchema import BaseResponse
-from src.application.middleware.RoleCheck import ApplicationRoleCheck
+from src.application.middleware.RoleCheck import ApplicationPermissionCheck
+from src.config.Database import get_db
+from sqlalchemy.ext.asyncio import AsyncSession
 from typing import Optional, List
 from pydantic import BaseModel
 import base64
@@ -14,27 +16,30 @@ router = APIRouter(prefix="/items", tags=["Application Items"])
 # ==================== BULK REQUEST MODELS ====================
 
 class BulkUpdateAvailabilityRequest(BaseModel):
-    item_ids: List[str]
+    item_ids: List[int]
     is_available: bool
 
 
 class BulkDeleteRequest(BaseModel):
-    item_ids: List[str]
+    item_ids: List[int]
 
 
 class BulkUpdateCategoryRequest(BaseModel):
-    item_ids: List[str]
-    category_id: str
+    item_ids: List[int]
+    category_id: int
 
 
 # ==================== COLLECTION ENDPOINTS ====================
 
-@router.post("", response_model=BaseResponse, dependencies=[Depends(ApplicationRoleCheck.require_admin)])
-async def create_item(item: ItemCreate):
+@router.post("", response_model=BaseResponse, dependencies=[Depends(ApplicationPermissionCheck.require('items:create'))])
+async def create_item(
+    item: ItemCreate,
+    db: AsyncSession = Depends(get_db)
+):
     """Create new item (Admin only)"""
-    service = ItemService()
+    service = ItemService(db)
 
-    item_id = service.create_item(item.model_dump())
+    item_id = await service.create_item(item.model_dump())
 
     return {
         "success": True,
@@ -42,17 +47,18 @@ async def create_item(item: ItemCreate):
         "data": {"id": item_id}
     }
 
-@router.get("", dependencies=[Depends(ApplicationRoleCheck.require_operator)])
+@router.get("", dependencies=[Depends(ApplicationPermissionCheck.require('items:read'))])
 async def get_all_items(
-    workspace_id: str = Query(..., description="Workspace ID"),
+    workspace_id: int = Query(..., description="Workspace ID"),
     page: int = Query(1, ge=1, description="Page number"),
     page_size: int = Query(10, ge=1, le=100, description="Items per page"),
-    category_id: Optional[str] = Query(None, description="Filter by category"),
+    category_id: Optional[int] = Query(None, description="Filter by category"),
     is_available: Optional[bool] = Query(None, description="Filter by availability"),
     is_vegetarian: Optional[bool] = Query(None, description="Filter by veg/non-veg (True=Veg, False=Non-Veg)"),
     search: Optional[str] = Query(None, description="Search in name/description"),
     order_by: str = Query("created_at", description="Field to order by"),
-    order_direction: str = Query("desc", description="Order direction (asc/desc)")
+    order_direction: str = Query("desc", description="Order direction (asc/desc)"),
+    db: AsyncSession = Depends(get_db)
 ):
     """
     Get all items with pagination and filters
@@ -68,12 +74,12 @@ async def get_all_items(
     - order_by: Field to order by (default: created_at)
     - order_direction: Order direction (asc/desc, default: desc)
     """
-    service = ItemService()
+    service = ItemService(db)
 
     if page_size > 100:
         page_size = 100
 
-    items, total, total_pages = service.get_paginated_items(
+    items, total, total_pages = await service.get_paginated_items(
         workspace_id=workspace_id,
         page=page,
         page_size=page_size,
@@ -102,22 +108,25 @@ async def get_all_items(
 
 # ==================== BULK ENDPOINTS (must be BEFORE /{item_id}) ====================
 
-@router.post("/bulk-update-availability", response_model=BaseResponse, dependencies=[Depends(ApplicationRoleCheck.require_manager)])
-async def bulk_update_item_availability(body: BulkUpdateAvailabilityRequest):
+@router.post("/bulk-update-availability", response_model=BaseResponse, dependencies=[Depends(ApplicationPermissionCheck.require('items:update'))])
+async def bulk_update_item_availability(
+    body: BulkUpdateAvailabilityRequest,
+    db: AsyncSession = Depends(get_db)
+):
     """Bulk update item availability (Admin, Manager)"""
-    service = ItemService()
+    service = ItemService(db)
 
     updated_count = 0
     failed_items = []
 
     for item_id in body.item_ids:
         try:
-            item = service.get_item_by_id(item_id)
+            item = await service.get_item_by_id(item_id)
             if not item:
                 failed_items.append({"id": item_id, "reason": "Item not found"})
                 continue
 
-            success = service.update_item(item_id, {"is_available": body.is_available})
+            success = await service.update_item(item_id, {"is_available": body.is_available})
             if success:
                 updated_count += 1
             else:
@@ -134,22 +143,25 @@ async def bulk_update_item_availability(body: BulkUpdateAvailabilityRequest):
         }
     }
 
-@router.post("/bulk-delete", response_model=BaseResponse, dependencies=[Depends(ApplicationRoleCheck.require_admin)])
-async def bulk_delete_items(body: BulkDeleteRequest):
+@router.post("/bulk-delete", response_model=BaseResponse, dependencies=[Depends(ApplicationPermissionCheck.require('items:delete'))])
+async def bulk_delete_items(
+    body: BulkDeleteRequest,
+    db: AsyncSession = Depends(get_db)
+):
     """Bulk soft delete items (Admin only)"""
-    service = ItemService()
+    service = ItemService(db)
 
     deleted_count = 0
     failed_items = []
 
     for item_id in body.item_ids:
         try:
-            item = service.get_item_by_id(item_id)
+            item = await service.get_item_by_id(item_id)
             if not item:
                 failed_items.append({"id": item_id, "reason": "Item not found"})
                 continue
 
-            success = service.soft_delete_item(item_id)
+            success = await service.soft_delete_item(item_id)
             if success:
                 deleted_count += 1
             else:
@@ -166,22 +178,25 @@ async def bulk_delete_items(body: BulkDeleteRequest):
         }
     }
 
-@router.post("/bulk-update-category", response_model=BaseResponse, dependencies=[Depends(ApplicationRoleCheck.require_admin)])
-async def bulk_update_item_category(body: BulkUpdateCategoryRequest):
+@router.post("/bulk-update-category", response_model=BaseResponse, dependencies=[Depends(ApplicationPermissionCheck.require('items:update'))])
+async def bulk_update_item_category(
+    body: BulkUpdateCategoryRequest,
+    db: AsyncSession = Depends(get_db)
+):
     """Bulk update item category (Admin only)"""
-    service = ItemService()
+    service = ItemService(db)
 
     updated_count = 0
     failed_items = []
 
     for item_id in body.item_ids:
         try:
-            item = service.get_item_by_id(item_id)
+            item = await service.get_item_by_id(item_id)
             if not item:
                 failed_items.append({"id": item_id, "reason": "Item not found"})
                 continue
 
-            success = service.update_item(item_id, {"category_id": body.category_id})
+            success = await service.update_item(item_id, {"category_id": body.category_id})
             if success:
                 updated_count += 1
             else:
@@ -201,12 +216,15 @@ async def bulk_update_item_category(body: BulkUpdateCategoryRequest):
 
 # ==================== ITEM-SCOPED ENDPOINTS (/{item_id}) ====================
 
-@router.get("/{item_id}", response_model=BaseResponse, dependencies=[Depends(ApplicationRoleCheck.require_operator)])
-async def get_item(item_id: str):
+@router.get("/{item_id}", response_model=BaseResponse, dependencies=[Depends(ApplicationPermissionCheck.require('items:read'))])
+async def get_item(
+    item_id: int,
+    db: AsyncSession = Depends(get_db)
+):
     """Get item by ID"""
-    service = ItemService()
+    service = ItemService(db)
 
-    item = service.get_item_by_id(item_id)
+    item = await service.get_item_by_id(item_id)
 
     if not item:
         raise HTTPException(
@@ -220,19 +238,23 @@ async def get_item(item_id: str):
         "data": item
     }
 
-@router.put("/{item_id}", response_model=BaseResponse, dependencies=[Depends(ApplicationRoleCheck.require_admin)])
-async def update_item(item_id: str, item: ItemUpdate):
+@router.put("/{item_id}", response_model=BaseResponse, dependencies=[Depends(ApplicationPermissionCheck.require('items:update'))])
+async def update_item(
+    item_id: int,
+    item: ItemUpdate,
+    db: AsyncSession = Depends(get_db)
+):
     """Update item (Admin only)"""
-    service = ItemService()
+    service = ItemService(db)
 
-    existing_item = service.get_item_by_id(item_id)
+    existing_item = await service.get_item_by_id(item_id)
     if not existing_item:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Item not found"
         )
 
-    success = service.update_item(item_id, item.model_dump(exclude_unset=True))
+    success = await service.update_item(item_id, item.model_dump(exclude_unset=True))
 
     if not success:
         raise HTTPException(
@@ -245,19 +267,22 @@ async def update_item(item_id: str, item: ItemUpdate):
         "message": "Item updated successfully"
     }
 
-@router.delete("/{item_id}", response_model=BaseResponse, dependencies=[Depends(ApplicationRoleCheck.require_admin)])
-async def delete_item(item_id: str):
+@router.delete("/{item_id}", response_model=BaseResponse, dependencies=[Depends(ApplicationPermissionCheck.require('items:delete'))])
+async def delete_item(
+    item_id: int,
+    db: AsyncSession = Depends(get_db)
+):
     """Soft delete item (Admin only)"""
-    service = ItemService()
+    service = ItemService(db)
 
-    item = service.get_item_by_id(item_id)
+    item = await service.get_item_by_id(item_id)
     if not item:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Item not found"
         )
 
-    success = service.soft_delete_item(item_id)
+    success = await service.soft_delete_item(item_id)
 
     if not success:
         raise HTTPException(
@@ -270,25 +295,28 @@ async def delete_item(item_id: str):
         "message": "Item soft deleted successfully"
     }
 
-@router.put("/{item_id}/restore", response_model=BaseResponse, dependencies=[Depends(ApplicationRoleCheck.require_admin)])
-async def restore_item(item_id: str):
+@router.put("/{item_id}/restore", response_model=BaseResponse, dependencies=[Depends(ApplicationPermissionCheck.require('items:restore'))])
+async def restore_item(
+    item_id: int,
+    db: AsyncSession = Depends(get_db)
+):
     """Restore soft-deleted item (Admin only)"""
-    service = ItemService()
+    service = ItemService(db)
 
-    item = service.get_item_by_id(item_id, include_deleted=True)
+    item = await service.get_item_by_id(item_id, include_deleted=True)
     if not item:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Item not found"
         )
 
-    if not item.get('is_deleted', False):
+    if item.get('is_active', True):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Item is not deleted"
         )
 
-    success = service.restore_item(item_id)
+    success = await service.restore_item(item_id)
 
     if not success:
         raise HTTPException(
@@ -301,22 +329,23 @@ async def restore_item(item_id: str):
         "message": "Item restored successfully"
     }
 
-@router.put("/{item_id}/availability", response_model=BaseResponse, dependencies=[Depends(ApplicationRoleCheck.require_manager)])
+@router.put("/{item_id}/availability", response_model=BaseResponse, dependencies=[Depends(ApplicationPermissionCheck.require('items:update'))])
 async def toggle_item_availability(
-    item_id: str,
-    is_available: bool = Query(..., description="Availability status")
+    item_id: int,
+    is_available: bool = Query(..., description="Availability status"),
+    db: AsyncSession = Depends(get_db)
 ):
     """Toggle item availability (Admin, Manager)"""
-    service = ItemService()
+    service = ItemService(db)
 
-    item = service.get_item_by_id(item_id)
+    item = await service.get_item_by_id(item_id)
     if not item:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Item not found"
         )
 
-    success = service.update_item(item_id, {"is_available": is_available})
+    success = await service.update_item(item_id, {"is_available": is_available})
 
     if not success:
         raise HTTPException(
@@ -330,16 +359,17 @@ async def toggle_item_availability(
     }
 
 
-@router.post("/{item_id}/image", response_model=BaseResponse, dependencies=[Depends(ApplicationRoleCheck.require_admin)])
+@router.post("/{item_id}/image", response_model=BaseResponse, dependencies=[Depends(ApplicationPermissionCheck.require('items:update'))])
 async def upload_item_image(
-    item_id: str,
-    image: UploadFile = File(..., description="Item image file (JPEG, PNG, WebP, max 5MB)")
+    item_id: int,
+    image: UploadFile = File(..., description="Item image file (JPEG, PNG, WebP, max 5MB)"),
+    db: AsyncSession = Depends(get_db)
 ):
-    """Upload or replace item image (Admin only). Stores image as base64 data URL in Firestore."""
-    service = ItemService()
+    """Upload or replace item image (Admin only). Stores image as base64 data URL."""
+    service = ItemService(db)
 
     # Verify item exists
-    item = service.get_item_by_id(item_id)
+    item = await service.get_item_by_id(item_id)
     if not item:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -364,11 +394,11 @@ async def upload_item_image(
             detail="Image file exceeds the 5 MB size limit"
         )
 
-    # Encode as base64 data URL for storage in Firestore
+    # Encode as base64 data URL for storage
     b64 = base64.b64encode(contents).decode("utf-8")
     image_url = f"data:{content_type};base64,{b64}"
 
-    success = service.update_item(item_id, {"image_url": image_url})
+    success = await service.update_item(item_id, {"image_url": image_url})
     if not success:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,

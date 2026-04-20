@@ -1,17 +1,20 @@
-from fastapi import APIRouter, HTTPException, status, Depends, Query
+from typing import Any, Dict, Optional
+
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
-from src.schemas.ApplicationUser import ApplicationUserCreate, ApplicationUserUpdate, ApplicationUserResponse
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from src.application.middleware.RoleCheck import ApplicationPermissionCheck
 from src.application.services.User import ApplicationUserService
 from src.base.BaseSchema import BaseResponse
-from src.application.middleware.RoleCheck import ApplicationRoleCheck
-from src.core.Dependencies import get_current_application_user
-from typing import Dict, Any, Optional
+from src.config.Database import get_db
+from src.schemas.ApplicationUser import ApplicationUserCreate, ApplicationUserUpdate, ApplicationUserResponse
 
 router = APIRouter(prefix="/users", tags=["Application Users"])
 
 
 class UpdateRoleRequest(BaseModel):
-    role_id: str
+    role_id: int
 
 
 def _assert_same_workspace(current_user: Dict[str, Any], target_user: Dict[str, Any]) -> None:
@@ -31,18 +34,20 @@ def _assert_same_workspace(current_user: Dict[str, Any], target_user: Dict[str, 
 
 
 @router.get("/me/data", response_model=BaseResponse)
-async def get_current_user_data(current_user: Dict[str, Any] = Depends(get_current_application_user)):
-    """Get current application user data with workspace and organization details"""
-    from src.repositories.UserRepository import UserRepository
+async def get_current_user_data(
+    current_user: Dict[str, Any] = Depends(ApplicationPermissionCheck.require_authenticated),
+    db: AsyncSession = Depends(get_db)
+):
+    """Get current application user data with workspace and persona details"""
     from src.repositories.WorkspaceRepository import WorkspaceRepository
-    from src.repositories.OrganizationRepository import OrganizationRepository
+    from src.repositories.PersonaRepository import PersonaRepository
 
-    user_repo = UserRepository('application_users')
-    workspace_repo = WorkspaceRepository()
-    org_repo = OrganizationRepository()
+    user_service = ApplicationUserService(db)
+    workspace_repo = WorkspaceRepository(db)
+    persona_repo = PersonaRepository(db)
 
     user_id = current_user.get('id')
-    user = user_repo.get_by_id(user_id)
+    user = await user_service.get_by_id(user_id)
 
     if not user:
         raise HTTPException(
@@ -52,11 +57,11 @@ async def get_current_user_data(current_user: Dict[str, Any] = Depends(get_curre
 
     workspace = None
     if user.get('workspace_id'):
-        workspace = workspace_repo.get_by_id(user['workspace_id'])
+        workspace = await workspace_repo.get_by_id(user['workspace_id'])
 
     venue = None
-    if user.get('organization_id'):
-        venue = org_repo.get_by_id(user['organization_id'])
+    if user.get('persona_id'):
+        venue = await persona_repo.get_by_id(user['persona_id'])
 
     return {
         "success": True,
@@ -69,7 +74,7 @@ async def get_current_user_data(current_user: Dict[str, Any] = Depends(get_curre
                 "last_name": user.get('last_name'),
                 "phone": user.get('phone'),
                 "role": current_user.get('role', {}).get('name', 'operator'),
-                "venue_ids": [user.get('organization_id')] if user.get('organization_id') else [],
+                "venue_ids": [user.get('persona_id')] if user.get('persona_id') else [],
                 "is_active": user.get('is_active', True),
                 "created_at": user.get('created_at'),
                 "updated_at": user.get('updated_at')
@@ -80,21 +85,22 @@ async def get_current_user_data(current_user: Dict[str, Any] = Depends(get_curre
     }
 
 
-@router.post("", response_model=BaseResponse, dependencies=[Depends(ApplicationRoleCheck.require_admin_or_superadmin)])
+@router.post("", response_model=BaseResponse)
 async def create_application_user(
     user: ApplicationUserCreate,
-    current_user: Dict[str, Any] = Depends(ApplicationRoleCheck.require_admin_or_superadmin)
+    current_user: Dict[str, Any] = Depends(ApplicationPermissionCheck.require('users:create')),
+    db: AsyncSession = Depends(get_db)
 ):
     """Create new application user (Admin, SuperAdmin)"""
-    service = ApplicationUserService()
+    service = ApplicationUserService(db)
 
-    if service.email_exists(user.email):
+    if await service.email_exists(user.email):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="Email already registered"
         )
 
-    if not service.validate_application_role(user.role_id):
+    if not await service.validate_application_role(user.role_id):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Invalid role or role is not an application role (role_type must be 1)"
@@ -120,7 +126,7 @@ async def create_application_user(
         # Always enforce the caller's own workspace — ignore any workspace_id in the request body
         user_data['workspace_id'] = workspace_id
 
-    user_id = service.create_application_user(user_data)
+    user_id = await service.create_application_user(user_data)
 
     return {
         "success": True,
@@ -129,19 +135,20 @@ async def create_application_user(
     }
 
 
-@router.get("", dependencies=[Depends(ApplicationRoleCheck.require_manager_or_superadmin)])
+@router.get("")
 async def get_all_application_users(
     page: int = Query(1, ge=1, description="Page number"),
     page_size: int = Query(10, ge=1, le=100, description="Items per page"),
-    workspace_id: Optional[str] = Query(None, description="Filter by workspace (SuperAdmin only)"),
-    organization_id: Optional[str] = Query(None, description="Filter by organization"),
-    role_id: Optional[str] = Query(None, description="Filter by role"),
+    workspace_id: Optional[int] = Query(None, description="Filter by workspace (SuperAdmin only)"),
+    persona_id: Optional[int] = Query(None, description="Filter by persona"),
+    role_id: Optional[int] = Query(None, description="Filter by role"),
     is_active: Optional[bool] = Query(None, description="Filter by active status"),
     search: Optional[str] = Query(None, description="Search by name or email"),
     order_by: str = Query("created_at", description="Field to order by"),
     order_direction: str = Query("desc", description="Order direction (asc/desc)"),
     include_deleted: bool = Query(False, description="Include soft-deleted users"),
-    current_user: Dict[str, Any] = Depends(ApplicationRoleCheck.require_manager_or_superadmin)
+    current_user: Dict[str, Any] = Depends(ApplicationPermissionCheck.require('users:read')),
+    db: AsyncSession = Depends(get_db)
 ):
     """
     Get all application users with pagination (Admin, Manager, SuperAdmin).
@@ -149,20 +156,21 @@ async def get_all_application_users(
     Application users (any role) are always scoped to their own workspace.
     Only SuperAdmin (system user) may query across workspaces.
     """
-    service = ApplicationUserService()
+    service = ApplicationUserService(db)
 
     if page_size > 100:
         page_size = 100
 
-    filters = {}
     user_type = current_user.get('user_type', 'application')
 
+    scoped_workspace_id = None
+    scoped_persona_id = None
+    scoped_role_id = role_id
+
     if user_type == 'system':
-        # SuperAdmin: optionally filter by workspace / organization
-        if workspace_id:
-            filters['workspace_id'] = workspace_id
-        if organization_id:
-            filters['organization_id'] = organization_id
+        # SuperAdmin: optionally filter by workspace / persona
+        scoped_workspace_id = workspace_id or None
+        scoped_persona_id = persona_id or None
     else:
         # All application users are strictly scoped to their own workspace.
         # The workspace_id query param is intentionally ignored to prevent
@@ -173,21 +181,17 @@ async def get_all_application_users(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="User does not belong to a workspace"
             )
-        filters['workspace_id'] = caller_workspace_id
+        scoped_workspace_id = caller_workspace_id
 
-        # organization_id may further narrow results within the same workspace
-        if organization_id:
-            filters['organization_id'] = organization_id
+        # persona_id may further narrow results within the same workspace
+        scoped_persona_id = persona_id or None
 
-    if role_id:
-        filters['role_id'] = role_id
-    if is_active is not None:
-        filters['is_active'] = is_active
-
-    items, total, total_pages = service.get_paginated_users(
+    items, total, total_pages = await service.get_paginated_users(
         page=page,
         page_size=page_size,
-        filters=filters if filters else None,
+        workspace_id=scoped_workspace_id,
+        persona_id=scoped_persona_id,
+        role_id=scoped_role_id,
         search_query=search,
         include_deleted=include_deleted,
         order_by=order_by,
@@ -209,21 +213,22 @@ async def get_all_application_users(
     }
 
 
-# NOTE: All static-segment routes (/role/{...}, /workspace/{...}, /organization/{...})
+# NOTE: All static-segment routes (/role/{...}, /workspace/{...}, /persona/{...})
 # MUST be declared before /{user_id} so FastAPI does not swallow them as user_id values.
 
-@router.get("/role/{role_id}", response_model=BaseResponse, dependencies=[Depends(ApplicationRoleCheck.require_admin_or_superadmin)])
+@router.get("/role/{role_id}", response_model=BaseResponse)
 async def get_users_by_role(
-    role_id: str,
-    current_user: Dict[str, Any] = Depends(ApplicationRoleCheck.require_admin_or_superadmin)
+    role_id: int,
+    current_user: Dict[str, Any] = Depends(ApplicationPermissionCheck.require('users:read')),
+    db: AsyncSession = Depends(get_db)
 ):
     """Get all users with a specific role, scoped to the caller's workspace (Admin only)"""
-    service = ApplicationUserService()
+    service = ApplicationUserService(db)
 
     user_type = current_user.get('user_type', 'application')
     workspace_id = None if user_type == 'system' else current_user.get('workspace_id')
 
-    users = service.get_users_by_role(role_id, workspace_id=workspace_id)
+    users = await service.get_users_by_role(role_id, workspace_id=workspace_id)
 
     return {
         "success": True,
@@ -232,13 +237,14 @@ async def get_users_by_role(
     }
 
 
-@router.get("/workspace/{workspace_id}", response_model=BaseResponse, dependencies=[Depends(ApplicationRoleCheck.require_admin_or_superadmin)])
+@router.get("/workspace/{workspace_id}", response_model=BaseResponse)
 async def get_users_by_workspace(
-    workspace_id: str,
-    current_user: Dict[str, Any] = Depends(ApplicationRoleCheck.require_admin_or_superadmin)
+    workspace_id: int,
+    current_user: Dict[str, Any] = Depends(ApplicationPermissionCheck.require('users:read')),
+    db: AsyncSession = Depends(get_db)
 ):
     """Get all users in a workspace (SuperAdmin unrestricted; application users restricted to own workspace)"""
-    service = ApplicationUserService()
+    service = ApplicationUserService(db)
 
     user_type = current_user.get('user_type', 'application')
     if user_type != 'system':
@@ -249,7 +255,7 @@ async def get_users_by_workspace(
                 detail="Access to other workspaces is not allowed"
             )
 
-    users = service.get_users_by_workspace(workspace_id)
+    users = await service.get_users_by_workspace(workspace_id)
 
     return {
         "success": True,
@@ -258,18 +264,19 @@ async def get_users_by_workspace(
     }
 
 
-@router.get("/organization/{organization_id}", response_model=BaseResponse, dependencies=[Depends(ApplicationRoleCheck.require_manager_or_superadmin)])
-async def get_users_by_organization(
-    organization_id: str,
-    current_user: Dict[str, Any] = Depends(ApplicationRoleCheck.require_manager_or_superadmin)
+@router.get("/persona/{persona_id}", response_model=BaseResponse)
+async def get_users_by_persona(
+    persona_id: int,
+    current_user: Dict[str, Any] = Depends(ApplicationPermissionCheck.require('users:read')),
+    db: AsyncSession = Depends(get_db)
 ):
-    """Get all users in an organization, scoped to the caller's workspace (Admin, Manager)"""
-    service = ApplicationUserService()
+    """Get all users in a persona, scoped to the caller's workspace (Admin, Manager)"""
+    service = ApplicationUserService(db)
 
     user_type = current_user.get('user_type', 'application')
     workspace_id = None if user_type == 'system' else current_user.get('workspace_id')
 
-    users = service.get_users_by_organization(organization_id, workspace_id=workspace_id)
+    users = await service.get_users_by_persona(persona_id, workspace_id=workspace_id)
 
     return {
         "success": True,
@@ -278,15 +285,16 @@ async def get_users_by_organization(
     }
 
 
-@router.get("/{user_id}", response_model=BaseResponse, dependencies=[Depends(ApplicationRoleCheck.require_manager_or_superadmin)])
+@router.get("/{user_id}", response_model=BaseResponse)
 async def get_application_user(
-    user_id: str,
-    current_user: Dict[str, Any] = Depends(ApplicationRoleCheck.require_manager_or_superadmin)
+    user_id: int,
+    current_user: Dict[str, Any] = Depends(ApplicationPermissionCheck.require('users:read')),
+    db: AsyncSession = Depends(get_db)
 ):
     """Get application user details (Admin, Manager)"""
-    service = ApplicationUserService()
+    service = ApplicationUserService(db)
 
-    user = service.get_user_with_role(user_id)
+    user = await service.get_user_with_role(user_id)
 
     if not user:
         raise HTTPException(
@@ -303,16 +311,17 @@ async def get_application_user(
     }
 
 
-@router.put("/{user_id}", response_model=BaseResponse, dependencies=[Depends(ApplicationRoleCheck.require_admin_or_superadmin)])
+@router.put("/{user_id}", response_model=BaseResponse)
 async def update_application_user(
-    user_id: str,
+    user_id: int,
     user: ApplicationUserUpdate,
-    current_user: Dict[str, Any] = Depends(ApplicationRoleCheck.require_admin_or_superadmin)
+    current_user: Dict[str, Any] = Depends(ApplicationPermissionCheck.require('users:update')),
+    db: AsyncSession = Depends(get_db)
 ):
     """Update application user (Admin only)"""
-    service = ApplicationUserService()
+    service = ApplicationUserService(db)
 
-    existing_user = service.get_by_id(user_id)
+    existing_user = await service.get_by_id(user_id)
     if not existing_user:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -323,13 +332,13 @@ async def update_application_user(
 
     update_data = user.model_dump(exclude_unset=True)
     if 'role_id' in update_data:
-        if not service.validate_application_role(update_data['role_id']):
+        if not await service.validate_application_role(update_data['role_id']):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Invalid role or role is not an application role (role_type must be 1)"
             )
 
-    success = service.update_user(user_id, update_data)
+    success = await service.update_user(user_id, update_data)
 
     if not success:
         raise HTTPException(
@@ -343,15 +352,16 @@ async def update_application_user(
     }
 
 
-@router.delete("/{user_id}", response_model=BaseResponse, dependencies=[Depends(ApplicationRoleCheck.require_admin_or_superadmin)])
+@router.delete("/{user_id}", response_model=BaseResponse)
 async def delete_application_user(
-    user_id: str,
-    current_user: Dict[str, Any] = Depends(ApplicationRoleCheck.require_admin_or_superadmin)
+    user_id: int,
+    current_user: Dict[str, Any] = Depends(ApplicationPermissionCheck.require('users:delete')),
+    db: AsyncSession = Depends(get_db)
 ):
     """Soft delete application user (Admin only) - Data is preserved"""
-    service = ApplicationUserService()
+    service = ApplicationUserService(db)
 
-    user = service.get_by_id(user_id)
+    user = await service.get_by_id(user_id)
     if not user:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -360,7 +370,7 @@ async def delete_application_user(
 
     _assert_same_workspace(current_user, user)
 
-    success = service.soft_delete_user(user_id)
+    success = await service.soft_delete_user(user_id)
 
     if not success:
         raise HTTPException(
@@ -374,15 +384,16 @@ async def delete_application_user(
     }
 
 
-@router.put("/{user_id}/restore", response_model=BaseResponse, dependencies=[Depends(ApplicationRoleCheck.require_admin_or_superadmin)])
+@router.put("/{user_id}/restore", response_model=BaseResponse)
 async def restore_application_user(
-    user_id: str,
-    current_user: Dict[str, Any] = Depends(ApplicationRoleCheck.require_admin_or_superadmin)
+    user_id: int,
+    current_user: Dict[str, Any] = Depends(ApplicationPermissionCheck.require('users:restore')),
+    db: AsyncSession = Depends(get_db)
 ):
     """Restore a soft-deleted application user (Admin only)"""
-    service = ApplicationUserService()
+    service = ApplicationUserService(db)
 
-    user = service.get_by_id(user_id, include_deleted=True)
+    user = await service.get_by_id(user_id, include_deleted=True)
     if not user:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -391,13 +402,14 @@ async def restore_application_user(
 
     _assert_same_workspace(current_user, user)
 
-    if not user.get('is_deleted', False):
+    # is_active=True means active (not deleted); raise error if not deleted
+    if user.get('is_active', True):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="User is not deleted"
         )
 
-    success = service.restore_user(user_id)
+    success = await service.restore_user(user_id)
 
     if not success:
         raise HTTPException(
@@ -411,15 +423,16 @@ async def restore_application_user(
     }
 
 
-@router.put("/{user_id}/activate", response_model=BaseResponse, dependencies=[Depends(ApplicationRoleCheck.require_admin_or_superadmin)])
+@router.put("/{user_id}/activate", response_model=BaseResponse)
 async def activate_user(
-    user_id: str,
-    current_user: Dict[str, Any] = Depends(ApplicationRoleCheck.require_admin_or_superadmin)
+    user_id: int,
+    current_user: Dict[str, Any] = Depends(ApplicationPermissionCheck.require('users:update')),
+    db: AsyncSession = Depends(get_db)
 ):
     """Activate application user (Admin only)"""
-    service = ApplicationUserService()
+    service = ApplicationUserService(db)
 
-    existing_user = service.get_by_id(user_id)
+    existing_user = await service.get_by_id(user_id)
     if not existing_user:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -428,7 +441,7 @@ async def activate_user(
 
     _assert_same_workspace(current_user, existing_user)
 
-    success = service.update_user(user_id, {"is_active": True})
+    success = await service.update_user(user_id, {"is_active": True})
 
     if not success:
         raise HTTPException(
@@ -442,15 +455,16 @@ async def activate_user(
     }
 
 
-@router.put("/{user_id}/deactivate", response_model=BaseResponse, dependencies=[Depends(ApplicationRoleCheck.require_admin_or_superadmin)])
+@router.put("/{user_id}/deactivate", response_model=BaseResponse)
 async def deactivate_user(
-    user_id: str,
-    current_user: Dict[str, Any] = Depends(ApplicationRoleCheck.require_admin_or_superadmin)
+    user_id: int,
+    current_user: Dict[str, Any] = Depends(ApplicationPermissionCheck.require('users:update')),
+    db: AsyncSession = Depends(get_db)
 ):
     """Deactivate application user (Admin only)"""
-    service = ApplicationUserService()
+    service = ApplicationUserService(db)
 
-    existing_user = service.get_by_id(user_id)
+    existing_user = await service.get_by_id(user_id)
     if not existing_user:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -459,7 +473,7 @@ async def deactivate_user(
 
     _assert_same_workspace(current_user, existing_user)
 
-    success = service.update_user(user_id, {"is_active": False})
+    success = await service.update_user(user_id, {"is_active": False})
 
     if not success:
         raise HTTPException(
@@ -473,16 +487,17 @@ async def deactivate_user(
     }
 
 
-@router.put("/{user_id}/role", response_model=BaseResponse, dependencies=[Depends(ApplicationRoleCheck.require_admin_or_superadmin)])
+@router.put("/{user_id}/role", response_model=BaseResponse)
 async def update_user_role(
-    user_id: str,
+    user_id: int,
     request: UpdateRoleRequest,
-    current_user: Dict[str, Any] = Depends(ApplicationRoleCheck.require_admin_or_superadmin)
+    current_user: Dict[str, Any] = Depends(ApplicationPermissionCheck.require('users:manage')),
+    db: AsyncSession = Depends(get_db)
 ):
     """Update user role (Admin only)"""
-    service = ApplicationUserService()
+    service = ApplicationUserService(db)
 
-    existing_user = service.get_by_id(user_id)
+    existing_user = await service.get_by_id(user_id)
     if not existing_user:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -491,13 +506,13 @@ async def update_user_role(
 
     _assert_same_workspace(current_user, existing_user)
 
-    if not service.validate_application_role(request.role_id):
+    if not await service.validate_application_role(request.role_id):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Invalid role or role is not an application role (role_type must be 1)"
         )
 
-    success = service.update_user(user_id, {"role_id": request.role_id})
+    success = await service.update_user(user_id, {"role_id": request.role_id})
 
     if not success:
         raise HTTPException(

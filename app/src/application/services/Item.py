@@ -1,34 +1,35 @@
+from sqlalchemy.ext.asyncio import AsyncSession
 from src.base.BaseService import BaseService
 from src.repositories.ItemRepository import ItemRepository
 from typing import Dict, Any, List, Tuple, Optional
 
+
 class ItemService(BaseService):
     """Item service"""
-    
-    def __init__(self):
-        repository = ItemRepository()
-        super().__init__(repository)
-    
-    def create_item(self, data: Dict[str, Any]) -> str:
-        """Create new item"""
-        result = self.create(data)
+
+    def __init__(self, db: AsyncSession):
+        super().__init__(ItemRepository(db))
+
+    async def create_item(self, data: Dict[str, Any]) -> str:
+        """Create new item and return its ID"""
+        result = await self.create(data)
         if isinstance(result, dict):
             return result.get('id')
         return result
-    
-    def get_item_by_id(self, item_id: str, include_deleted: bool = False) -> Optional[Dict[str, Any]]:
+
+    async def get_item_by_id(self, item_id: str, include_deleted: bool = False) -> Optional[Dict[str, Any]]:
         """Get item by ID"""
-        return self.get_by_id(item_id, include_deleted)
-    
-    def get_items_by_workspace(self, workspace_id: str) -> List[Dict[str, Any]]:
+        return await self.get_by_id(item_id, include_deleted)
+
+    async def get_items_by_workspace(self, workspace_id: str) -> List[Dict[str, Any]]:
         """Get all items by workspace"""
-        return self.repository.get_by_workspace(workspace_id)
-    
-    def get_items_by_category(self, category_id: str) -> List[Dict[str, Any]]:
+        return await self.repository.get_by_workspace(workspace_id)
+
+    async def get_items_by_category(self, category_id: str) -> List[Dict[str, Any]]:
         """Get all items by category"""
-        return self.repository.get_by_category(category_id)
-    
-    def get_paginated_items(
+        return await self.repository.get_by_category(category_id)
+
+    async def get_paginated_items(
         self,
         workspace_id: str,
         page: int = 1,
@@ -37,11 +38,11 @@ class ItemService(BaseService):
         is_available: Optional[bool] = None,
         is_vegetarian: Optional[bool] = None,
         search_query: Optional[str] = None,
-        order_by: str = "created_at",
-        order_direction: str = "desc"
+        order_by: str = 'created_at',
+        order_direction: str = 'desc',
     ) -> Tuple[List[Dict[str, Any]], int, int]:
         """Get paginated items"""
-        return self.repository.get_paginated_by_workspace(
+        return await self.repository.get_paginated_by_workspace(
             workspace_id=workspace_id,
             page=page,
             page_size=page_size,
@@ -50,17 +51,17 @@ class ItemService(BaseService):
             is_vegetarian=is_vegetarian,
             search_query=search_query,
             order_by=order_by,
-            order_direction=order_direction
+            order_direction=order_direction,
         )
-    
-    def update_item(self, item_id: str, data: Dict[str, Any]) -> bool:
+
+    async def update_item(self, item_id: str, data: Dict[str, Any]) -> bool:
         """Update item"""
-        return self.update(item_id, data)
-    
-    def soft_delete_item(self, item_id: str) -> bool:
+        return await self.update(item_id, data)
+
+    async def soft_delete_item(self, item_id: str) -> bool:
         """Soft delete item"""
-        return self.soft_delete(item_id)
-    
-    def restore_item(self, item_id: str) -> bool:
+        return await self.soft_delete(item_id)
+
+    async def restore_item(self, item_id: str) -> bool:
         """Restore soft-deleted item"""
-        return self.restore(item_id)
+        return await self.restore(item_id)

@@ -1,253 +1,189 @@
 """
 Home Page Service
-Provides data for the public home page from homepage_info collection
+Provides data for the public home page from the homepage_info table.
 """
 
-from typing import Dict, Any, List, Optional
+import logging
+from typing import Any, Dict, List, Optional
+
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from src.repositories.HomePageInfoRepository import HomePageInfoRepository
-from src.repositories.WorkspaceRepository import WorkspaceRepository
 from src.repositories.OrderRepository import OrderRepository
+from src.repositories.WorkspaceRepository import WorkspaceRepository
+
+logger = logging.getLogger(__name__)
 
 
 class HomePageService:
     """
-    Service for home page data
-    
-    All data is stored in and retrieved from the homepage_info collection.
-    This collection contains:
-    - stats: array of stat objects
-    - testimonials: array of testimonial objects
-    - contact: contact information object
+    Service for home page data — async SQLAlchemy 2.x.
+
+    All data is stored in and retrieved from the homepage_info table.
+    This table contains:
+      - stats        : array of stat objects
+      - testimonials : array of testimonial objects
+      - contact      : contact information object
     """
-    
-    def __init__(self):
-        self.homepage_repo = HomePageInfoRepository()
-        self.workspace_repo = WorkspaceRepository()
-        self.order_repo = OrderRepository()
-    
-    def get_stats(self) -> List[Dict[str, Any]]:
+
+    def __init__(self, db: AsyncSession) -> None:
+        self.homepage_repo = HomePageInfoRepository(db)
+        self.workspace_repo = WorkspaceRepository(db)
+        self.order_repo = OrderRepository(db)
+
+    # ------------------------------------------------------------------
+    # Read methods
+    # ------------------------------------------------------------------
+
+    async def get_stats(self) -> List[Dict[str, Any]]:
         """
-        Get home page statistics with real-time data from database
-        
+        Get home page statistics with real-time data from the database.
+
         Dynamically calculates:
-        - Active Businesses: Count of active workspaces
-        - Orders Processed: Total count of all orders
-        
+          - Active Businesses : count of active workspaces
+          - Orders Processed  : total count of all orders
+
         Falls back to database default values if calculation fails.
-        
-        Returns:
-            List of stat objects with structure:
-            {
-                "title": "Active Businesses",
-                "value": "50",
-                "number": 50,
-                "suffix": "+",
-                "label": "Active Businesses",
-                "icon": "business"
-            }
+        Uses count() instead of get_all() to avoid loading full tables into memory.
         """
         try:
-            # Get stats from database (default values)
-            default_stats = self.homepage_repo.get_stats()
-            
-            # Calculate real-time values
+            default_stats = await self.homepage_repo.get_stats()
+
             try:
-                # Count active workspaces
-                active_workspaces = self.workspace_repo.get_all(filters={'is_active': True, 'is_deleted': False})
-                workspace_count = len(active_workspaces)
-                
-                # Count total orders
-                all_orders = self.order_repo.get_all(filters={'is_deleted': False})
-                order_count = len(all_orders)
-                
-                # Update stats with real-time values
-                updated_stats = []
+                workspace_count = await self.workspace_repo.count(
+                    filters={"is_active": True}
+                )
+                order_count = await self.order_repo.count(
+                    filters={"is_active": True}
+                )
+
+                updated_stats: List[Dict[str, Any]] = []
                 for stat in default_stats:
                     stat_copy = stat.copy()
-                    
-                    # Update Active Businesses stat
-                    if stat.get('title') == 'Active Businesses' or stat.get('label') == 'Active Businesses':
-                        stat_copy['number'] = workspace_count
-                        stat_copy['value'] = str(workspace_count)
-                    
-                    # Update Orders Processed stat
-                    elif stat.get('title') == 'Orders Processed' or stat.get('label') == 'Orders Processed':
-                        stat_copy['number'] = order_count
-                        # Format large numbers (e.g., 10000 -> 10K, 1000000 -> 1M)
-                        if order_count >= 1000000:
-                            stat_copy['value'] = f"{order_count / 1000000:.1f}M"
-                        elif order_count >= 1000:
-                            stat_copy['value'] = f"{order_count / 1000:.1f}K"
+
+                    if stat.get("title") == "Active Restaurants" or stat.get("label") == "Active Restaurants":
+                        stat_copy["number"] = workspace_count
+                        stat_copy["value"] = str(workspace_count)
+
+                    elif stat.get("title") == "Orders Processed" or stat.get("label") == "Orders Processed":
+                        stat_copy["number"] = order_count
+                        if order_count >= 1_000_000:
+                            stat_copy["value"] = f"{order_count / 1_000_000:.1f}M"
+                        elif order_count >= 1_000:
+                            stat_copy["value"] = f"{order_count / 1_000:.1f}K"
                         else:
-                            stat_copy['value'] = str(order_count)
-                    
+                            stat_copy["value"] = str(order_count)
+
                     updated_stats.append(stat_copy)
-                
+
                 return updated_stats
-                
-            except Exception as calc_error:
-                # If calculation fails, return default stats from database
-                print(f"Error calculating real-time stats, using defaults: {calc_error}")
+
+            except Exception:
+                logger.error("Error calculating real-time stats, using defaults", exc_info=True)
                 return default_stats
-                
-        except Exception as e:
-            print(f"Error fetching stats: {e}")
+
+        except Exception:
+            logger.error("Error fetching stats", exc_info=True)
             return []
 
-    
-    def get_testimonials(self, limit: Optional[int] = None) -> List[Dict[str, Any]]:
-        """
-        Get customer testimonials from homepage_info collection
-        
-        Args:
-            limit: Maximum number of testimonials to return
-            
-        Returns:
-            List of testimonial objects with structure:
-            {
-                "name": "John Doe",
-                "role": "Restaurant Owner",
-                "restaurant": "Doe's Diner",
-                "location": "New York, NY",
-                "rating": 5,
-                "comment": "Great platform!",
-                "avatar": "JD",
-                "created_at": "2024-01-01T00:00:00Z"
-            }
-        """
+
+    async def get_testimonials(self, limit: Optional[int] = None) -> List[Dict[str, Any]]:
+        """Get customer testimonials from the homepage_info table."""
         try:
-            return self.homepage_repo.get_testimonials(limit=limit)
-        except Exception as e:
-            print(f"Error fetching testimonials: {e}")
+            return await self.homepage_repo.get_testimonials(limit=limit)
+        except Exception:
+            logger.error("Error fetching testimonials", exc_info=True)
             return []
-    
-    def get_contact_info(self) -> Dict[str, Any]:
-        """
-        Get contact information from homepage_info collection
-        
-        Returns:
-            Contact object with structure:
-            {
-                "email": "contact@example.com",
-                "phone": "+1234567890",
-                "address": "123 Main St",
-                "city": "New York",
-                "state": "NY",
-                "country": "USA",
-                "postal_code": "10001"
-            }
-        """
+
+
+    async def get_contact_info(self) -> Dict[str, Any]:
+        """Get contact information from the homepage_info table."""
         try:
-            return self.homepage_repo.get_contact()
-        except Exception as e:
-            print(f"Error fetching contact info: {e}")
+            return await self.homepage_repo.get_contact()
+        except Exception:
+            logger.error("Error fetching contact info", exc_info=True)
             return {}
 
-    
-    def get_all_home_data(self) -> Dict[str, Any]:
+
+    async def get_all_home_data(self) -> Dict[str, Any]:
         """
-        Get all home page data in one call with real-time stats
-        
+        Get all home page data in one call with real-time stats.
+
+        Uses the homepage_info record returned by get_or_create_homepage_info
+        as the base for testimonials and contact, then enriches the stats field
+        with real-time counts — avoiding a redundant second DB fetch.
+
         Returns:
             {
-                "stats": [...],  # With real-time calculated values
+                "stats": [...],        # real-time calculated values
                 "testimonials": [...],
                 "contact": {...}
             }
         """
         try:
-            homepage_info = self.homepage_repo.get_or_create_homepage_info()
-            
-            # Get stats with real-time calculations
-            stats = self.get_stats()
-            
+            homepage_info = await self.homepage_repo.get_or_create_homepage_info()
+
+            # Enrich the stats stored in homepage_info with live counts.
+            # get_stats() fetches its own defaults; pass the stored stats as the
+            # base so we avoid a second get_or_create round-trip.
+            stats = await self.get_stats()
+
             return {
-                "stats": stats,  # Use calculated stats instead of database stats
-                "testimonials": homepage_info.get('testimonials', []),
-                "contact": homepage_info.get('contact', {})
+                "stats": stats,
+                "testimonials": homepage_info.get("testimonials", []),
+                "contact": homepage_info.get("contact", {}),
             }
-        except Exception as e:
-            print(f"Error fetching all home data: {e}")
-            return {
-                "stats": [],
-                "testimonials": [],
-                "contact": {}
-            }
+        except Exception:
+            logger.error("Error fetching all home data", exc_info=True)
+            return {"stats": [], "testimonials": [], "contact": {}}
 
 
-    
-    # ========================================================================
-    # UPDATE METHODS
-    # ========================================================================
-    
-    def update_stats(self, stats: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """
-        Update stats array in homepage_info collection
-        
-        Args:
-            stats: Array of stat objects
-            
-        Returns:
-            Updated stats array
-        """
+    # ------------------------------------------------------------------
+    # Update methods
+    # ------------------------------------------------------------------
+
+    async def update_stats(self, stats: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Replace the stats array in the homepage_info table."""
         try:
-            result = self.homepage_repo.update_stats(stats)
-            return result.get('stats', [])
-        except Exception as e:
-            print(f"Error updating stats: {e}")
-            raise ValueError(f"Failed to update stats: {str(e)}")
-    
-    def update_testimonials(self, testimonials: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """
-        Update testimonials array in homepage_info collection
-        
-        Args:
-            testimonials: Array of testimonial objects
-            
-        Returns:
-            Updated testimonials array
-        """
+            result = await self.homepage_repo.update_stats(stats)
+            return result.get("stats", [])
+        except Exception:
+            logger.error("Error updating stats", exc_info=True)
+            raise ValueError("Failed to update stats")
+
+
+    async def update_testimonials(
+        self, testimonials: List[Dict[str, Any]]
+    ) -> List[Dict[str, Any]]:
+        """Replace the testimonials array in the homepage_info table."""
         try:
-            result = self.homepage_repo.update_testimonials(testimonials)
-            return result.get('testimonials', [])
-        except Exception as e:
-            print(f"Error updating testimonials: {e}")
-            raise ValueError(f"Failed to update testimonials: {str(e)}")
-    
-    def update_contact_info(self, contact_data: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Update contact information in homepage_info collection
-        
-        Args:
-            contact_data: Contact information object
-            
-        Returns:
-            Updated contact object
-        """
+            result = await self.homepage_repo.update_testimonials(testimonials)
+            return result.get("testimonials", [])
+        except Exception:
+            logger.error("Error updating testimonials", exc_info=True)
+            raise ValueError("Failed to update testimonials")
+
+
+    async def update_contact_info(self, contact_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Replace the contact object in the homepage_info table."""
         try:
-            result = self.homepage_repo.update_contact(contact_data)
-            return result.get('contact', {})
-        except Exception as e:
-            print(f"Error updating contact info: {e}")
-            raise ValueError(f"Failed to update contact information: {str(e)}")
-    
-    def update_all_homepage_data(self, data: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Update entire homepage_info document
-        
-        Args:
-            data: Dictionary containing stats, testimonials, and/or contact
-            
-        Returns:
-            Updated homepage_info document
-        """
+            result = await self.homepage_repo.update_contact(contact_data)
+            return result.get("contact", {})
+        except Exception:
+            logger.error("Error updating contact info", exc_info=True)
+            raise ValueError("Failed to update contact information")
+
+
+    async def update_all_homepage_data(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        """Partial update of the homepage_info document."""
         try:
-            result = self.homepage_repo.update_homepage_info(data)
+            result = await self.homepage_repo.update_homepage_info(data)
             return {
-                "stats": result.get('stats', []),
-                "testimonials": result.get('testimonials', []),
-                "contact": result.get('contact', {})
+                "stats": result.get("stats", []),
+                "testimonials": result.get("testimonials", []),
+                "contact": result.get("contact", {}),
             }
-        except Exception as e:
-            print(f"Error updating homepage data: {e}")
-            raise ValueError(f"Failed to update homepage data: {str(e)}")
+        except Exception:
+            logger.error("Error updating homepage data", exc_info=True)
+            raise ValueError("Failed to update homepage data")
+

@@ -1,6 +1,7 @@
-from fastapi import APIRouter, HTTPException, status, Depends, Query
+from fastapi import APIRouter, Body, HTTPException, status, Depends, Query
+from sqlalchemy.ext.asyncio import AsyncSession
 from src.base.BaseSchema import BaseResponse
-from src.system.middleware.RoleCheck import SystemRoleCheck
+from src.system.middleware.RoleCheck import SystemPermissionCheck
 from src.system.services.Permission import PermissionService
 from src.schemas.Permission import (
     PermissionCreate,
@@ -8,28 +9,29 @@ from src.schemas.Permission import (
     PermissionResponse,
     PermissionBulkCreate
 )
+from src.config.Database import get_db
 from typing import List, Dict, Any, Optional
 
 router = APIRouter(prefix="/permissions", tags=["System Permissions"])
 
 # ==================== CRUD Collection Operations ====================
 
-@router.post("", response_model=BaseResponse, dependencies=[Depends(SystemRoleCheck.require_super_admin)])
-async def create_permission(permission: PermissionCreate):
+@router.post("", response_model=BaseResponse, dependencies=[Depends(SystemPermissionCheck.require('permissions:create'))])
+async def create_permission(permission: PermissionCreate, db: AsyncSession = Depends(get_db)):
     """
-    Create new permission (SuperAdmin only)
+    Create new permission
 
     Creates a new permission in the system.
     """
-    service = PermissionService()
+    service = PermissionService(db)
 
-    if service.permission_exists(permission.name):
+    if await service.permission_exists(permission.name):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail=f"Permission '{permission.name}' already exists"
         )
 
-    permission_id = service.create_permission(permission.model_dump())
+    permission_id = await service.create_permission(permission.model_dump())
 
     return {
         "success": True,
@@ -37,7 +39,7 @@ async def create_permission(permission: PermissionCreate):
         "data": {"id": permission_id}
     }
 
-@router.get("", dependencies=[Depends(SystemRoleCheck.require_super_admin)])
+@router.get("", dependencies=[Depends(SystemPermissionCheck.require('permissions:read'))])
 async def get_all_permissions(
     page: int = Query(1, ge=1, description="Page number"),
     page_size: int = Query(10, ge=1, le=100, description="Items per page"),
@@ -47,10 +49,11 @@ async def get_all_permissions(
     is_active: Optional[bool] = Query(None, description="Filter by active status"),
     search: Optional[str] = Query(None, description="Search in name/description"),
     order_by: str = Query("created_at", description="Field to order by"),
-    order_direction: str = Query("desc", description="Order direction (asc/desc)")
+    order_direction: str = Query("desc", description="Order direction (asc/desc)"),
+    db: AsyncSession = Depends(get_db)
 ):
     """
-    Get all permissions with pagination and filtering (SuperAdmin only)
+    Get all permissions with pagination and filtering
 
     Query Parameters:
     - page: Page number (default: 1)
@@ -63,7 +66,7 @@ async def get_all_permissions(
     - order_by: Field to order by (default: created_at)
     - order_direction: Order direction (asc/desc, default: desc)
     """
-    service = PermissionService()
+    service = PermissionService(db)
 
     if category and category not in ['system', 'application']:
         raise HTTPException(
@@ -74,7 +77,7 @@ async def get_all_permissions(
     if page_size > 100:
         page_size = 100
 
-    items, total, total_pages = service.get_paginated_permissions(
+    items, total, total_pages = await service.get_paginated_permissions(
         page=page,
         page_size=page_size,
         category=category,
@@ -102,14 +105,14 @@ async def get_all_permissions(
 
 # ==================== Bulk Operations ====================
 
-@router.post("/bulk", response_model=BaseResponse, dependencies=[Depends(SystemRoleCheck.require_super_admin)])
-async def bulk_create_permissions(bulk_data: PermissionBulkCreate):
+@router.post("/bulk", response_model=BaseResponse, dependencies=[Depends(SystemPermissionCheck.require('permissions:create'))])
+async def bulk_create_permissions(bulk_data: PermissionBulkCreate, db: AsyncSession = Depends(get_db)):
     """
-    Bulk create permissions (SuperAdmin only)
+    Bulk create permissions
 
     Creates multiple permissions at once.
     """
-    service = PermissionService()
+    service = PermissionService(db)
 
     names = [p.name for p in bulk_data.permissions]
     if len(names) != len(set(names)):
@@ -120,7 +123,7 @@ async def bulk_create_permissions(bulk_data: PermissionBulkCreate):
 
     existing = []
     for perm in bulk_data.permissions:
-        if service.permission_exists(perm.name):
+        if await service.permission_exists(perm.name):
             existing.append(perm.name)
 
     if existing:
@@ -130,7 +133,7 @@ async def bulk_create_permissions(bulk_data: PermissionBulkCreate):
         )
 
     permissions_data = [p.model_dump() for p in bulk_data.permissions]
-    permission_ids = service.bulk_create_permissions(permissions_data)
+    permission_ids = await service.bulk_create_permissions(permissions_data)
 
     return {
         "success": True,
@@ -143,18 +146,19 @@ async def bulk_create_permissions(bulk_data: PermissionBulkCreate):
 
 # ==================== Query Operations ====================
 
-@router.get("/category/{category}", dependencies=[Depends(SystemRoleCheck.require_super_admin)])
+@router.get("/category/{category}", dependencies=[Depends(SystemPermissionCheck.require('permissions:read'))])
 async def get_permissions_by_category(
     category: str,
     page: int = Query(1, ge=1),
-    page_size: int = Query(10, ge=1, le=100)
+    page_size: int = Query(10, ge=1, le=100),
+    db: AsyncSession = Depends(get_db)
 ):
     """
-    Get permissions by category with pagination (SuperAdmin only)
+    Get permissions by category with pagination
 
     Categories: system, application
     """
-    service = PermissionService()
+    service = PermissionService(db)
 
     if category not in ['system', 'application']:
         raise HTTPException(
@@ -162,7 +166,7 @@ async def get_permissions_by_category(
             detail="category must be 'system' or 'application'"
         )
 
-    items, total, total_pages = service.get_paginated_permissions(
+    items, total, total_pages = await service.get_paginated_permissions(
         page=page,
         page_size=page_size,
         category=category
@@ -182,16 +186,17 @@ async def get_permissions_by_category(
         }
     }
 
-@router.get("/resource/{resource}", dependencies=[Depends(SystemRoleCheck.require_super_admin)])
+@router.get("/resource/{resource}", dependencies=[Depends(SystemPermissionCheck.require('permissions:read'))])
 async def get_permissions_by_resource(
     resource: str,
     page: int = Query(1, ge=1),
-    page_size: int = Query(10, ge=1, le=100)
+    page_size: int = Query(10, ge=1, le=100),
+    db: AsyncSession = Depends(get_db)
 ):
-    """Get permissions by resource with pagination (SuperAdmin only)"""
-    service = PermissionService()
+    """Get permissions by resource with pagination"""
+    service = PermissionService(db)
 
-    items, total, total_pages = service.get_paginated_permissions(
+    items, total, total_pages = await service.get_paginated_permissions(
         page=page,
         page_size=page_size,
         resource=resource
@@ -211,20 +216,21 @@ async def get_permissions_by_resource(
         }
     }
 
-@router.get("/search/query", dependencies=[Depends(SystemRoleCheck.require_super_admin)])
+@router.get("/search/query", dependencies=[Depends(SystemPermissionCheck.require('permissions:read'))])
 async def search_permissions(
     q: str = Query(..., min_length=1, description="Search query"),
     page: int = Query(1, ge=1),
-    page_size: int = Query(10, ge=1, le=100)
+    page_size: int = Query(10, ge=1, le=100),
+    db: AsyncSession = Depends(get_db)
 ):
     """
-    Search permissions by name or description (SuperAdmin only)
+    Search permissions by name or description
 
     Searches in permission name and description fields.
     """
-    service = PermissionService()
+    service = PermissionService(db)
 
-    items, total, total_pages = service.get_paginated_permissions(
+    items, total, total_pages = await service.get_paginated_permissions(
         page=page,
         page_size=page_size,
         search_query=q
@@ -246,12 +252,12 @@ async def search_permissions(
 
 # ==================== Metadata Operations ====================
 
-@router.get("/metadata/categories", response_model=BaseResponse, dependencies=[Depends(SystemRoleCheck.require_super_admin)])
-async def get_categories():
-    """Get all distinct permission categories (SuperAdmin only)"""
-    service = PermissionService()
+@router.get("/metadata/categories", response_model=BaseResponse, dependencies=[Depends(SystemPermissionCheck.require('permissions:read'))])
+async def get_categories(db: AsyncSession = Depends(get_db)):
+    """Get all distinct permission categories"""
+    service = PermissionService(db)
 
-    categories = service.get_categories()
+    categories = await service.get_categories()
 
     return {
         "success": True,
@@ -259,12 +265,12 @@ async def get_categories():
         "data": categories
     }
 
-@router.get("/metadata/resources", response_model=BaseResponse, dependencies=[Depends(SystemRoleCheck.require_super_admin)])
-async def get_resources():
-    """Get all distinct resources (SuperAdmin only)"""
-    service = PermissionService()
+@router.get("/metadata/resources", response_model=BaseResponse, dependencies=[Depends(SystemPermissionCheck.require('permissions:read'))])
+async def get_resources(db: AsyncSession = Depends(get_db)):
+    """Get all distinct resources"""
+    service = PermissionService(db)
 
-    resources = service.get_resources()
+    resources = await service.get_resources()
 
     return {
         "success": True,
@@ -272,12 +278,12 @@ async def get_resources():
         "data": resources
     }
 
-@router.get("/metadata/actions", response_model=BaseResponse, dependencies=[Depends(SystemRoleCheck.require_super_admin)])
-async def get_actions():
-    """Get all distinct actions (SuperAdmin only)"""
-    service = PermissionService()
+@router.get("/metadata/actions", response_model=BaseResponse, dependencies=[Depends(SystemPermissionCheck.require('permissions:read'))])
+async def get_actions(db: AsyncSession = Depends(get_db)):
+    """Get all distinct actions"""
+    service = PermissionService(db)
 
-    actions = service.get_actions()
+    actions = await service.get_actions()
 
     return {
         "success": True,
@@ -287,11 +293,12 @@ async def get_actions():
 
 # ==================== Legacy/Compatibility Endpoints ====================
 
-@router.get("/available/all", response_model=BaseResponse, dependencies=[Depends(SystemRoleCheck.require_super_admin)])
-async def get_available_permissions():
-    """Get all available permissions (SuperAdmin only) - Legacy endpoint"""
-    service = PermissionService()
+@router.get("/available/all", response_model=BaseResponse, dependencies=[Depends(SystemPermissionCheck.require('permissions:read'))])
+async def get_available_permissions(db: AsyncSession = Depends(get_db)):
+    """Get all available permissions - Legacy endpoint"""
+    service = PermissionService(db)
 
+    # sync — no DB access
     permissions = service.get_all_available_permissions()
 
     return {
@@ -300,11 +307,12 @@ async def get_available_permissions():
         "data": permissions
     }
 
-@router.get("/categories/list", response_model=BaseResponse, dependencies=[Depends(SystemRoleCheck.require_super_admin)])
-async def get_permission_categories():
-    """Get permission categories (SuperAdmin only) - Legacy endpoint"""
-    service = PermissionService()
+@router.get("/categories/list", response_model=BaseResponse, dependencies=[Depends(SystemPermissionCheck.require('permissions:read'))])
+async def get_permission_categories(db: AsyncSession = Depends(get_db)):
+    """Get permission categories - Legacy endpoint"""
+    service = PermissionService(db)
 
+    # sync — no DB access
     categories = service.get_permission_categories()
 
     return {
@@ -313,12 +321,12 @@ async def get_permission_categories():
         "data": categories
     }
 
-@router.get("/system/all", response_model=BaseResponse, dependencies=[Depends(SystemRoleCheck.require_super_admin)])
-async def get_system_permissions():
-    """Get all system permissions (SuperAdmin only) - Legacy endpoint"""
-    service = PermissionService()
+@router.get("/system/all", response_model=BaseResponse, dependencies=[Depends(SystemPermissionCheck.require('permissions:read'))])
+async def get_system_permissions(db: AsyncSession = Depends(get_db)):
+    """Get all system permissions - Legacy endpoint"""
+    service = PermissionService(db)
 
-    permissions = service.get_permissions_by_category("system")
+    permissions = await service.get_permissions_by_category("system")
 
     return {
         "success": True,
@@ -326,12 +334,12 @@ async def get_system_permissions():
         "data": permissions
     }
 
-@router.get("/application/all", response_model=BaseResponse, dependencies=[Depends(SystemRoleCheck.require_super_admin)])
-async def get_application_permissions():
-    """Get all application permissions (SuperAdmin only) - Legacy endpoint"""
-    service = PermissionService()
+@router.get("/application/all", response_model=BaseResponse, dependencies=[Depends(SystemPermissionCheck.require('permissions:read'))])
+async def get_application_permissions(db: AsyncSession = Depends(get_db)):
+    """Get all application permissions - Legacy endpoint"""
+    service = PermissionService(db)
 
-    permissions = service.get_permissions_by_category("application")
+    permissions = await service.get_permissions_by_category("application")
 
     return {
         "success": True,
@@ -339,11 +347,12 @@ async def get_application_permissions():
         "data": permissions
     }
 
-@router.post("/validate/list", response_model=BaseResponse, dependencies=[Depends(SystemRoleCheck.require_super_admin)])
-async def validate_permissions(permissions: List[str]):
-    """Validate if permissions are valid (SuperAdmin only)"""
-    service = PermissionService()
+@router.post("/validate/list", response_model=BaseResponse, dependencies=[Depends(SystemPermissionCheck.require('permissions:read'))])
+async def validate_permissions(permissions: List[str] = Body(...), db: AsyncSession = Depends(get_db)):
+    """Validate if permissions are valid"""
+    service = PermissionService(db)
 
+    # sync — operates on in-memory definitions only
     validation_result = service.validate_permissions(permissions)
 
     return {
@@ -352,11 +361,12 @@ async def validate_permissions(permissions: List[str]):
         "data": validation_result
     }
 
-@router.get("/templates/all", response_model=BaseResponse, dependencies=[Depends(SystemRoleCheck.require_super_admin)])
-async def get_permission_templates():
-    """Get permission templates for predefined roles (SuperAdmin only)"""
-    service = PermissionService()
+@router.get("/templates/all", response_model=BaseResponse, dependencies=[Depends(SystemPermissionCheck.require('permissions:read'))])
+async def get_permission_templates(db: AsyncSession = Depends(get_db)):
+    """Get permission templates for predefined roles"""
+    service = PermissionService(db)
 
+    # sync — operates on in-memory definitions only
     templates = service.get_permission_templates()
 
     return {
@@ -367,12 +377,12 @@ async def get_permission_templates():
 
 # ==================== Single-Resource Operations (must be LAST) ====================
 
-@router.get("/{permission_id}", response_model=BaseResponse, dependencies=[Depends(SystemRoleCheck.require_super_admin)])
-async def get_permission(permission_id: str):
-    """Get permission details by ID (SuperAdmin only)"""
-    service = PermissionService()
+@router.get("/{permission_id}", response_model=BaseResponse, dependencies=[Depends(SystemPermissionCheck.require('permissions:read'))])
+async def get_permission(permission_id: int, db: AsyncSession = Depends(get_db)):
+    """Get permission details by ID"""
+    service = PermissionService(db)
 
-    permission = service.get_permission_by_id(permission_id)
+    permission = await service.get_permission_by_id(permission_id)
 
     if not permission:
         raise HTTPException(
@@ -386,12 +396,12 @@ async def get_permission(permission_id: str):
         "data": permission
     }
 
-@router.put("/{permission_id}", response_model=BaseResponse, dependencies=[Depends(SystemRoleCheck.require_super_admin)])
-async def update_permission(permission_id: str, permission: PermissionUpdate):
-    """Update permission (SuperAdmin only)"""
-    service = PermissionService()
+@router.put("/{permission_id}", response_model=BaseResponse, dependencies=[Depends(SystemPermissionCheck.require('permissions:update'))])
+async def update_permission(permission_id: int, permission: PermissionUpdate, db: AsyncSession = Depends(get_db)):
+    """Update permission"""
+    service = PermissionService(db)
 
-    existing_permission = service.get_permission_by_id(permission_id)
+    existing_permission = await service.get_permission_by_id(permission_id)
     if not existing_permission:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -399,13 +409,13 @@ async def update_permission(permission_id: str, permission: PermissionUpdate):
         )
 
     if permission.name and permission.name != existing_permission.get('name'):
-        if service.permission_exists(permission.name, exclude_id=permission_id):
+        if await service.permission_exists(permission.name, exclude_id=permission_id):
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
                 detail=f"Permission '{permission.name}' already exists"
             )
 
-    success = service.update_permission(permission_id, permission.model_dump(exclude_unset=True))
+    success = await service.update_permission(permission_id, permission.model_dump(exclude_unset=True))
 
     if not success:
         raise HTTPException(
@@ -418,19 +428,19 @@ async def update_permission(permission_id: str, permission: PermissionUpdate):
         "message": "Permission updated successfully"
     }
 
-@router.delete("/{permission_id}", response_model=BaseResponse, dependencies=[Depends(SystemRoleCheck.require_super_admin)])
-async def delete_permission(permission_id: str):
-    """Soft delete permission (SuperAdmin only)"""
-    service = PermissionService()
+@router.delete("/{permission_id}", response_model=BaseResponse, dependencies=[Depends(SystemPermissionCheck.require('permissions:delete'))])
+async def delete_permission(permission_id: int, db: AsyncSession = Depends(get_db)):
+    """Soft delete permission"""
+    service = PermissionService(db)
 
-    permission = service.get_permission_by_id(permission_id)
+    permission = await service.get_permission_by_id(permission_id)
     if not permission:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Permission not found"
         )
 
-    success = service.soft_delete_permission(permission_id)
+    success = await service.soft_delete_permission(permission_id)
 
     if not success:
         raise HTTPException(
@@ -443,25 +453,25 @@ async def delete_permission(permission_id: str):
         "message": "Permission soft deleted successfully"
     }
 
-@router.put("/{permission_id}/restore", response_model=BaseResponse, dependencies=[Depends(SystemRoleCheck.require_super_admin)])
-async def restore_permission(permission_id: str):
-    """Restore a soft-deleted permission (SuperAdmin only)"""
-    service = PermissionService()
+@router.put("/{permission_id}/restore", response_model=BaseResponse, dependencies=[Depends(SystemPermissionCheck.require('permissions:restore'))])
+async def restore_permission(permission_id: int, db: AsyncSession = Depends(get_db)):
+    """Restore a soft-deleted permission"""
+    service = PermissionService(db)
 
-    permission = service.get_permission_by_id(permission_id, include_deleted=True)
+    permission = await service.get_permission_by_id(permission_id, include_deleted=True)
     if not permission:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Permission not found"
         )
 
-    if not permission.get('is_deleted', False):
+    if permission.get('is_active', True):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Permission is not deleted"
         )
 
-    success = service.restore_permission(permission_id)
+    success = await service.restore_permission(permission_id)
 
     if not success:
         raise HTTPException(

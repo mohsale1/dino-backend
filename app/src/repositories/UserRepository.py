@@ -1,70 +1,160 @@
+"""
+UserRepository — application_users only.
+
+Handles CRUD and query operations for ApplicationUser records.
+System users (dino-system service) are NOT managed here.
+"""
+
+from typing import List, Optional, Tuple
+
+from sqlalchemy import and_, func, or_, select, update
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from src.base.BaseModel import row_to_dict
 from src.base.BaseRepository import BaseRepository
-from google.cloud import firestore
-from typing import Dict, Any
-from datetime import datetime, timezone
-import random
+from src.models.User import ApplicationUser
+
 
 class UserRepository(BaseRepository):
-    """User repository for both system and application users"""
-    
-    def __init__(self, collection_name: str):
-        """
-        Initialize user repository
-        Args:
-            collection_name: Either 'system_users' or 'application_users'
-        """
-        super().__init__(collection_name)
-    
-    def generate_system_user_id(self) -> str:
-        """
-        Generate a unique 4-digit ID for system users using a Firestore
-        transaction to atomically check-and-reserve the ID, eliminating
-        any race condition between concurrent registrations.
-        Returns a string like '1000', '1001', etc.
-        """
-        max_attempts = 100
+    """Repository for application-level workspace users."""
 
-        for _ in range(max_attempts):
-            candidate_id = str(random.randint(1000, 9999))
-            doc_ref = self.collection.document(candidate_id)
+    def __init__(self, db: AsyncSession) -> None:
+        super().__init__(ApplicationUser, db)
 
-            @firestore.transactional
-            def _try_reserve(transaction, ref):
-                snapshot = ref.get(transaction=transaction)
-                if snapshot.exists:
-                    return None
-                # Reserve the slot with a sentinel so no other transaction
-                # can claim the same ID concurrently.
-                transaction.set(ref, {'_reserved': True})
-                return ref.id
+    # ------------------------------------------------------------------
+    # Scoped list queries
+    # ------------------------------------------------------------------
 
-            transaction = self.db.transaction()
-            reserved_id = _try_reserve(transaction, doc_ref)
-            if reserved_id is not None:
-                return reserved_id
+    async def get_by_workspace(
+        self,
+        workspace_id,
+        include_deleted: bool = False,
+    ) -> List[dict]:
+        """Return all users belonging to a workspace."""
+        return await self.get_all(
+            filters={"workspace_id": workspace_id},
+            include_deleted=include_deleted,
+        )
 
-        raise Exception("Unable to generate unique 4-digit user ID. All IDs may be taken.")
-    
-    def create_system_user(self, data: Dict[str, Any]) -> Dict[str, Any]:
+    async def get_by_persona(
+        self,
+        persona_id,
+        include_deleted: bool = False,
+    ) -> List[dict]:
+        """Return all users belonging to a persona."""
+        return await self.get_all(
+            filters={"persona_id": persona_id},
+            include_deleted=include_deleted,
+        )
+
+    async def get_by_role(
+        self,
+        role_id,
+        include_deleted: bool = False,
+    ) -> List[dict]:
+        """Return all users assigned to a role."""
+        return await self.get_all(
+            filters={"role_id": role_id},
+            include_deleted=include_deleted,
+        )
+
+    # ------------------------------------------------------------------
+    # Paginated / filtered query
+    # ------------------------------------------------------------------
+
+    async def get_paginated_users(
+        self,
+        workspace_id=None,
+        persona_id=None,
+        role_id=None,
+        search_query: Optional[str] = None,
+        page: int = 1,
+        page_size: int = 10,
+        include_deleted: bool = False,
+        order_by: str = "created_at",
+        order_direction: str = "desc",
+    ) -> Tuple[List[dict], int, int]:
         """
-        Create a new system user with a 4-digit ID.
-        generate_system_user_id() atomically reserves the document slot;
-        this method then writes the full user payload over it.
-        """
-        # Atomically reserve a unique 4-digit ID
-        user_id = self.generate_system_user_id()
-        
-        now = datetime.now(timezone.utc)
+        Paginated user listing with optional filters and full-text search.
 
-        doc_ref = self.collection.document(user_id)
-        data['id'] = user_id
-        data['created_at'] = now.isoformat()
-        data['updated_at'] = now.isoformat()
-        if 'is_active' not in data:
-            data['is_active'] = True
-        if 'is_deleted' not in data:
-            data['is_deleted'] = False
-        
-        # Overwrite the reservation sentinel with the real user document
-        doc_ref.set(data)
-        return data
+        Returns
+        -------
+        (items, total_count, total_pages)
+        """
+        clauses = []
+
+        if not include_deleted:
+            clauses.append(ApplicationUser.is_active == True)  # noqa: E712
+
+        if workspace_id is not None:
+            clauses.append(ApplicationUser.workspace_id == workspace_id)
+
+        if persona_id is not None:
+            clauses.append(ApplicationUser.persona_id == persona_id)
+
+        if role_id is not None:
+            clauses.append(ApplicationUser.role_id == role_id)
+
+        if search_query:
+            q = search_query.strip()
+            clauses.append(
+                or_(
+                    ApplicationUser.email.ilike(f"%{q}%"),
+                    ApplicationUser.first_name.ilike(f"%{q}%"),
+                    ApplicationUser.last_name.ilike(f"%{q}%"),
+                )
+            )
+
+        where_expr = and_(*clauses) if clauses else None
+
+        # COUNT query
+        count_stmt = select(func.count()).select_from(ApplicationUser)
+        if where_expr is not None:
+            count_stmt = count_stmt.where(where_expr)
+        total_count: int = (await self.db.execute(count_stmt)).scalar_one()
+
+        total_pages = max(1, (total_count + page_size - 1) // page_size)
+
+        # DATA query
+        data_stmt = select(ApplicationUser)
+        if where_expr is not None:
+            data_stmt = data_stmt.where(where_expr)
+
+        order_expr = self._order_column(order_by, order_direction)
+        if order_expr is not None:
+            data_stmt = data_stmt.order_by(order_expr)
+
+        data_stmt = data_stmt.limit(page_size).offset((page - 1) * page_size)
+        result = await self.db.execute(data_stmt)
+        items = [row_to_dict(row) for row in result.scalars().all()]
+
+        return items, total_count, total_pages
+
+    # ------------------------------------------------------------------
+    # Existence check
+    # ------------------------------------------------------------------
+
+    async def email_exists(
+        self,
+        email: str,
+        exclude_id=None,
+    ) -> bool:
+        """
+        Return True when an active user with the given email already exists.
+        Pass *exclude_id* to allow the current user's own email through (update flow).
+        """
+        clauses = [
+            ApplicationUser.email == email.lower(),
+            ApplicationUser.is_active == True,  # noqa: E712
+        ]
+
+        if exclude_id is not None:
+            clauses.append(ApplicationUser.id != exclude_id)
+
+        stmt = (
+            select(func.count())
+            .select_from(ApplicationUser)
+            .where(and_(*clauses))
+        )
+        count: int = (await self.db.execute(stmt)).scalar_one()
+        return count > 0

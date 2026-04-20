@@ -1,51 +1,53 @@
-from datetime import datetime, timezone
-from typing import Optional
+"""
+BaseModel — thin shim providing row_to_dict() and sanitize_dict() utilities
+for converting SQLAlchemy ORM row objects to plain Python dicts.
+"""
 
-class BaseModel:
-    """Base model with common fields for all models"""
-    
-    def __init__(self):
-        self.id: Optional[str] = None
-        self.created_at: datetime = datetime.now(timezone.utc)
-        self.updated_at: datetime = datetime.now(timezone.utc)
-        self.is_active: bool = True
-        self.is_deleted: bool = False
-        self.deleted_at: Optional[datetime] = None
-        self.restored_at: Optional[datetime] = None
-    
-    def to_dict(self) -> dict:
-        """Convert model to dictionary"""
-        data = {}
-        for key, value in self.__dict__.items():
-            if isinstance(value, datetime):
-                data[key] = value.isoformat()
-            else:
-                data[key] = value
-        return data
-    
-    @classmethod
-    def from_dict(cls, data: dict):
-        """Create model instance from dictionary"""
-        instance = cls()
-        for key, value in data.items():
-            if hasattr(instance, key):
-                setattr(instance, key, value)
-        return instance
-    
-    def update_timestamp(self):
-        """Update the updated_at timestamp"""
-        self.updated_at = datetime.now(timezone.utc)
-    
-    def soft_delete(self):
-        """Mark as soft deleted"""
-        self.is_deleted = True
-        self.is_active = False
-        self.deleted_at = datetime.now(timezone.utc)
-        self.update_timestamp()
-    
-    def restore(self):
-        """Restore from soft delete"""
-        self.is_deleted = False
-        self.is_active = True
-        self.restored_at = datetime.now(timezone.utc)
-        self.update_timestamp()
+from datetime import datetime
+from decimal import Decimal
+from typing import Optional, Set
+
+
+def row_to_dict(row) -> dict:
+    """
+    Convert a SQLAlchemy ORM instance to a plain dict.
+
+    Type coercions applied:
+      - datetime    -> ISO-8601 string (isoformat())
+      - Decimal     -> float
+      - everything else passes through as-is
+    """
+    result = {}
+    for column in row.__table__.columns:
+        value = getattr(row, column.name)
+        if isinstance(value, datetime):
+            value = value.isoformat()
+        elif isinstance(value, Decimal):
+            value = float(value)
+        result[column.name] = value
+    return result
+
+
+# Fields that must never appear in outbound API responses
+SENSITIVE_FIELDS: frozenset = frozenset(["password_hash", "password", "reset_token"])
+
+
+def sanitize_dict(data: dict, extra_fields: Optional[Set[str]] = None) -> dict:
+    """
+    Remove sensitive keys from *data* in-place and return the dict.
+
+    Args:
+        data:         The dictionary to sanitize (mutated in-place).
+        extra_fields: Additional field names to strip beyond SENSITIVE_FIELDS.
+
+    Returns:
+        The same dict with sensitive keys removed.
+    """
+    fields_to_remove = SENSITIVE_FIELDS
+    if extra_fields:
+        fields_to_remove = SENSITIVE_FIELDS | extra_fields
+
+    for field in fields_to_remove:
+        data.pop(field, None)
+
+    return data

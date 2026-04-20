@@ -1,503 +1,555 @@
+import asyncio
 from typing import Dict, Any, List, Optional
 from datetime import datetime, timezone, timedelta
-from src.application.services.Order import OrderService
-from src.application.services.Item import ItemService
-from src.application.services.Table import TableService
-from src.application.services.Category import CategoryService
-from src.repositories.OrganizationRepository import OrganizationRepository
+
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from src.repositories.OrderRepository import OrderRepository
+from src.repositories.ItemRepository import ItemRepository
+from src.repositories.TableRepository import TableRepository
+from src.repositories.CategoryRepository import CategoryRepository
+from src.repositories.PersonaRepository import PersonaRepository
+
 
 class DashboardService:
     """Dashboard service to aggregate data from multiple sources"""
-    
-    def __init__(self):
-        self.order_service = OrderService()
-        self.item_service = ItemService()
-        self.table_service = TableService()
-        self.category_service = CategoryService()
-        self.org_repository = OrganizationRepository()
-    
-    def get_venue_dashboard(
-        self, 
+
+    def __init__(self, db: AsyncSession):
+        self.db = db
+        self.order_repo = OrderRepository(db)
+        self.item_repo = ItemRepository(db)
+        self.table_repo = TableRepository(db)
+        self.category_repo = CategoryRepository(db)
+        self.org_repo = PersonaRepository(db)
+
+    # ---------------------------------------------------------------------------
+    # Date parsing helper
+    # ---------------------------------------------------------------------------
+
+    def _parse_date(self, value: Optional[str], end_of_day: bool = False) -> Optional[datetime]:
+        """
+        Convert an Optional[str] ISO date/datetime to an Optional[datetime].
+
+        Returns None if value is None or empty.
+        When end_of_day=True the boundary is set to 23:59:59.999999 UTC only
+        when the input string carries no time component (length <= 10), so that
+        an explicit datetime string such as "2024-01-31T12:00:00" is never
+        silently overwritten.
+        """
+        if not value:
+            return None
+
+        from datetime import date as date_type
+
+        stripped = value.strip()
+        value = stripped.replace('Z', '+00:00')
+        try:
+            dt = datetime.fromisoformat(value)
+        except ValueError:
+            dt = datetime.combine(date_type.fromisoformat(value[:10]), datetime.min.time())
+
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+
+        # Only apply end-of-day when the caller supplied a plain date (no time part).
+        if end_of_day and len(stripped) <= 10:
+            dt = dt.replace(hour=23, minute=59, second=59, microsecond=999999)
+
+        return dt
+
+    async def get_venue_dashboard(
+        self,
         workspace_id: str,
-        organization_id: Optional[str] = None,
+        persona_id: Optional[str] = None,
         start_date: Optional[str] = None,
         end_date: Optional[str] = None
     ) -> Dict[str, Any]:
-        """
-        Get comprehensive dashboard data for a venue
-        
-        Args:
-            workspace_id: Workspace ID
-            organization_id: Optional organization ID for filtering
-            start_date: Optional start date for filtering (ISO format)
-            end_date: Optional end date for filtering (ISO format)
-        
-        Returns:
-            Dictionary containing all dashboard data
-        """
-        
-        # Get all orders for the workspace
-        orders = self._get_orders(workspace_id, organization_id, start_date, end_date)
-        
-        # Get all items for the workspace
-        items = self.item_service.get_items_by_workspace(workspace_id)
-        
-        # Get all tables for the workspace
-        tables = self.table_service.get_tables_by_workspace(workspace_id)
-        
-        # Get all categories for the workspace
-        categories = self.category_service.get_categories_by_workspace(workspace_id)
-        
-        # Calculate statistics
+        """Get comprehensive dashboard data for a venue"""
+        start_dt = self._parse_date(start_date)
+        end_dt = self._parse_date(end_date, end_of_day=True)
+
+        # Use SQL COUNT queries for scalar totals — avoids loading every row into
+        # memory just to call len() on the result list.
+        from sqlalchemy import select, func
+        from src.models.Item import Item
+        from src.models.Table import Table
+
+        orders, item_count, table_count = await asyncio.gather(
+            self.order_repo.get_orders_for_analytics(workspace_id, persona_id, start_dt, end_dt),
+            self.db.scalar(
+                select(func.count()).where(Item.workspace_id == workspace_id, Item.is_active == True)  # noqa: E712
+            ),
+            self.db.scalar(
+                select(func.count()).where(Table.workspace_id == workspace_id, Table.is_active == True)  # noqa: E712
+            ),
+        )
+
+        # We still need the full item/table/category rows for the analytics and
+        # status breakdowns that follow, but we fetch them only once and reuse.
+        items, tables, categories = await asyncio.gather(
+            self.item_repo.get_by_workspace(workspace_id),
+            self.table_repo.get_by_workspace(workspace_id),
+            self.category_repo.get_by_workspace(workspace_id),
+        )
+
         stats = self._calculate_stats(orders, items, tables, categories)
-        
-        # Get analytics data
         analytics = self._calculate_analytics(orders, items, categories)
-        
-        # Get recent activity
         recent_activity = self._get_recent_activity(orders)
-        
-        # Get table statuses
         table_statuses = self._get_table_statuses(tables)
-        
+
         return {
-            "success": True,
-            "data": {
-                "stats": stats,
-                "analytics": analytics,
-                "recent_activity": recent_activity,
-                "table_statuses": table_statuses,
-                "summary": {
-                    "total_orders": len(orders),
-                    "total_revenue": stats.get("total_revenue", 0),
-                    "total_tables": len(tables),
-                    "total_menu_items": len(items),
-                    "active_menu_items": len([i for i in items if i.get("is_available", False)]),
-                    "todays_revenue": stats.get("todays_revenue", 0),
-                    "todays_orders": stats.get("todays_orders", 0),
-                    "avg_order_value": stats.get("avg_order_value", 0),
-                    "table_occupancy_rate": stats.get("table_occupancy_rate", 0),
-                    "occupied_tables": len([t for t in tables if t.get("status") == "occupied"]),
-                    "pending_orders": len([o for o in orders if o.get("status") == "pending"]),
-                    "preparing_orders": len([o for o in orders if o.get("status") == "preparing"]),
-                    "ready_orders": len([o for o in orders if o.get("status") == "ready"]),
-                    "active_orders": len([o for o in orders if o.get("status") in ["pending", "preparing", "ready"]])
+            'success': True,
+            'data': {
+                'stats': stats,
+                'analytics': analytics,
+                'recent_activity': recent_activity,
+                'table_statuses': table_statuses,
+                'summary': {
+                    'total_orders': len(orders),
+                    'total_revenue': stats.get('total_revenue', 0),
+                    'total_tables': table_count or 0,
+                    'total_menu_items': item_count or 0,
+                    'active_menu_items': len([i for i in items if i.get('is_available')]),
+                    'todays_revenue': stats.get('todays_revenue', 0),
+                    'todays_orders': stats.get('todays_orders', 0),
+                    'avg_order_value': stats.get('avg_order_value', 0),
+                    'table_occupancy_rate': stats.get('table_occupancy_rate', 0),
+                    'occupied_tables': len([t for t in tables if t.get('status') == 'occupied']),
+                    'pending_orders': len([o for o in orders if o.get('status') == 'pending']),
+                    'preparing_orders': len([o for o in orders if o.get('status') == 'preparing']),
+                    'ready_orders': len([o for o in orders if o.get('status') == 'ready']),
+                    'active_orders': len([o for o in orders if o.get('status') in ['pending', 'preparing', 'ready']])
                 }
             }
         }
-    
-    def _get_orders(
+
+    async def get_stats_only(
         self,
         workspace_id: str,
-        organization_id: Optional[str] = None,
+        persona_id: Optional[str] = None,
         start_date: Optional[str] = None,
         end_date: Optional[str] = None
-    ) -> List[Dict[str, Any]]:
-        """Get orders with optional date filters applied in-memory"""
-        filters = {"workspace_id": workspace_id}
+    ) -> Dict[str, Any]:
+        """Get only the stats portion of the dashboard.
 
-        if organization_id:
-            filters["organization_id"] = organization_id
+        Uses SQL COUNT queries for item/table/category totals — avoids loading
+        every row into memory when only scalar counts are needed.
+        """
+        from sqlalchemy import select, func
+        from src.models.Item import Item
+        from src.models.Table import Table
+        from src.models.Category import Category
 
-        orders, _, _ = self.order_service.get_paginated(
-            page=1,
-            page_size=1000,
-            filters=filters,
-            order_by="created_at",
-            order_direction="desc"
+        start_dt = self._parse_date(start_date)
+        end_dt = self._parse_date(end_date, end_of_day=True)
+
+        (
+            orders,
+            total_categories,
+            active_items,
+            total_tables,
+            occupied_tables,
+        ) = await asyncio.gather(
+            self.order_repo.get_orders_for_analytics(workspace_id, persona_id, start_dt, end_dt),
+            self.db.scalar(
+                select(func.count()).where(
+                    Category.workspace_id == workspace_id,
+                    Category.is_active == True,  # noqa: E712
+                )
+            ),
+            self.db.scalar(
+                select(func.count()).where(
+                    Item.workspace_id == workspace_id,
+                    Item.is_active == True,  # noqa: E712
+                    Item.is_available == True,  # noqa: E712
+                )
+            ),
+            self.db.scalar(
+                select(func.count()).where(
+                    Table.workspace_id == workspace_id,
+                    Table.is_active == True,  # noqa: E712
+                )
+            ),
+            self.db.scalar(
+                select(func.count()).where(
+                    Table.workspace_id == workspace_id,
+                    Table.is_active == True,  # noqa: E712
+                    Table.status == "occupied",
+                )
+            ),
         )
 
-        if not (start_date or end_date):
-            return orders
+        total_categories = total_categories or 0
+        active_items = active_items or 0
+        total_tables = total_tables or 0
+        occupied_tables = occupied_tables or 0
 
-        start_dt = self._parse_date_boundary(start_date, end_of_day=False) if start_date else None
-        end_dt   = self._parse_date_boundary(end_date,   end_of_day=True)  if end_date   else None
+        # Revenue / order calculations (mirrors _calculate_stats logic).
+        total_revenue = sum(
+            order.get("total_amount", 0)
+            for order in orders
+            if order.get("status") != "cancelled"
+        )
 
-        filtered_orders = []
-        for order in orders:
-            order_date = self._get_order_date(order)
-            if order_date is None:
-                continue
-            if start_dt and order_date < start_dt:
-                continue
-            if end_dt and order_date > end_dt:
-                continue
-            filtered_orders.append(order)
-
-        return filtered_orders
-
-    
-    def _calculate_stats(
-        self, 
-        orders: List[Dict[str, Any]], 
-        items: List[Dict[str, Any]], 
-        tables: List[Dict[str, Any]],
-        categories: List[Dict[str, Any]]
-    ) -> Dict[str, Any]:
-        """Calculate dashboard statistics"""
-        
-        # Calculate total revenue
-        total_revenue = sum(order.get("total_amount", 0) for order in orders)
-        
-        # Calculate today's stats using timezone-aware UTC date
         today = datetime.now(timezone.utc).date()
-        todays_orders = []
-        todays_revenue = 0
-        
+        todays_orders: List[Dict[str, Any]] = []
+        todays_revenue = 0.0
+
         for order in orders:
+            if order.get("status") == "cancelled":
+                continue
             order_date = self._get_order_date(order)
             if order_date is None:
                 continue
-
             if order_date.date() == today:
                 todays_orders.append(order)
                 todays_revenue += order.get("total_amount", 0)
-        
-        # Calculate average order value
-        avg_order_value = total_revenue / len(orders) if orders else 0
-        
-        # Calculate table occupancy rate using correct 'status' field
-        occupied_tables = len([t for t in tables if t.get("status") == "occupied"])
-        table_occupancy_rate = (occupied_tables / len(tables) * 100) if tables else 0
-        
+
+        non_cancelled = [o for o in orders if o.get("status") != "cancelled"]
+        avg_order_value = total_revenue / len(non_cancelled) if non_cancelled else 0
+        table_occupancy_rate = (occupied_tables / total_tables * 100) if total_tables else 0
+
         return {
             "total_revenue": round(total_revenue, 2),
             "todays_revenue": round(todays_revenue, 2),
             "todays_orders": len(todays_orders),
             "avg_order_value": round(avg_order_value, 2),
             "table_occupancy_rate": round(table_occupancy_rate, 2),
-            "total_categories": len(categories),
-            "active_items": len([i for i in items if i.get("is_available", False)])
+            "total_categories": total_categories,
+            "active_items": active_items,
         }
-    
+
+    async def get_analytics_only(
+        self,
+        workspace_id: str,
+        persona_id: Optional[str] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """Get only the analytics portion of the dashboard"""
+        start_dt = self._parse_date(start_date)
+        end_dt = self._parse_date(end_date, end_of_day=True)
+
+        orders, items, categories = await asyncio.gather(
+            self.order_repo.get_orders_for_analytics(workspace_id, persona_id, start_dt, end_dt),
+            self.item_repo.get_by_workspace(workspace_id),
+            self.category_repo.get_by_workspace(workspace_id),
+        )
+        return self._calculate_analytics(orders, items, categories)
+
+    # ---------------------------------------------------------------------------
+    # Private sync calculation methods — operate on already-fetched Python lists
+    # ---------------------------------------------------------------------------
+
+    def _calculate_stats(
+        self,
+        orders: List[Dict[str, Any]],
+        items: List[Dict[str, Any]],
+        tables: List[Dict[str, Any]],
+        categories: List[Dict[str, Any]]
+    ) -> Dict[str, Any]:
+        """Calculate dashboard statistics. Cancelled orders are excluded from revenue."""
+        # Exclude cancelled orders from revenue totals
+        total_revenue = sum(
+            order.get('total_amount', 0)
+            for order in orders
+            if order.get('status') != 'cancelled'
+        )
+
+        today = datetime.now(timezone.utc).date()
+        todays_orders: List[Dict[str, Any]] = []
+        todays_revenue = 0.0
+
+        for order in orders:
+            if order.get('status') == 'cancelled':
+                continue
+            order_date = self._get_order_date(order)
+            if order_date is None:
+                continue
+            if order_date.date() == today:
+                todays_orders.append(order)
+                todays_revenue += order.get('total_amount', 0)
+
+        # Average order value: denominator is non-cancelled orders only.
+        non_cancelled = [o for o in orders if o.get('status') != 'cancelled']
+        avg_order_value = total_revenue / len(non_cancelled) if non_cancelled else 0
+
+        occupied_tables = len([t for t in tables if t.get('status') == 'occupied'])
+        table_occupancy_rate = (occupied_tables / len(tables) * 100) if tables else 0
+
+        return {
+            'total_revenue': round(total_revenue, 2),
+            'todays_revenue': round(todays_revenue, 2),
+            'todays_orders': len(todays_orders),
+            'avg_order_value': round(avg_order_value, 2),
+            'table_occupancy_rate': round(table_occupancy_rate, 2),
+            'total_categories': len(categories),
+            'active_items': len([i for i in items if i.get('is_available', False)])
+        }
+
     def _calculate_analytics(
-        self, 
-        orders: List[Dict[str, Any]], 
+        self,
+        orders: List[Dict[str, Any]],
         items: List[Dict[str, Any]],
         categories: List[Dict[str, Any]]
     ) -> Dict[str, Any]:
         """Calculate analytics data"""
-        
-        # Revenue trend (last 30 days)
-        revenue_trend = self._calculate_revenue_trend(orders)
-        
-        # Order status breakdown
-        order_status_breakdown = self._calculate_order_status_breakdown(orders)
-        
-        # Popular items
-        popular_items = self._calculate_popular_items(orders, items)
-        
-        # Category performance
-        category_performance = self._calculate_category_performance(orders, items, categories)
-        
-        # Payment methods distribution
-        payment_methods = self._calculate_payment_methods(orders)
-        
-        # Peak hours
-        peak_hours = self._calculate_peak_hours(orders)
-        
         return {
-            "revenue_trend": revenue_trend,
-            "order_status_breakdown": order_status_breakdown,
-            "popular_items": popular_items,
-            "category_performance": category_performance,
-            "payment_methods": payment_methods,
-            "peak_hours": peak_hours
+            'revenue_trend': self._calculate_revenue_trend(orders),
+            'order_status_breakdown': self._calculate_order_status_breakdown(orders),
+            'popular_items': self._calculate_popular_items(orders, items),
+            'category_performance': self._calculate_category_performance(orders, items, categories),
+            'payment_methods': self._calculate_payment_methods(orders),
+            'peak_hours': self._calculate_peak_hours(orders)
         }
-    
+
     def _calculate_revenue_trend(self, orders: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """Calculate revenue trend for last 30 days"""
-        trend = []
+        """Calculate revenue trend for last 30 days (excludes cancelled orders).
+
+        Pre-groups orders by date into a dict first so the inner lookup is O(1)
+        per day rather than O(N) — overall complexity drops from O(30×N) to O(N).
+        """
         today = datetime.now(timezone.utc).date()
-        
+
+        # Build a date-keyed dict: date -> {revenue, orders}
+        by_date: Dict[Any, Dict[str, Any]] = {}
+        for order in orders:
+            if order.get('status') == 'cancelled':
+                continue
+            order_date = self._get_order_date(order)
+            if order_date is None:
+                continue
+            d = order_date.date()
+            if d not in by_date:
+                by_date[d] = {'revenue': 0.0, 'orders': 0}
+            by_date[d]['revenue'] += order.get('total_amount', 0)
+            by_date[d]['orders'] += 1
+
+        trend = []
         for i in range(29, -1, -1):
             date = today - timedelta(days=i)
-            day_orders = []
-            for o in orders:
-                order_date = self._get_order_date(o)
-                if order_date is None:
-                    continue
-                if order_date.date() == date:
-                    day_orders.append(o)
-            
-            revenue = sum(o.get("total_amount", 0) for o in day_orders)
-            
+            day = by_date.get(date, {'revenue': 0.0, 'orders': 0})
             trend.append({
-                "date": date.isoformat(),
-                "period": date.strftime("%b %d"),
-                "revenue": round(revenue, 2),
-                "orders": len(day_orders)
+                'date': date.isoformat(),
+                'period': date.strftime('%b %d'),
+                'revenue': round(day['revenue'], 2),
+                'orders': day['orders']
             })
-        
+
         return trend
-    
+
     def _calculate_order_status_breakdown(self, orders: List[Dict[str, Any]]) -> Dict[str, int]:
         """Calculate order status breakdown"""
-        breakdown = {
-            "pending": 0,
-            "preparing": 0,
-            "ready": 0,
-            "completed": 0,
-            "cancelled": 0
-        }
-        
+        breakdown = {'pending': 0, 'preparing': 0, 'ready': 0, 'completed': 0, 'cancelled': 0}
         for order in orders:
-            status = order.get("status", "pending")
-            if status in breakdown:
-                breakdown[status] += 1
-        
+            order_status = order.get('status', 'pending')
+            if order_status in breakdown:
+                breakdown[order_status] += 1
         return breakdown
-    
+
     def _calculate_popular_items(
-        self, 
-        orders: List[Dict[str, Any]], 
+        self,
+        orders: List[Dict[str, Any]],
         items: List[Dict[str, Any]]
     ) -> List[Dict[str, Any]]:
-        """Calculate popular items based on order data"""
-        
-        # Create item lookup
-        item_lookup = {item.get("id"): item for item in items}
-        
-        # Count item orders and revenue
-        item_stats = {}
-        
+        """Calculate popular items based on order data (excludes cancelled orders).
+
+        TODO: replace with a SQL GROUP BY query on order_items joined to items
+              so the aggregation happens in the database rather than in Python.
+
+        Uses a pre-built item_stats dict (O(total order-lines)) instead of an
+        O(N×M) nested loop.
+        """
+        item_lookup = {item.get('id'): item for item in items}
+        item_stats: Dict[str, Dict[str, Any]] = {}
+
         for order in orders:
-            order_items = order.get("items", [])
-            for order_item in order_items:
-                item_id = order_item.get("item_id")
+            if order.get('status') == 'cancelled':
+                continue
+            for order_item in order.get('items', []):
+                item_id = order_item.get('item_id')
                 if item_id and item_id in item_lookup:
                     if item_id not in item_stats:
-                        item_stats[item_id] = {
-                            "orders": 0,
-                            "revenue": 0,
-                            "quantity": 0
-                        }
-                    
-                    item_stats[item_id]["orders"] += 1
-                    item_stats[item_id]["quantity"] += order_item.get("quantity", 1)
-                    item_stats[item_id]["revenue"] += order_item.get("total_price", 0)
-        
-        # Build popular items list
+                        item_stats[item_id] = {'orders': 0, 'revenue': 0.0, 'quantity': 0}
+                    item_stats[item_id]['orders'] += 1
+                    item_stats[item_id]['quantity'] += order_item.get('quantity', 1)
+                    item_stats[item_id]['revenue'] += order_item.get('total_price', 0)
+
         popular = []
         for item_id, stats in item_stats.items():
             item = item_lookup[item_id]
             popular.append({
-                "id": item_id,
-                "name": item.get("name", "Unknown"),
-                "category": item.get("category_name", "Uncategorized"),
-                "orders": stats["orders"],
-                "revenue": round(stats["revenue"], 2),
-                "quantity": stats["quantity"],
-                "rating": item.get("rating", 4.0)
+                'id': item_id,
+                'name': item.get('name', 'Unknown'),
+                'category': item.get('category_name', 'Uncategorized'),
+                'orders': stats['orders'],
+                'revenue': round(stats['revenue'], 2),
+                'quantity': stats['quantity'],
+                'rating': item.get('rating', 4.0)
             })
-        
-        # Sort by revenue and return top 10
-        popular.sort(key=lambda x: x["revenue"], reverse=True)
+
+        popular.sort(key=lambda x: x['revenue'], reverse=True)
         return popular[:10]
-    
+
     def _calculate_category_performance(
-        self, 
-        orders: List[Dict[str, Any]], 
+        self,
+        orders: List[Dict[str, Any]],
         items: List[Dict[str, Any]],
         categories: List[Dict[str, Any]]
     ) -> List[Dict[str, Any]]:
-        """Calculate category performance"""
-        
-        # Create category lookup
-        category_lookup = {cat.get("id"): cat for cat in categories}
-        
-        # Create item to category mapping
-        item_to_category = {}
-        for item in items:
-            category_id = item.get("category_id")
-            if category_id:
-                item_to_category[item.get("id")] = category_id
-        
-        # Calculate category stats
-        category_stats = {}
-        
+        """Calculate category performance (excludes cancelled orders).
+
+        TODO: replace with a SQL GROUP BY query on order_items joined to items
+              and categories so the aggregation happens in the database.
+
+        Uses pre-built lookup dicts (O(total order-lines)) instead of an
+        O(N×M) nested loop.
+        """
+        category_lookup = {cat.get('id'): cat for cat in categories}
+        item_to_category = {
+            item.get('id'): item.get('category_id')
+            for item in items
+            if item.get('category_id')
+        }
+
+        category_stats: Dict[str, Dict[str, Any]] = {}
         for order in orders:
-            order_items = order.get("items", [])
-            for order_item in order_items:
-                item_id = order_item.get("item_id")
-                if item_id in item_to_category:
-                    category_id = item_to_category[item_id]
-                    
+            if order.get('status') == 'cancelled':
+                continue
+            for order_item in order.get('items', []):
+                item_id = order_item.get('item_id')
+                category_id = item_to_category.get(item_id)
+                if category_id:
                     if category_id not in category_stats:
-                        category_stats[category_id] = {
-                            "orders": 0,
-                            "revenue": 0
-                        }
-                    
-                    category_stats[category_id]["orders"] += 1
-                    category_stats[category_id]["revenue"] += order_item.get("total_price", 0)
-        
-        # Build category performance list
+                        category_stats[category_id] = {'orders': 0, 'revenue': 0.0}
+                    category_stats[category_id]['orders'] += 1
+                    category_stats[category_id]['revenue'] += order_item.get('total_price', 0)
+
+        total_revenue = sum(s['revenue'] for s in category_stats.values())
         performance = []
-        total_revenue = sum(stats["revenue"] for stats in category_stats.values())
-        
         for category_id, stats in category_stats.items():
             if category_id in category_lookup:
                 category = category_lookup[category_id]
-                percentage = (stats["revenue"] / total_revenue * 100) if total_revenue > 0 else 0
-                
+                percentage = (stats['revenue'] / total_revenue * 100) if total_revenue > 0 else 0
                 performance.append({
-                    "category": category.get("name", "Unknown"),
-                    "orders": stats["orders"],
-                    "revenue": round(stats["revenue"], 2),
-                    "percentage": round(percentage, 1)
+                    'category': category.get('name', 'Unknown'),
+                    'orders': stats['orders'],
+                    'revenue': round(stats['revenue'], 2),
+                    'percentage': round(percentage, 1)
                 })
-        
-        # Sort by revenue
-        performance.sort(key=lambda x: x["revenue"], reverse=True)
+
+        performance.sort(key=lambda x: x['revenue'], reverse=True)
         return performance
-    
+
     def _calculate_payment_methods(self, orders: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """Calculate payment methods distribution"""
-        
-        methods = {}
-        total_revenue = 0
-        
+        """Calculate payment methods distribution (excludes cancelled orders)"""
+        methods: Dict[str, Dict[str, Any]] = {}
+        total_revenue = 0.0
+
         for order in orders:
-            payment_method = order.get("payment_method", "cash")
-            amount = order.get("total_amount", 0)
-            
-            if payment_method not in methods:
-                methods[payment_method] = {
-                    "count": 0,
-                    "revenue": 0
-                }
-            
-            methods[payment_method]["count"] += 1
-            methods[payment_method]["revenue"] += amount
+            if order.get('status') == 'cancelled':
+                continue
+            method = order.get('payment_method', 'cash')
+            amount = order.get('total_amount', 0)
+            if method not in methods:
+                methods[method] = {'count': 0, 'revenue': 0.0}
+            methods[method]['count'] += 1
+            methods[method]['revenue'] += amount
             total_revenue += amount
-        
-        # Build payment methods list
+
         payment_list = []
         for method, stats in methods.items():
-            percentage = (stats["revenue"] / total_revenue * 100) if total_revenue > 0 else 0
-            
+            percentage = (stats['revenue'] / total_revenue * 100) if total_revenue > 0 else 0
             payment_list.append({
-                "method": method.capitalize(),
-                "count": stats["count"],
-                "revenue": round(stats["revenue"], 2),
-                "percentage": round(percentage, 1)
+                'method': method.capitalize(),
+                'count': stats['count'],
+                'revenue': round(stats['revenue'], 2),
+                'percentage': round(percentage, 1)
             })
-        
-        # Sort by revenue
-        payment_list.sort(key=lambda x: x["revenue"], reverse=True)
+
+        payment_list.sort(key=lambda x: x['revenue'], reverse=True)
         return payment_list
-    
+
     def _calculate_peak_hours(self, orders: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """Calculate peak hours based on order times"""
-        
-        hours = {i: {"orders": 0, "revenue": 0} for i in range(24)}
-        
+        """Calculate peak hours based on order times (excludes cancelled orders).
+
+        NOTE: Hours are currently in UTC. For accurate peak-hour reporting these
+        should be converted to the venue's local timezone before bucketing.
+        """
+        hours: Dict[int, Dict[str, Any]] = {i: {'orders': 0, 'revenue': 0.0} for i in range(24)}
+
         for order in orders:
+            if order.get('status') == 'cancelled':
+                continue
             order_date = self._get_order_date(order)
             if order_date is None:
                 continue
+            hours[order_date.hour]['orders'] += 1
+            hours[order_date.hour]['revenue'] += order.get('total_amount', 0)
 
-            hours[order_date.hour]["orders"] += 1
-            hours[order_date.hour]["revenue"] += order.get("total_amount", 0)
-        
-        # Build peak hours list
-        peak_list = []
-        for hour, stats in hours.items():
-            if stats["orders"] > 0:  # Only include hours with orders
-                peak_list.append({
-                    "hour": f"{hour:02d}:00",
-                    "orders": stats["orders"],
-                    "revenue": round(stats["revenue"], 2)
-                })
-        
-        # Sort by orders
-        peak_list.sort(key=lambda x: x["orders"], reverse=True)
-        return peak_list[:12]  # Return top 12 hours
-    
+        peak_list = [
+            {
+                'hour': f'{hour:02d}:00',
+                'orders': stats['orders'],
+                'revenue': round(stats['revenue'], 2)
+            }
+            for hour, stats in hours.items()
+            if stats['orders'] > 0
+        ]
+
+        peak_list.sort(key=lambda x: x['orders'], reverse=True)
+        return peak_list[:12]
+
     def _get_recent_activity(self, orders: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """Get recent order activity"""
-        
-        # Sort orders by date (most recent first), treating None dates as oldest
+        """Get recent order activity (top 10 most recent)"""
         sorted_orders = sorted(
             orders,
             key=lambda o: self._get_order_date(o) or datetime.min.replace(tzinfo=timezone.utc),
             reverse=True
         )
-        
-        # Return top 10 recent orders
+
         recent = []
         for order in sorted_orders[:10]:
             order_date = self._get_order_date(order)
             recent.append({
-                "id": order.get("id"),
-                "order_number": order.get("order_number"),
-                "status": order.get("status", "pending"),
-                "subtotal": order.get("subtotal", 0),
-                "tax_amount": order.get("tax_amount", 0),
-                "discount_amount": order.get("discount_amount", 0),
-                "total_amount": order.get("total_amount", 0),
-                "table_number": order.get("table_number"),
-                "venue_name": order.get("venue_name", ""),
-                "createdAt": order_date.isoformat() if order_date is not None else None
+                'id': order.get('id'),
+                'order_number': order.get('order_number'),
+                'status': order.get('status', 'pending'),
+                'subtotal': order.get('subtotal', 0),
+                'tax_amount': order.get('tax_amount', 0),
+                'discount_amount': order.get('discount_amount', 0),
+                'total_amount': order.get('total_amount', 0),
+                'table_number': order.get('table_number'),
+                'venue_name': order.get('venue_name', ''),
+                'createdAt': order_date.isoformat() if order_date is not None else None
             })
-        
+
         return recent
-    
+
     def _get_table_statuses(self, tables: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """Get table statuses"""
-        
-        statuses = []
-        for table in tables:
-            statuses.append({
-                "id": table.get("id"),
-                "table_number": table.get("table_number"),
-                "status": table.get("status", "available"),
-                "capacity": table.get("capacity"),
-                "area_id": table.get("area_id"),
-                "current_order_id": table.get("current_order_id"),
-                "occupancy_time": table.get("occupancy_time")
-            })
-        
-        return statuses
-    
-    def _parse_date_boundary(self, value: str, end_of_day: bool = False) -> datetime:
-        """Parse a date or datetime string into a timezone-aware UTC datetime.
-
-        Handles both date-only strings (e.g. '2026-03-06') and full ISO datetime
-        strings. When end_of_day=True and only a date is supplied, the boundary
-        is set to 23:59:59.999999 UTC so the entire day is included.
-        """
-        value = value.strip().replace('Z', '+00:00')
-        try:
-            dt = datetime.fromisoformat(value)
-        except ValueError:
-            # Fallback: treat as date-only
-            from datetime import date
-            dt = datetime.combine(date.fromisoformat(value[:10]), datetime.min.time())
-
-        # Make timezone-aware
-        if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=timezone.utc)
-
-        # If only a date was given (time is midnight) and we want end-of-day, push to 23:59:59
-        if end_of_day and dt.hour == 0 and dt.minute == 0 and dt.second == 0:
-            dt = dt.replace(hour=23, minute=59, second=59, microsecond=999999)
-
-        return dt
+        return [
+            {
+                'id': table.get('id'),
+                'table_number': table.get('table_number'),
+                'status': table.get('status', 'available'),
+                'capacity': table.get('capacity'),
+                'area_id': table.get('area_id'),
+                'current_order_id': table.get('current_order_id'),
+                'occupancy_time': table.get('occupancy_time')
+            }
+            for table in tables
+        ]
 
     def _get_order_date(self, order: Dict[str, Any]) -> Optional[datetime]:
         """Get order date as a timezone-aware datetime object, or None if not present"""
-        order_date = order.get("created_at") or order.get("order_date")
+        order_date = order.get('created_at') or order.get('order_date')
 
         if isinstance(order_date, str):
             order_date = datetime.fromisoformat(order_date.replace('Z', '+00:00'))
-        elif isinstance(order_date, datetime):
-            pass
-        else:
+        elif not isinstance(order_date, datetime):
             return None
 
-        # Firestore can return naive datetimes — always normalise to UTC-aware
         if order_date.tzinfo is None:
             order_date = order_date.replace(tzinfo=timezone.utc)
 

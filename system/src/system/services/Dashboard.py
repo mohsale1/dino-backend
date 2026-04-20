@@ -1,432 +1,285 @@
 """
 System Dashboard Service
-Provides analytics and statistics for system administrators
+Provides analytics and statistics for system administrators.
+All queries are executed directly against PostgreSQL via SQLAlchemy async —
+no Firestore / Firebase dependencies.
 """
-from typing import Dict, Any, List, Optional
-from datetime import datetime, timezone, timedelta
-from google.cloud import firestore
 
-from src.config.Database import get_firestore_client
-from src.system.services.Billing import BillingService
+from typing import Any, Dict, List
+from datetime import datetime, timezone, timedelta
+
+from sqlalchemy import and_, case, func, select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from src.models.Persona import Persona
+from src.models.Role import Role
+from src.models.SystemUser import SystemUser
+from src.models.Workspace import Workspace
 
 
 class SystemDashboardService:
-    """Service for system-level dashboard data and analytics"""
+    """Service for system-level dashboard data and analytics."""
 
-    @staticmethod
-    def get_system_stats() -> Dict[str, Any]:
-        """Get overall system statistics"""
-        db = get_firestore_client()
-        thirty_days_ago = datetime.now(timezone.utc) - timedelta(days=30)
-        sixty_days_ago = datetime.now(timezone.utc) - timedelta(days=60)
+    def __init__(self, db: AsyncSession) -> None:
+        self.db = db
 
-        # Fetch all non-deleted workspaces once, then filter in Python
-        # to avoid Firestore composite index requirements on compound queries
-        workspaces_ref = db.collection('workspaces')
-        all_workspaces = [
-            doc.to_dict() for doc in workspaces_ref.where('is_deleted', '==', False).stream()
-        ]
+    # ------------------------------------------------------------------
+    # Public async methods
+    # ------------------------------------------------------------------
 
-        total_workspaces = len(all_workspaces)
+    async def get_system_stats(self) -> Dict[str, Any]:
+        """Return overall system statistics using a single SQL aggregation."""
+        now = datetime.now(timezone.utc)
+        thirty_days_ago = now - timedelta(days=30)
+        sixty_days_ago  = now - timedelta(days=60)
 
-        active_workspaces = sum(
-            1 for w in all_workspaces
-            if w.get('updated_at') and w['updated_at'] >= thirty_days_ago
-        )
+        # --- Single query: all Workspace counts in one pass ---------------
+        ws_row = (
+            await self.db.execute(
+                select(
+                    func.count().label('total'),
+                    func.count(
+                        case((Workspace.updated_at >= thirty_days_ago, 1))
+                    ).label('active'),
+                    func.count(
+                        case((Workspace.created_at >= thirty_days_ago, 1))
+                    ).label('last_30'),
+                    func.count(
+                        case((
+                            and_(
+                                Workspace.created_at >= sixty_days_ago,
+                                Workspace.created_at < thirty_days_ago,
+                            ),
+                            1,
+                        ))
+                    ).label('prev_30'),
+                ).where(Workspace.is_active == True)  # noqa: E712
+            )
+        ).one()
 
-        workspaces_last_30 = sum(
-            1 for w in all_workspaces
-            if w.get('created_at') and w['created_at'] >= thirty_days_ago
-        )
+        # --- Single query: all SystemUser counts in one pass --------------
+        su_row = (
+            await self.db.execute(
+                select(
+                    func.count().label('total'),
+                    func.count(
+                        case((SystemUser.last_login >= thirty_days_ago, 1))
+                    ).label('active'),
+                ).where(SystemUser.is_active == True)  # noqa: E712
+            )
+        ).one()
 
-        workspaces_prev_30 = sum(
-            1 for w in all_workspaces
-            if w.get('created_at') and sixty_days_ago <= w['created_at'] < thirty_days_ago
-        )
+        # --- Persona count ------------------------------------------------
+        total_personas: int = (
+            await self.db.execute(
+                select(func.count()).select_from(Persona).where(Persona.is_active == True)  # noqa: E712
+            )
+        ).scalar_one()
 
-        workspace_growth = calculate_growth_percentage(workspaces_prev_30, workspaces_last_30)
+        # application_users lives in dino-application DB — cross-service boundary.
+        total_app_users = 0
+        users_last_30   = 0
 
-        # Fetch all non-deleted system users once
-        system_users_ref = db.collection('system_users')
-        all_system_users = [
-            doc.to_dict() for doc in system_users_ref.where('is_deleted', '==', False).stream()
-        ]
-
-        total_system_users = len(all_system_users)
-
-        active_system_users = sum(
-            1 for u in all_system_users
-            if u.get('last_login') and u['last_login'] >= thirty_days_ago
-        )
-
-        # Fetch all non-deleted application users once
-        app_users_ref = db.collection('application_users')
-        all_app_users = [
-            doc.to_dict() for doc in app_users_ref.where('is_deleted', '==', False).stream()
-        ]
-
-        total_app_users = len(all_app_users)
-
-        users_last_30 = sum(
-            1 for u in all_app_users
-            if u.get('created_at') and u['created_at'] >= thirty_days_ago
-        )
-
-        users_prev_30 = sum(
-            1 for u in all_app_users
-            if u.get('created_at') and sixty_days_ago <= u['created_at'] < thirty_days_ago
-        )
-
-        user_growth = calculate_growth_percentage(users_prev_30, users_last_30)
-
-        # Total organizations
-        orgs_ref = db.collection('organizations')
-        total_organizations = len([doc for doc in orgs_ref.where('is_deleted', '==', False).stream()])
+        workspace_growth = _calculate_growth_percentage(ws_row.prev_30, ws_row.last_30)
 
         return {
-            "total_workspaces": total_workspaces,
-            "active_workspaces": active_workspaces,
-            "total_system_users": total_system_users,
-            "active_system_users": active_system_users,
-            "total_app_users": total_app_users,
-            "total_organizations": total_organizations,
-            "workspace_growth": workspace_growth,
-            "user_growth": user_growth,
-            "workspaces_last_30_days": workspaces_last_30,
-            "users_last_30_days": users_last_30,
+            'total_workspaces':        ws_row.total,
+            'active_workspaces':       ws_row.active,
+            'total_system_users':      su_row.total,
+            'active_system_users':     su_row.active,
+            'total_app_users':         total_app_users,
+            'total_personas':          total_personas,
+            'workspace_growth':        workspace_growth,
+            'user_growth':             '0%',
+            'workspaces_last_30_days': ws_row.last_30,
+            'users_last_30_days':      users_last_30,
         }
 
-    @staticmethod
-    def get_workspace_growth_trend(days: int = 30) -> List[Dict[str, Any]]:
-        """Get workspace growth trend over time"""
-        db = get_firestore_client()
+    async def get_workspace_growth_trend(self, days: int = 30) -> List[Dict[str, Any]]:
+        """
+        Return cumulative workspace counts for each day over the last *days* days.
+
+        Fetches only the created_at timestamps within the window (not full rows)
+        and computes the cumulative count in Python — one lightweight query.
+        """
         start_date = datetime.now(timezone.utc) - timedelta(days=days)
 
-        # Get all workspaces
-        workspaces_ref = db.collection('workspaces')
-        all_workspaces = [
-            doc.to_dict() for doc in workspaces_ref
-            .where('is_deleted', '==', False)
-            .stream()
-        ]
+        stmt = (
+            select(Workspace.created_at)
+            .where(
+                and_(
+                    Workspace.is_active == True,  # noqa: E712
+                    Workspace.created_at >= start_date,
+                )
+            )
+            .order_by(Workspace.created_at)
+        )
+        result = await self.db.execute(stmt)
+        all_dates = [row[0] for row in result.all()]
 
-        # Group by date
-        growth_data = []
+        growth_data: List[Dict[str, Any]] = []
         for i in range(days + 1):
-            date = start_date + timedelta(days=i)
-            date_start = date.replace(hour=0, minute=0, second=0, microsecond=0)
-            date_end = date_start + timedelta(days=1)
-
-            count = sum(1 for w in all_workspaces if w.get('created_at') and w['created_at'] < date_end)
-
+            day = start_date + timedelta(days=i)
+            # Keep date_end timezone-aware so it compares correctly with
+            # timezone-aware created_at values from the database.
+            date_end = day.replace(hour=23, minute=59, second=59, microsecond=999999)
+            count = sum(1 for d in all_dates if d and d <= date_end)
             growth_data.append({
-                "date": date_start.strftime("%Y-%m-%d"),
-                "period": date_start.strftime("%b %d"),
-                "count": count
+                'date':   day.strftime('%Y-%m-%d'),
+                'period': day.strftime('%b %d'),
+                'count':  count,
             })
 
         return growth_data
 
-    @staticmethod
-    def get_user_distribution() -> List[Dict[str, Any]]:
-        """Get distribution of system users by role"""
-        db = get_firestore_client()
+    async def get_user_distribution(self) -> List[Dict[str, Any]]:
+        """Return system-user counts grouped by role name (SQL GROUP BY)."""
+        stmt = (
+            select(Role.name, func.count(SystemUser.id).label('count'))
+            .join(Role, SystemUser.role_id == Role.id)
+            .where(SystemUser.is_active == True)  # noqa: E712
+            .group_by(Role.name)
+        )
+        result = await self.db.execute(stmt)
+        return [{'role': row.name, 'count': row.count} for row in result.all()]
 
-        # Get all system users
-        system_users_ref = db.collection('system_users')
-        system_users = [
-            doc.to_dict() for doc in system_users_ref
-            .where('is_deleted', '==', False)
-            .stream()
-        ]
+    async def get_top_onboarders(self, limit: int = 5) -> List[Dict[str, Any]]:  # noqa: ARG002
+        """
+        Return the system users who onboarded the most application users.
 
-        # Get all roles
-        roles_ref = db.collection('roles')
-        roles = {doc.id: doc.to_dict() for doc in roles_ref.stream()}
+        application_users lives in the dino-application database — a different
+        AsyncSession / connection pool.  Cross-service queries are not supported
+        here; callers should aggregate this via an inter-service API call.
+        """
+        return []
 
-        # Count users by role
-        role_counts: Dict[str, int] = {}
-        for user in system_users:
-            role_id = user.get('role_id')
-            if role_id and role_id in roles:
-                role_name = roles[role_id].get('name', 'Unknown')
-                role_counts[role_name] = role_counts.get(role_name, 0) + 1
-
-        return [
-            {"role": role_name, "count": count}
-            for role_name, count in role_counts.items()
-        ]
-
-    @staticmethod
-    def get_top_onboarders(limit: int = 5) -> List[Dict[str, Any]]:
-        """Get system users who onboarded the most application users"""
-        db = get_firestore_client()
-
-        # Get all application users
-        app_users_ref = db.collection('application_users')
-        app_users = [
-            doc.to_dict() for doc in app_users_ref
-            .where('is_deleted', '==', False)
-            .stream()
-        ]
-
-        # Count by created_by
-        onboarder_counts: Dict[str, int] = {}
-        for user in app_users:
-            created_by = user.get('created_by')
-            if created_by:
-                onboarder_counts[created_by] = onboarder_counts.get(created_by, 0) + 1
-
-        # Get system user details
-        system_users_ref = db.collection('system_users')
-        top_onboarders = []
-
-        for user_id, count in sorted(onboarder_counts.items(), key=lambda x: x[1], reverse=True)[:limit]:
-            user_doc = system_users_ref.document(user_id).get()
-            if user_doc.exists:
-                user_data = user_doc.to_dict()
-                name = f"{user_data.get('first_name', '')} {user_data.get('last_name', '')}".strip()
-                if not name:
-                    name = user_data.get('email', '').split('@')[0]
-
-                top_onboarders.append({
-                    "name": name,
-                    "email": user_data.get('email', ''),
-                    "users_onboarded": count
-                })
-
-        return top_onboarders
-
-    @staticmethod
-    def get_recent_activity(limit: int = 20) -> List[Dict[str, Any]]:
-        """Get recent system activity (last 24 hours)"""
-        db = get_firestore_client()
+    async def get_recent_activity(self, limit: int = 20) -> List[Dict[str, Any]]:
+        """Return recent system activity from the last 24 hours."""
         twenty_four_hours_ago = datetime.now(timezone.utc) - timedelta(hours=24)
-        activities = []
+        activities: List[Dict[str, Any]] = []
 
-        # Fetch all non-deleted system users once, filter in Python
-        # to avoid composite index on (is_deleted, last_login, order_by last_login)
-        system_users_ref = db.collection('system_users')
-        all_system_users = [
-            doc.to_dict() for doc in system_users_ref.where('is_deleted', '==', False).stream()
-        ]
-
-        recent_logins = [
-            u for u in all_system_users
-            if u.get('last_login') and u['last_login'] >= twenty_four_hours_ago
-        ]
-        recent_logins.sort(key=lambda u: u['last_login'], reverse=True)
-
-        for user in recent_logins[:10]:
-            time_diff = get_time_ago(user['last_login'])
+        # Recent system-user logins — select only the columns we need.
+        login_stmt = (
+            select(SystemUser.id, SystemUser.email, SystemUser.last_login)
+            .where(
+                and_(
+                    SystemUser.is_active == True,  # noqa: E712
+                    SystemUser.last_login >= twenty_four_hours_ago,
+                )
+            )
+            .order_by(SystemUser.last_login.desc())
+            .limit(10)
+        )
+        login_result = await self.db.execute(login_stmt)
+        for row in login_result.all():
             activities.append({
-                "id": f"login_{user.get('id', '')}",
-                "type": "login",
-                "user": user.get('email', ''),
-                "action": "Logged in",
-                "target": "",
-                "time": time_diff,
-                "timestamp": user['last_login'].isoformat() if isinstance(user['last_login'], datetime) else str(user['last_login'])
+                'id':        f'login_{row.id}',
+                'type':      'login',
+                'user':      row.email,
+                'action':    'Logged in',
+                'target':    '',
+                'time':      _get_time_ago(row.last_login),
+                'timestamp': row.last_login.isoformat() if row.last_login else '',
             })
 
-        # Fetch all non-deleted workspaces, filter in Python
-        # to avoid composite index on (is_deleted, created_at, order_by created_at)
-        workspaces_ref = db.collection('workspaces')
-        all_workspaces = [
-            doc.to_dict() for doc in workspaces_ref.where('is_deleted', '==', False).stream()
-        ]
-
-        recent_workspaces = [
-            w for w in all_workspaces
-            if w.get('created_at') and w['created_at'] >= twenty_four_hours_ago
-        ]
-        recent_workspaces.sort(key=lambda w: w['created_at'], reverse=True)
-
-        # Build a lookup map from the already-fetched system users
-        system_users_map = {u.get('id', ''): u for u in all_system_users}
-
-        for workspace in recent_workspaces[:10]:
-            time_diff = get_time_ago(workspace['created_at'])
-
-            creator_email = "System"
-            created_by = workspace.get('created_by')
-            if created_by:
-                creator = system_users_map.get(created_by)
-                if creator:
-                    creator_email = creator.get('email', 'System')
-                else:
-                    # Fallback: fetch individually if not in the non-deleted set
-                    creator_doc = system_users_ref.document(created_by).get()
-                    if creator_doc.exists:
-                        creator_email = creator_doc.to_dict().get('email', 'System')
-
+        # Recently created workspaces — select only the columns we need.
+        ws_stmt = (
+            select(Workspace.id, Workspace.name, Workspace.created_at)
+            .where(
+                and_(
+                    Workspace.is_active == True,  # noqa: E712
+                    Workspace.created_at >= twenty_four_hours_ago,
+                )
+            )
+            .order_by(Workspace.created_at.desc())
+            .limit(10)
+        )
+        ws_result = await self.db.execute(ws_stmt)
+        for row in ws_result.all():
             activities.append({
-                "id": f"workspace_{workspace.get('id', '')}",
-                "type": "workspace_created",
-                "user": creator_email,
-                "action": "Created new workspace",
-                "target": workspace.get('name', ''),
-                "time": time_diff,
-                "timestamp": workspace['created_at'].isoformat() if isinstance(workspace['created_at'], datetime) else str(workspace['created_at'])
+                'id':        f'workspace_{row.id}',
+                'type':      'workspace_created',
+                'user':      'System',
+                'action':    'Created new workspace',
+                'target':    row.name,
+                'time':      _get_time_ago(row.created_at),
+                'timestamp': row.created_at.isoformat() if row.created_at else '',
             })
 
-        # Fetch all non-deleted application users, filter in Python
-        # to avoid composite index on (is_deleted, created_at, order_by created_at)
-        app_users_ref = db.collection('application_users')
-        all_app_users = [
-            doc.to_dict() for doc in app_users_ref.where('is_deleted', '==', False).stream()
-        ]
-
-        recent_app_users = [
-            u for u in all_app_users
-            if u.get('created_at') and u['created_at'] >= twenty_four_hours_ago
-        ]
-        recent_app_users.sort(key=lambda u: u['created_at'], reverse=True)
-
-        for app_user in recent_app_users[:10]:
-            time_diff = get_time_ago(app_user['created_at'])
-
-            creator_email = "System"
-            created_by = app_user.get('created_by')
-            if created_by:
-                creator = system_users_map.get(created_by)
-                if creator:
-                    creator_email = creator.get('email', 'System')
-                else:
-                    creator_doc = system_users_ref.document(created_by).get()
-                    if creator_doc.exists:
-                        creator_email = creator_doc.to_dict().get('email', 'System')
-
-            activities.append({
-                "id": f"user_{app_user.get('id', '')}",
-                "type": "user_created",
-                "user": creator_email,
-                "action": "Created new user",
-                "target": app_user.get('email', ''),
-                "time": time_diff,
-                "timestamp": app_user['created_at'].isoformat() if isinstance(app_user['created_at'], datetime) else str(app_user['created_at'])
-            })
-
-        # Sort all activities by timestamp and return top N
         activities.sort(key=lambda x: x.get('timestamp', ''), reverse=True)
-
         return activities[:limit]
 
-    @staticmethod
-    def get_subscription_stats() -> Dict[str, Any]:
-        """Get subscription and billing statistics"""
-        db = get_firestore_client()
+    async def get_subscription_stats(self) -> Dict[str, Any]:
+        """Return subscription and MRR statistics via a single SQL aggregation."""
+        status_col = func.lower(Workspace.subscription_status)
 
-        # Get all workspaces
-        workspaces_ref = db.collection('workspaces')
-        workspaces = [
-            doc.to_dict() for doc in workspaces_ref
-            .where('is_deleted', '==', False)
-            .stream()
-        ]
+        row = (
+            await self.db.execute(
+                select(
+                    func.count(
+                        case((status_col == 'active', 1))
+                    ).label('active'),
+                    func.count(
+                        case((status_col == 'past due', 1))
+                    ).label('past_due'),
+                    func.count(
+                        case((status_col == 'trial', 1))
+                    ).label('trial'),
+                    func.coalesce(
+                        func.sum(
+                            case((status_col == 'active', Workspace.mrr))
+                        ),
+                        0,
+                    ).label('mrr'),
+                ).where(Workspace.is_active == True)  # noqa: E712
+            )
+        ).one()
 
-        # Count subscriptions by status
-        active_subscriptions = sum(1 for w in workspaces if w.get('subscription_status', '').lower() == 'active')
-        past_due = sum(1 for w in workspaces if w.get('subscription_status', '').lower() == 'past due')
-        trial_subscriptions = sum(1 for w in workspaces if w.get('subscription_status', '').lower() == 'trial')
-
-        # Calculate MRR using BillingService.PLAN_PRICING
-        monthly_recurring_revenue = 0.0
-
-        for workspace in workspaces:
-            if workspace.get('subscription_status', '').lower() == 'active':
-                plan = workspace.get('subscription_plan', '').lower().strip()
-                billing_cycle = workspace.get('billing_cycle', 'monthly').lower()
-
-                # Find the best matching plan key
-                matched_price = 0.0
-                for plan_key, pricing in BillingService.PLAN_PRICING.items():
-                    if plan_key in plan:
-                        if billing_cycle == 'yearly':
-                            # Normalise yearly price to monthly equivalent
-                            matched_price = pricing.get('yearly', 0.0) / 12
-                        else:
-                            matched_price = pricing.get('monthly', 0.0)
-                        break
-
-                monthly_recurring_revenue += matched_price
-
-        # Total revenue is MRR * 12 (annual estimate)
-        total_revenue = monthly_recurring_revenue * 12
+        mrr_float = round(float(row.mrr), 2)
 
         return {
-            "active_subscriptions": active_subscriptions,
-            "total_revenue": round(total_revenue, 2),
-            "monthly_recurring_revenue": round(monthly_recurring_revenue, 2),
-            "past_due": past_due,
-            "trial_subscriptions": trial_subscriptions
-        }
-
-    @staticmethod
-    def get_registration_code_stats() -> Dict[str, Any]:
-        """Get registration code statistics"""
-        db = get_firestore_client()
-
-        # Get all registration codes
-        codes_ref = db.collection('registration_codes')
-        all_codes = [
-            doc.to_dict() for doc in codes_ref.stream()
-        ]
-
-        total_codes = len(all_codes)
-        active_codes = sum(1 for c in all_codes if not c.get('is_deleted', False) and c.get('is_active', True))
-        used_codes = sum(1 for c in all_codes if c.get('current_uses', 0) >= c.get('max_uses', 1))
-        total_uses = sum(c.get('current_uses', 0) for c in all_codes)
-
-        return {
-            "total_codes": total_codes,
-            "active_codes": active_codes,
-            "used_codes": used_codes,
-            "total_uses": total_uses
+            'active_subscriptions':      row.active,
+            'total_revenue':             round(mrr_float * 12, 2),
+            'monthly_recurring_revenue': mrr_float,
+            'past_due':                  row.past_due,
+            'trial_subscriptions':       row.trial,
         }
 
 
-def calculate_growth_percentage(previous: int, current: int) -> str:
-    """Calculate growth percentage between two values"""
+# ---------------------------------------------------------------------------
+# Module-level helper functions (pure Python — kept sync)
+# ---------------------------------------------------------------------------
+
+def _calculate_growth_percentage(previous: int, current: int) -> str:
+    """Return a human-readable growth percentage string."""
     if previous == 0:
-        if current > 0:
-            return "+100%"
-        return "0%"
-
+        return '+100%' if current > 0 else '0%'
     growth = ((current - previous) / previous) * 100
-    sign = "+" if growth >= 0 else ""
-    return f"{sign}{growth:.1f}%"
+    sign = '+' if growth >= 0 else ''
+    return f'{sign}{growth:.1f}%'
 
 
-def get_time_ago(dt: datetime) -> str:
-    """Convert datetime to human-readable time ago string"""
+def _get_time_ago(dt: datetime) -> str:
+    """Convert a timezone-aware datetime to a human-readable 'X ago' string."""
     if not dt:
-        return "Unknown"
+        return 'Unknown'
 
-    # Normalise to naive UTC for arithmetic — handles both Firestore
-    # DatetimeWithNanoseconds (aware) and plain naive datetime objects.
-    if hasattr(dt, 'timestamp'):
-        # Works for both aware and naive datetime / Firestore timestamps
-        dt = datetime.fromtimestamp(dt.timestamp(), tz=timezone.utc).replace(tzinfo=None)
-    elif not isinstance(dt, datetime):
-        return "Unknown"
-    elif dt.tzinfo is not None:
-        # Already an aware datetime — strip tzinfo after converting to UTC
-        dt = dt.astimezone(timezone.utc).replace(tzinfo=None)
-
-    now = datetime.now(timezone.utc).replace(tzinfo=None)
-    diff = now - dt
-
-    seconds = diff.total_seconds()
+    try:
+        # Ensure dt is timezone-aware; if naive, assume UTC.
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        now = datetime.now(timezone.utc)
+        seconds = (now - dt).total_seconds()
+    except (TypeError, AttributeError):
+        return 'Unknown'
 
     if seconds < 60:
-        return "Just now"
-    elif seconds < 3600:
+        return 'Just now'
+    if seconds < 3600:
         minutes = int(seconds / 60)
         return f"{minutes} minute{'s' if minutes != 1 else ''} ago"
-    elif seconds < 86400:
+    if seconds < 86400:
         hours = int(seconds / 3600)
         return f"{hours} hour{'s' if hours != 1 else ''} ago"
-    else:
-        days = int(seconds / 86400)
-        return f"{days} day{'s' if days != 1 else ''} ago"
+    days = int(seconds / 86400)
+    return f"{days} day{'s' if days != 1 else ''} ago"

@@ -1,18 +1,22 @@
 """
 Home Page Routes
-Public endpoints for home page data stored in homepage_info collection
+Public endpoints for home page data stored in the homepage_info table.
 
-The homepage_info collection contains:
-- stats: array of stat objects
-- testimonials: array of testimonial objects
-- contact: contact information object
+The homepage_info table contains:
+  - stats        : array of stat objects
+  - testimonials : array of testimonial objects
+  - contact      : contact information object
 """
 
+from typing import Any, Dict, List, Optional
+
 from fastapi import APIRouter, Depends, HTTPException
-from typing import Optional, List, Dict, Any
 from pydantic import BaseModel, Field, field_validator
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from src.application.middleware.RoleCheck import ApplicationPermissionCheck
 from src.application.services.HomePage import HomePageService
-from src.application.middleware.RoleCheck import ApplicationRoleCheck
+from src.config.Database import get_db
 
 router = APIRouter(prefix="/home", tags=["Home Page"])
 
@@ -22,7 +26,7 @@ router = APIRouter(prefix="/home", tags=["Home Page"])
 # ============================================================================
 
 class StatItem(BaseModel):
-    """Schema for a single stat item"""
+    """Schema for a single stat item."""
     title: str = Field(..., description="Stat title")
     value: str = Field(..., description="Display value as string")
     number: float = Field(..., description="Numeric value (supports decimals)")
@@ -32,12 +36,12 @@ class StatItem(BaseModel):
 
 
 class StatsUpdate(BaseModel):
-    """Schema for updating stats array"""
+    """Schema for updating stats array."""
     stats: List[StatItem] = Field(..., description="Array of stat objects")
 
 
 class TestimonialItem(BaseModel):
-    """Schema for a single testimonial"""
+    """Schema for a single testimonial."""
     name: str = Field(..., min_length=2, max_length=100, description="Customer name")
     role: Optional[str] = Field(None, max_length=50, description="Customer role/title")
     restaurant: Optional[str] = Field(None, max_length=100, description="Restaurant name")
@@ -46,22 +50,22 @@ class TestimonialItem(BaseModel):
     comment: str = Field(..., min_length=10, max_length=1000, description="Testimonial comment")
     avatar: Optional[str] = Field(None, max_length=500, description="Avatar URL or initials")
     created_at: Optional[str] = Field(None, description="Creation timestamp")
-    
-    @field_validator('rating')
+
+    @field_validator("rating")
     @classmethod
-    def validate_rating(cls, v):
+    def validate_rating(cls, v: int) -> int:
         if v < 1 or v > 5:
-            raise ValueError('Rating must be between 1 and 5')
+            raise ValueError("Rating must be between 1 and 5")
         return v
 
 
 class TestimonialsUpdate(BaseModel):
-    """Schema for updating testimonials array"""
+    """Schema for updating testimonials array."""
     testimonials: List[TestimonialItem] = Field(..., description="Array of testimonial objects")
 
 
 class ContactInfo(BaseModel):
-    """Schema for contact information"""
+    """Schema for contact information."""
     email: Optional[str] = Field(None, max_length=100, description="Contact email")
     phone: Optional[str] = Field(None, max_length=20, description="Contact phone")
     address: Optional[str] = Field(None, max_length=500, description="Street address")
@@ -72,341 +76,181 @@ class ContactInfo(BaseModel):
 
 
 class ContactInfoUpdate(BaseModel):
-    """Schema for updating contact information"""
+    """Schema for updating contact information."""
     contact: ContactInfo = Field(..., description="Contact information object")
 
 
 class HomePageDataUpdate(BaseModel):
-    """Schema for updating entire homepage data"""
+    """Schema for updating entire homepage data."""
     stats: Optional[List[StatItem]] = Field(None, description="Stats array")
     testimonials: Optional[List[TestimonialItem]] = Field(None, description="Testimonials array")
     contact: Optional[ContactInfo] = Field(None, description="Contact information")
+
 
 # ============================================================================
 # GET ENDPOINTS (Public - no authentication required)
 # ============================================================================
 
 @router.get("/stats")
-async def get_home_stats():
+async def get_home_stats(db: AsyncSession = Depends(get_db)):
     """
-    Get home page statistics from homepage_info collection
-    
-    Public endpoint - no authentication required
-    
-    Returns:
-        {
-            "success": true,
-            "message": "Home page stats retrieved successfully",
-            "data": [
-                {
-                    "title": "Active Restaurants",
-                    "value": "1",
-                    "number": 1,
-                    "suffix": "+",
-                    "label": "Active Restaurants",
-                    "icon": "restaurant"
-                },
-                ...
-            ]
-        }
+    Get home page statistics from the homepage_info table.
+
+    Public endpoint - no authentication required.
     """
-    service = HomePageService()
-    stats = service.get_stats()
-    
+    service = HomePageService(db)
+    stats = await service.get_stats()
+
     return {
         "success": True,
         "message": "Home page stats retrieved successfully",
-        "data": stats
+        "data": stats,
     }
 
 
 @router.get("/testimonials")
-async def get_testimonials(limit: Optional[int] = None):
+async def get_testimonials(
+    limit: Optional[int] = None,
+    db: AsyncSession = Depends(get_db),
+):
     """
-    Get customer testimonials from homepage_info collection
-    
-    Public endpoint - no authentication required
-    
+    Get customer testimonials from the homepage_info table.
+
+    Public endpoint - no authentication required.
+
     Query Parameters:
         - limit: Maximum number of testimonials to return (optional)
-    
-    Returns:
-        {
-            "success": true,
-            "message": "Testimonials retrieved successfully",
-            "data": [
-                {
-                    "name": "John Doe",
-                    "role": "Restaurant Owner",
-                    "restaurant": "Doe's Diner",
-                    "location": "New York, NY",
-                    "rating": 5,
-                    "comment": "Great platform!",
-                    "avatar": "JD",
-                    "created_at": "2024-01-01T00:00:00Z"
-                },
-                ...
-            ]
-        }
     """
-    service = HomePageService()
-    testimonials = service.get_testimonials(limit=limit)
-    
+    service = HomePageService(db)
+    testimonials = await service.get_testimonials(limit=limit)
+
     return {
         "success": True,
         "message": "Testimonials retrieved successfully",
-        "data": testimonials
+        "data": testimonials,
     }
 
 
 @router.get("/contact")
-async def get_contact_info():
+async def get_contact_info(db: AsyncSession = Depends(get_db)):
     """
-    Get contact information from homepage_info collection
-    
-    Public endpoint - no authentication required
-    
-    Returns:
-        {
-            "success": true,
-            "message": "Contact information retrieved successfully",
-            "data": {
-                "email": "contact@example.com",
-                "phone": "+1234567890",
-                "address": "123 Main St",
-                "city": "New York",
-                "state": "NY",
-                "country": "USA",
-                "postal_code": "10001"
-            }
-        }
+    Get contact information from the homepage_info table.
+
+    Public endpoint - no authentication required.
     """
-    service = HomePageService()
-    contact = service.get_contact_info()
-    
+    service = HomePageService(db)
+    contact = await service.get_contact_info()
+
     return {
         "success": True,
         "message": "Contact information retrieved successfully",
-        "data": contact
+        "data": contact,
     }
 
 
 @router.get("/all")
-async def get_all_home_data():
+async def get_all_home_data(db: AsyncSession = Depends(get_db)):
     """
-    Get all home page data in one call from homepage_info collection
-    
-    Public endpoint - no authentication required
-    
-    Returns:
-        {
-            "success": true,
-            "message": "Home page data retrieved successfully",
-            "data": {
-                "stats": [...],
-                "testimonials": [...],
-                "contact": {...}
-            }
-        }
+    Get all home page data in one call from the homepage_info table.
+
+    Public endpoint - no authentication required.
     """
-    service = HomePageService()
-    data = service.get_all_home_data()
-    
+    service = HomePageService(db)
+    data = await service.get_all_home_data()
+
     return {
         "success": True,
         "message": "Home page data retrieved successfully",
-        "data": data
+        "data": data,
     }
 
 
 # ============================================================================
-# PUT ENDPOINTS (Public - no authentication required)
+# PUT ENDPOINTS (Admin only)
 # ============================================================================
 
-@router.put("/stats", dependencies=[Depends(ApplicationRoleCheck.require_admin)])
-async def update_stats(data: StatsUpdate):
-    """
-    Update stats array in homepage_info collection
-    
-    Public endpoint - no authentication required
-    
-    Body Parameters:
-        - stats: Array of stat objects
-    
-    Example:
-        {
-            "stats": [
-                {
-                    "title": "Active Restaurants",
-                    "value": "1",
-                    "number": 1,
-                    "suffix": "+",
-                    "label": "Active Restaurants",
-                    "icon": "restaurant"
-                },
-                ...
-            ]
-        }
-    
-    Returns:
-        {
-            "success": true,
-            "message": "Stats updated successfully",
-            "data": [...]
-        }
-    """
+@router.put("/stats", dependencies=[Depends(ApplicationPermissionCheck.require('homepage:update'))])
+async def update_stats(
+    data: StatsUpdate,
+    db: AsyncSession = Depends(get_db),
+):
+    """Update stats array in the homepage_info table. Admin only."""
     try:
-        service = HomePageService()
+        service = HomePageService(db)
         stats_list = [stat.model_dump() for stat in data.stats]
-        result = service.update_stats(stats_list)
-        
+        result = await service.update_stats(stats_list)
+
         return {
             "success": True,
             "message": "Stats updated successfully",
-            "data": result
+            "data": result,
         }
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
 
-@router.put("/testimonials", dependencies=[Depends(ApplicationRoleCheck.require_admin)])
-async def update_testimonials(data: TestimonialsUpdate):
-    """
-    Update testimonials array in homepage_info collection
-    
-    Public endpoint - no authentication required
-    
-    Body Parameters:
-        - testimonials: Array of testimonial objects
-    
-    Example:
-        {
-            "testimonials": [
-                {
-                    "name": "John Doe",
-                    "role": "Restaurant Owner",
-                    "restaurant": "Doe's Diner",
-                    "location": "New York, NY",
-                    "rating": 5,
-                    "comment": "Great platform!",
-                    "avatar": "JD",
-                    "created_at": "2024-01-01T00:00:00Z"
-                },
-                ...
-            ]
-        }
-    
-    Returns:
-        {
-            "success": true,
-            "message": "Testimonials updated successfully",
-            "data": [...]
-        }
-    """
+@router.put("/testimonials", dependencies=[Depends(ApplicationPermissionCheck.require('homepage:update'))])
+async def update_testimonials(
+    data: TestimonialsUpdate,
+    db: AsyncSession = Depends(get_db),
+):
+    """Update testimonials array in the homepage_info table. Admin only."""
     try:
-        service = HomePageService()
+        service = HomePageService(db)
         testimonials_list = [t.model_dump() for t in data.testimonials]
-        result = service.update_testimonials(testimonials_list)
-        
+        result = await service.update_testimonials(testimonials_list)
+
         return {
             "success": True,
             "message": "Testimonials updated successfully",
-            "data": result
+            "data": result,
         }
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
 
-@router.put("/contact", dependencies=[Depends(ApplicationRoleCheck.require_admin)])
-async def update_contact_info(data: ContactInfoUpdate):
-    """
-    Update contact information in homepage_info collection
-    
-    Public endpoint - no authentication required
-    
-    Body Parameters:
-        - contact: Contact information object
-    
-    Example:
-        {
-            "contact": {
-                "email": "contact@example.com",
-                "phone": "+1234567890",
-                "address": "123 Main St",
-                "city": "New York",
-                "state": "NY",
-                "country": "USA",
-                "postal_code": "10001"
-            }
-        }
-    
-    Returns:
-        {
-            "success": true,
-            "message": "Contact information updated successfully",
-            "data": {...}
-        }
-    """
+@router.put("/contact", dependencies=[Depends(ApplicationPermissionCheck.require('homepage:update'))])
+async def update_contact_info(
+    data: ContactInfoUpdate,
+    db: AsyncSession = Depends(get_db),
+):
+    """Update contact information in the homepage_info table. Admin only."""
     try:
-        service = HomePageService()
-        result = service.update_contact_info(data.contact.model_dump(exclude_none=True))
-        
+        service = HomePageService(db)
+        result = await service.update_contact_info(data.contact.model_dump(exclude_none=True))
+
         return {
             "success": True,
             "message": "Contact information updated successfully",
-            "data": result
+            "data": result,
         }
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
 
-@router.put("/all", dependencies=[Depends(ApplicationRoleCheck.require_admin)])
-async def update_all_homepage_data(data: HomePageDataUpdate):
-    """
-    Update entire homepage_info document (partial updates supported)
-    
-    Public endpoint - no authentication required
-    
-    Body Parameters:
-        - stats: Stats array (optional)
-        - testimonials: Testimonials array (optional)
-        - contact: Contact information (optional)
-    
-    Example:
-        {
-            "stats": [...],
-            "testimonials": [...],
-            "contact": {...}
-        }
-    
-    Returns:
-        {
-            "success": true,
-            "message": "Homepage data updated successfully",
-            "data": {
-                "stats": [...],
-                "testimonials": [...],
-                "contact": {...}
-            }
-        }
-    """
+@router.put("/all", dependencies=[Depends(ApplicationPermissionCheck.require('homepage:update'))])
+async def update_all_homepage_data(
+    data: HomePageDataUpdate,
+    db: AsyncSession = Depends(get_db),
+):
+    """Update entire homepage_info document (partial updates supported). Admin only."""
     try:
-        service = HomePageService()
-        
-        update_data = {}
+        service = HomePageService(db)
+
+        update_data: Dict[str, Any] = {}
         if data.stats is not None:
-            update_data['stats'] = [stat.model_dump() for stat in data.stats]
+            update_data["stats"] = [stat.model_dump() for stat in data.stats]
         if data.testimonials is not None:
-            update_data['testimonials'] = [t.model_dump() for t in data.testimonials]
+            update_data["testimonials"] = [t.model_dump() for t in data.testimonials]
         if data.contact is not None:
-            update_data['contact'] = data.contact.model_dump(exclude_none=True)
-        
-        result = service.update_all_homepage_data(update_data)
-        
+            update_data["contact"] = data.contact.model_dump(exclude_none=True)
+
+        result = await service.update_all_homepage_data(update_data)
+
         return {
             "success": True,
             "message": "Homepage data updated successfully",
-            "data": result
+            "data": result,
         }
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))

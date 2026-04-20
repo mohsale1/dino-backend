@@ -4,11 +4,12 @@ Endpoints for managing customer reviews/testimonials
 """
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from typing import Optional
+from sqlalchemy.ext.asyncio import AsyncSession
+from typing import Optional, Dict, Any
 from pydantic import BaseModel, Field
 from src.application.services.Review import ReviewService
-from src.core.Dependencies import get_current_user
-from src.application.middleware.RoleCheck import ApplicationRoleCheck
+from src.application.middleware.RoleCheck import ApplicationPermissionCheck
+from src.config.Database import get_db
 
 router = APIRouter(prefix="/reviews", tags=["Reviews"])
 
@@ -26,8 +27,8 @@ class ReviewCreate(BaseModel):
     restaurant: Optional[str] = Field(None, description="Restaurant name")
     location: Optional[str] = Field(None, description="Location (city, state)")
     avatar: Optional[str] = Field(None, description="Avatar URL or initials")
-    workspace_id: Optional[str] = Field(None, description="Associated workspace ID")
-    organization_id: Optional[str] = Field(None, description="Associated organization ID")
+    workspace_id: Optional[int] = Field(None, description="Associated workspace ID")
+    persona_id: Optional[int] = Field(None, description="Associated persona ID")
 
 
 class ReviewUpdate(BaseModel):
@@ -39,8 +40,8 @@ class ReviewUpdate(BaseModel):
     restaurant: Optional[str] = Field(None, description="Restaurant name")
     location: Optional[str] = Field(None, description="Location (city, state)")
     avatar: Optional[str] = Field(None, description="Avatar URL or initials")
-    workspace_id: Optional[str] = Field(None, description="Associated workspace ID")
-    organization_id: Optional[str] = Field(None, description="Associated organization ID")
+    workspace_id: Optional[int] = Field(None, description="Associated workspace ID")
+    persona_id: Optional[int] = Field(None, description="Associated persona ID")
 
 
 # ============================================================================
@@ -50,25 +51,26 @@ class ReviewUpdate(BaseModel):
 @router.get("")
 async def get_reviews(
     limit: Optional[int] = None,
-    workspace_id: Optional[str] = None,
-    organization_id: Optional[str] = None,
+    workspace_id: Optional[int] = None,
+    persona_id: Optional[int] = None,
     approved_only: bool = True,
-    current_user: dict = Depends(get_current_user)
+    current_user: Dict[str, Any] = Depends(ApplicationPermissionCheck.require_authenticated),
+    db: AsyncSession = Depends(get_db)
 ):
     """
     Get reviews with optional filters
     Requires authentication
     """
-    service = ReviewService()
+    service = ReviewService(db)
 
     if workspace_id:
-        reviews = service.get_by_workspace(workspace_id, limit)
-    elif organization_id:
-        reviews = service.get_by_organization(organization_id, limit)
+        reviews = await service.get_by_workspace(workspace_id, limit)
+    elif persona_id:
+        reviews = await service.get_by_persona(persona_id, limit)
     elif approved_only:
-        reviews = service.get_approved_reviews(limit)
+        reviews = await service.get_approved_reviews(limit)
     else:
-        reviews = service.get_all_reviews(limit)
+        reviews = await service.get_all_reviews(limit)
 
     return {
         "success": True,
@@ -79,15 +81,16 @@ async def get_reviews(
 
 @router.get("/{review_id}")
 async def get_review(
-    review_id: str,
-    current_user: dict = Depends(get_current_user)
+    review_id: int,
+    current_user: Dict[str, Any] = Depends(ApplicationPermissionCheck.require_authenticated),
+    db: AsyncSession = Depends(get_db)
 ):
     """
     Get a specific review by ID
     Requires authentication
     """
-    service = ReviewService()
-    review = service.get_by_id(review_id)
+    service = ReviewService(db)
+    review = await service.get_by_id(review_id)
 
     if not review:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Review not found")
@@ -106,17 +109,18 @@ async def get_review(
 @router.post("")
 async def create_review(
     review_data: ReviewCreate,
-    current_user: dict = Depends(get_current_user)
+    current_user: Dict[str, Any] = Depends(ApplicationPermissionCheck.require_authenticated),
+    db: AsyncSession = Depends(get_db)
 ):
     """
     Create a new review
     Requires authentication
     """
-    service = ReviewService()
+    service = ReviewService(db)
     data = review_data.model_dump()
     # Tag the review with the creating user's ID for ownership checks
     data['created_by'] = current_user.get('id')
-    review = service.create_review(data)
+    review = await service.create_review(data)
 
     return {
         "success": True,
@@ -127,19 +131,20 @@ async def create_review(
 
 @router.put("/{review_id}")
 async def update_review(
-    review_id: str,
+    review_id: int,
     review_data: ReviewUpdate,
-    current_user: dict = Depends(get_current_user)
+    current_user: Dict[str, Any] = Depends(ApplicationPermissionCheck.require_authenticated),
+    db: AsyncSession = Depends(get_db)
 ):
     """
     Update a review.
     Owners may update their own review; managers may update any review.
     Requires authentication
     """
-    service = ReviewService()
+    service = ReviewService(db)
 
     # Fetch the existing review to perform ownership check
-    existing = service.get_by_id(review_id)
+    existing = await service.get_by_id(review_id)
     if not existing:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Review not found")
 
@@ -148,8 +153,15 @@ async def update_review(
     is_manager = user_role in ('Manager', 'Admin', 'SuperAdmin')
     is_owner = existing.get('created_by') == user_id
 
+    # Enforce ownership: only the creator or a manager may update
+    if not is_manager and not is_owner:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Not authorized to update this review"
+        )
+
     update_payload = review_data.model_dump(exclude_unset=True)
-    success = service.update_review(review_id, update_payload)
+    success = await service.update_review(review_id, update_payload)
 
     if not success:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Review update failed")
@@ -160,17 +172,18 @@ async def update_review(
     }
 
 
-@router.patch("/{review_id}/approve", dependencies=[Depends(ApplicationRoleCheck.require_manager)])
+@router.patch("/{review_id}/approve")
 async def approve_review(
-    review_id: str,
-    current_user: dict = Depends(ApplicationRoleCheck.require_manager)
+    review_id: int,
+    current_user: Dict[str, Any] = Depends(ApplicationPermissionCheck.require('reviews:manage')),
+    db: AsyncSession = Depends(get_db)
 ):
     """
     Approve a review for public display
-    Requires Manager role or above
+    Requires reviews:manage permission
     """
-    service = ReviewService()
-    success = service.approve_review(review_id)
+    service = ReviewService(db)
+    success = await service.approve_review(review_id)
 
     if not success:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Review not found")
@@ -181,17 +194,18 @@ async def approve_review(
     }
 
 
-@router.patch("/{review_id}/reject", dependencies=[Depends(ApplicationRoleCheck.require_manager)])
+@router.patch("/{review_id}/reject")
 async def reject_review(
-    review_id: str,
-    current_user: dict = Depends(ApplicationRoleCheck.require_manager)
+    review_id: int,
+    current_user: Dict[str, Any] = Depends(ApplicationPermissionCheck.require('reviews:manage')),
+    db: AsyncSession = Depends(get_db)
 ):
     """
     Reject/unapprove a review
-    Requires Manager role or above
+    Requires reviews:manage permission
     """
-    service = ReviewService()
-    success = service.reject_review(review_id)
+    service = ReviewService(db)
+    success = await service.reject_review(review_id)
 
     if not success:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Review not found")
@@ -202,17 +216,18 @@ async def reject_review(
     }
 
 
-@router.delete("/{review_id}", dependencies=[Depends(ApplicationRoleCheck.require_manager)])
+@router.delete("/{review_id}")
 async def delete_review(
-    review_id: str,
-    current_user: dict = Depends(ApplicationRoleCheck.require_manager)
+    review_id: int,
+    current_user: Dict[str, Any] = Depends(ApplicationPermissionCheck.require('reviews:delete')),
+    db: AsyncSession = Depends(get_db)
 ):
     """
     Soft delete a review
-    Requires Manager role or above
+    Requires reviews:delete permission
     """
-    service = ReviewService()
-    success = service.delete_review(review_id)
+    service = ReviewService(db)
+    success = await service.delete_review(review_id)
 
     if not success:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Review not found or delete failed")

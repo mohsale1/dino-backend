@@ -1,56 +1,127 @@
-from typing import List, Optional, Dict, Any
+from typing import Any, Dict, List, Optional
+
 from fastapi import HTTPException, status
 
+# Actions that `resource:manage` implicitly covers.
+_MANAGE_IMPLIES: frozenset = frozenset({"read", "create", "update", "delete"})
+
+
 class BaseRoleCheck:
-    """Base role checking functionality"""
-    
-    @staticmethod
-    def check_role(user: Dict[str, Any], allowed_roles: List[str]) -> bool:
-        """Check if user has one of the allowed roles"""
-        user_role = user.get('role', {})
-        role_name = user_role.get('name', '')
-        return role_name in allowed_roles
-    
+    """Permission-based access control foundation.
+
+    Permissions are stored as codename strings on the user dict under
+    ``user['role']['permissions']`` — a list populated by the dependency
+    layer from the ``role_permissions`` join table.
+
+    Codename convention: ``resource:action``
+    Examples: ``categories:create``, ``orders:read``, ``users:manage``
+
+    Wildcard / superset rules (checked in order):
+      1. ``*``               — grants every permission
+      2. ``resource:*``      — grants all actions on a resource
+      3. ``resource:manage`` — grants read / create / update / delete on that resource
+      4. exact codename      — grants that specific action
+    """
+
     @staticmethod
     def check_permission(user: Dict[str, Any], required_permission: str) -> bool:
-        """Check if user has required permission"""
-        user_role = user.get('role', {})
-        permissions = user_role.get('permissions', [])
-        
-        # Check for wildcard permission
-        if '*' in permissions:
+        """Return True if the user holds the required permission codename.
+
+        Parameters
+        ----------
+        user:
+            The current-user dict produced by the dependency layer.
+            ``user['role']['permissions']`` must be a list of codename strings.
+        required_permission:
+            A codename in ``resource:action`` format.
+
+        Raises
+        ------
+        ValueError
+            If *required_permission* does not contain a colon separator.
+        """
+        if ":" not in required_permission:
+            raise ValueError(
+                f"Invalid permission codename '{required_permission}': "
+                "expected 'resource:action' format containing a colon."
+            )
+
+        permissions: List[str] = user.get("role", {}).get("permissions", [])
+
+        # 1. Global wildcard — user can do anything.
+        if "*" in permissions:
             return True
-        
-        # Check for exact permission
+
+        # 2. Exact match.
         if required_permission in permissions:
             return True
-        
-        # Check for wildcard in permission category (dot-notation: e.g. "application.orders.*")
-        permission_parts = required_permission.split('.')
-        if len(permission_parts) > 1:
-            wildcard_permission = f"{permission_parts[0]}.*"
-            if wildcard_permission in permissions:
-                return True
-        
-        return False
-    
-    @staticmethod
-    def require_role(user: Optional[Dict[str, Any]], allowed_roles: List[str]):
-        """Role check disabled - all authenticated users are permitted"""
-        if not user:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Not authenticated"
-            )
-        # Role enforcement removed: any authenticated user passes
 
-    
+        resource, action = required_permission.split(":", 1)
+
+        # 3. Resource-level wildcard: e.g. "categories:*" covers "categories:create".
+        if f"{resource}:*" in permissions:
+            return True
+
+        # 4. Manage superset: "resource:manage" covers read/create/update/delete.
+        if action in _MANAGE_IMPLIES and f"{resource}:manage" in permissions:
+            return True
+
+        return False
+
     @staticmethod
-    def require_permission(user: Optional[Dict[str, Any]], required_permission: str):
-        """Permission check disabled - all authenticated users are permitted"""
+    def check_any_permission(user: Dict[str, Any], required_permissions: List[str]) -> bool:
+        """Return True if the user holds at least one of the given permission codenames."""
+        return any(
+            BaseRoleCheck.check_permission(user, perm)
+            for perm in required_permissions
+        )
+
+    @staticmethod
+    def require_permission(user: Optional[Dict[str, Any]], required_permission: str) -> None:
+        """Enforce that the authenticated user holds the required permission.
+
+        Raises
+        ------
+        HTTP 401
+            User is not authenticated.
+        HTTP 403
+            User is authenticated but lacks the permission.
+        ValueError
+            *required_permission* is not in ``resource:action`` format.
+        """
         if not user:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Not authenticated"
+                detail="Not authenticated",
             )
-        # Permission enforcement removed: any authenticated user passes
+        if not BaseRoleCheck.check_permission(user, required_permission):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Permission denied: '{required_permission}' is required",
+            )
+
+    @staticmethod
+    def require_any_permission(
+        user: Optional[Dict[str, Any]], required_permissions: List[str]
+    ) -> None:
+        """Enforce that the authenticated user holds at least one of the given permissions.
+
+        Raises
+        ------
+        HTTP 401
+            User is not authenticated.
+        HTTP 403
+            User holds none of the required permissions.
+        ValueError
+            Any codename in *required_permissions* is not in ``resource:action`` format.
+        """
+        if not user:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Not authenticated",
+            )
+        if not BaseRoleCheck.check_any_permission(user, required_permissions):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Permission denied: one of {required_permissions} is required",
+            )

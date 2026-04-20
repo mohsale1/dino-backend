@@ -1,172 +1,234 @@
-from typing import Optional, List, Dict, Any, Tuple
-from src.config.Database import get_firestore_client
-from google.cloud.firestore_v1 import FieldFilter, Query
+"""
+BaseRepository — async SQLAlchemy 2.x generic CRUD layer for dino-system.
+"""
+
 from datetime import datetime, timezone
+from typing import Any, Dict, List, Optional, Tuple, Type
+
+from sqlalchemy import asc, desc, func, literal, select, update, delete
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from src.models.Base import Base
+from src.base.BaseModel import row_to_dict
+
 
 class BaseRepository:
-    """Base repository with generic CRUD operations"""
-    
-    def __init__(self, collection_name: str):
-        self.collection_name = collection_name
-        self.db = get_firestore_client()
-        self.collection = self.db.collection(collection_name)
-    
-    def create(self, data: Dict[str, Any]) -> Dict[str, Any]:
-        """Create a new document and return the created document"""
-        doc_ref = self.collection.document()
-        data['id'] = doc_ref.id
-        data['created_at'] = datetime.now(timezone.utc)
-        data['updated_at'] = datetime.now(timezone.utc)
-        if 'is_active' not in data:
-            data['is_active'] = True
-        if 'is_deleted' not in data:
-            data['is_deleted'] = False
-        doc_ref.set(data)
-        return data
-    
-    def get_by_id(self, doc_id: str, include_deleted: bool = False) -> Optional[Dict[str, Any]]:
-        """Get document by ID (excludes soft-deleted by default)"""
-        doc = self.collection.document(doc_id).get()
-        if doc.exists:
-            data = doc.to_dict()
-            if not include_deleted and data.get('is_deleted', False):
-                return None
-            return data
-        return None
-    
-    def get_by_field(self, field: str, value: Any, include_deleted: bool = False) -> Optional[Dict[str, Any]]:
-        """Get first document matching field value (excludes soft-deleted by default)"""
-        query = self.collection.where(filter=FieldFilter(field, "==", value))
-        
-        if not include_deleted:
-            query = query.where(filter=FieldFilter("is_deleted", "==", False))
-        
-        docs = query.limit(1).get()
-        if docs:
-            return docs[0].to_dict()
-        return None
-    
-    def get_by_email(self, email: str, include_deleted: bool = False) -> Optional[Dict[str, Any]]:
-        """Get document by email field (convenience method)"""
-        return self.get_by_field("email", email, include_deleted)
-    
-    def get_all(self, filters: Optional[Dict[str, Any]] = None, limit: Optional[int] = None, include_deleted: bool = False) -> List[Dict[str, Any]]:
-        """Get all documents with optional filters (excludes soft-deleted by default)"""
-        query = self.collection
-        
-        # Always filter out soft-deleted unless explicitly requested
-        if not include_deleted:
-            query = query.where(filter=FieldFilter("is_deleted", "==", False))
-        
+    """Generic async repository backed by SQLAlchemy 2.x + asyncpg."""
+
+    def __init__(self, model: Type[Base], db: AsyncSession) -> None:
+        self.model = model
+        self.db = db
+
+    # ------------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------------
+
+    def _apply_soft_delete_filter(self, stmt, include_deleted: bool):
+        """Append is_active = true filter when the model supports it."""
+        if not include_deleted and hasattr(self.model, "is_active"):
+            stmt = stmt.where(self.model.is_active == True)  # noqa: E712
+        return stmt
+
+    def _apply_filters(self, stmt, filters: Optional[Dict[str, Any]]):
+        """Append equality filters for each key/value pair."""
         if filters:
             for field, value in filters.items():
-                query = query.where(filter=FieldFilter(field, "==", value))
-        
+                column = getattr(self.model, field, None)
+                if column is not None:
+                    stmt = stmt.where(column == value)
+        return stmt
+
+    # ------------------------------------------------------------------
+    # Write operations
+    # ------------------------------------------------------------------
+
+    async def create(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        """Insert a new row and return it as a dict."""
+        instance = self.model(**data)
+        self.db.add(instance)
+        await self.db.flush()
+        await self.db.refresh(instance)
+        return row_to_dict(instance)
+
+    async def bulk_create(self, items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Insert multiple rows and return them as dicts."""
+        instances = [self.model(**item) for item in items]
+        self.db.add_all(instances)
+        await self.db.flush()
+        for instance in instances:
+            await self.db.refresh(instance)
+        return [row_to_dict(i) for i in instances]
+
+    async def update(self, entity_id: Any, data: Dict[str, Any]) -> bool:
+        """
+        Update a row by primary key.
+        Sets updated_at automatically when the column exists.
+        Returns True if a row was matched, False otherwise.
+        """
+        if hasattr(self.model, "updated_at"):
+            data = {**data, "updated_at": datetime.now(timezone.utc)}
+
+        pk_col = self.model.__table__.primary_key.columns.values()[0]
+        stmt = (
+            update(self.model)
+            .where(pk_col == entity_id)
+            .values(**data)
+            .execution_options(synchronize_session="fetch")
+        )
+        result = await self.db.execute(stmt)
+        return result.rowcount > 0
+
+    async def soft_delete(self, entity_id: Any) -> bool:
+        """Mark a row as deleted without removing it from the database."""
+        return await self.update(entity_id, {"is_active": False})
+
+    async def restore(self, entity_id: Any) -> bool:
+        """Restore a previously soft-deleted row."""
+        return await self.update(entity_id, {"is_active": True})
+
+    async def delete(self, entity_id: Any) -> bool:
+        """
+        Hard-delete a row by primary key.
+        NOT RECOMMENDED — prefer soft_delete() instead.
+        """
+        pk_col = self.model.__table__.primary_key.columns.values()[0]
+        stmt = (
+            delete(self.model)
+            .where(pk_col == entity_id)
+            .execution_options(synchronize_session="fetch")
+        )
+        result = await self.db.execute(stmt)
+        return result.rowcount > 0
+
+    # ------------------------------------------------------------------
+    # Read operations
+    # ------------------------------------------------------------------
+
+    async def get_by_id(
+        self, entity_id: Any, include_deleted: bool = False
+    ) -> Optional[Dict[str, Any]]:
+        """Fetch a single row by primary key. Returns None if not found."""
+        pk_col = self.model.__table__.primary_key.columns.values()[0]
+        stmt = select(self.model).where(pk_col == entity_id)
+        stmt = self._apply_soft_delete_filter(stmt, include_deleted)
+        result = await self.db.execute(stmt)
+        row = result.scalars().first()
+        return row_to_dict(row) if row is not None else None
+
+    async def get_by_field(
+        self, field: str, value: Any, include_deleted: bool = False
+    ) -> Optional[Dict[str, Any]]:
+        """Fetch the first row where *field* equals *value*."""
+        column = getattr(self.model, field, None)
+        if column is None:
+            raise ValueError(f"Model '{self.model.__name__}' has no field '{field}'")
+        stmt = select(self.model).where(column == value)
+        stmt = self._apply_soft_delete_filter(stmt, include_deleted)
+        stmt = stmt.limit(1)
+        result = await self.db.execute(stmt)
+        row = result.scalars().first()
+        return row_to_dict(row) if row is not None else None
+
+    async def get_by_email(
+        self, email: str, include_deleted: bool = False
+    ) -> Optional[Dict[str, Any]]:
+        """Convenience wrapper around get_by_field for the email column."""
+        return await self.get_by_field("email", email, include_deleted)
+
+    async def get_all(
+        self,
+        filters: Optional[Dict[str, Any]] = None,
+        limit: Optional[int] = None,
+        include_deleted: bool = False,
+        order_by: Optional[str] = None,
+        order_direction: str = "asc",
+    ) -> List[Dict[str, Any]]:
+        """Return all rows matching the given filters."""
+        stmt = select(self.model)
+        stmt = self._apply_soft_delete_filter(stmt, include_deleted)
+        stmt = self._apply_filters(stmt, filters)
+
+        if order_by:
+            column = getattr(self.model, order_by, None)
+            if column is not None:
+                stmt = stmt.order_by(
+                    asc(column) if order_direction.lower() == "asc" else desc(column)
+                )
+
         if limit:
-            query = query.limit(limit)
-        
-        docs = query.get()
-        return [doc.to_dict() for doc in docs]
-    
-    def get_paginated(
-        self, 
-        page: int = 1, 
-        page_size: int = 10, 
+            stmt = stmt.limit(limit)
+
+        result = await self.db.execute(stmt)
+        return [row_to_dict(row) for row in result.scalars().all()]
+
+    async def get_paginated(
+        self,
+        page: int = 1,
+        page_size: int = 10,
         filters: Optional[Dict[str, Any]] = None,
         include_deleted: bool = False,
         order_by: Optional[str] = None,
-        order_direction: str = "asc"
+        order_direction: str = "asc",
     ) -> Tuple[List[Dict[str, Any]], int, int]:
         """
-        Get paginated documents.
+        Return a page of rows together with the total count and total pages.
+
+        Uses two SQL queries:
+          1. COUNT(*) for the total
+          2. SELECT … LIMIT/OFFSET for the page
+
         Returns: (items, total_count, total_pages)
-
-        Sorting and pagination are performed in Python after a single Firestore
-        fetch to avoid composite index requirements (Firestore requires a
-        composite index whenever a where() filter is combined with order_by()).
         """
-        query = self.collection
+        # --- COUNT query ---
+        count_stmt = select(func.count()).select_from(self.model)
+        count_stmt = self._apply_soft_delete_filter(count_stmt, include_deleted)
+        count_stmt = self._apply_filters(count_stmt, filters)
+        total_count: int = (await self.db.execute(count_stmt)).scalar_one()
 
-        # Single-field filter — no composite index needed
-        if not include_deleted:
-            query = query.where(filter=FieldFilter("is_deleted", "==", False))
-
-        if filters:
-            for field, value in filters.items():
-                query = query.where(filter=FieldFilter(field, "==", value))
-
-        # Fetch all matching documents once
-        all_docs = [doc.to_dict() for doc in query.get()]
-        total_count = len(all_docs)
         total_pages = max(1, (total_count + page_size - 1) // page_size)
-
-        # Sort in Python — no Firestore index required
-        if order_by:
-            reverse = order_direction.lower() == "desc"
-            all_docs.sort(
-                key=lambda d: (d.get(order_by) is None, d.get(order_by)),
-                reverse=reverse
-            )
-
-        # Paginate in Python
         offset = (page - 1) * page_size
-        items = all_docs[offset: offset + page_size]
+
+        # --- Data query ---
+        stmt = select(self.model)
+        stmt = self._apply_soft_delete_filter(stmt, include_deleted)
+        stmt = self._apply_filters(stmt, filters)
+
+        if order_by:
+            column = getattr(self.model, order_by, None)
+            if column is not None:
+                stmt = stmt.order_by(
+                    asc(column) if order_direction.lower() == "asc" else desc(column)
+                )
+
+        stmt = stmt.limit(page_size).offset(offset)
+        result = await self.db.execute(stmt)
+        items = [row_to_dict(row) for row in result.scalars().all()]
 
         return items, total_count, total_pages
-    
-    def update(self, doc_id: str, data: Dict[str, Any]) -> bool:
-        """Update document by ID"""
-        try:
-            data['updated_at'] = datetime.now(timezone.utc)
-            self.collection.document(doc_id).update(data)
-            return True
-        except Exception:
-            return False
-    
-    def delete(self, doc_id: str) -> bool:
-        """Hard delete document by ID (NOT RECOMMENDED - use soft_delete instead)"""
-        try:
-            self.collection.document(doc_id).delete()
-            return True
-        except Exception:
-            return False
-    
-    def soft_delete(self, doc_id: str) -> bool:
-        """Soft delete by setting is_deleted to True and is_active to False"""
-        return self.update(doc_id, {
-            'is_deleted': True,
-            'is_active': False,
-            'deleted_at': datetime.now(timezone.utc)
-        })
-    
-    def restore(self, doc_id: str) -> bool:
-        """Restore a soft-deleted document"""
-        return self.update(doc_id, {
-            'is_deleted': False,
-            'is_active': True,
-            'restored_at': datetime.now(timezone.utc)
-        })
-    
-    def exists(self, field: str, value: Any, include_deleted: bool = False) -> bool:
-        """Check if document exists with field value (excludes soft-deleted by default)"""
-        query = self.collection.where(filter=FieldFilter(field, "==", value))
-        
-        if not include_deleted:
-            query = query.where(filter=FieldFilter("is_deleted", "==", False))
-        
-        docs = query.limit(1).get()
-        return len(docs) > 0
-    
-    def count(self, filters: Optional[Dict[str, Any]] = None, include_deleted: bool = False) -> int:
-        """Count documents with optional filters (excludes soft-deleted by default)"""
-        query = self.collection
-        
-        # Always filter out soft-deleted unless explicitly requested
-        if not include_deleted:
-            query = query.where(filter=FieldFilter("is_deleted", "==", False))
-        
-        if filters:
-            for field, value in filters.items():
-                query = query.where(filter=FieldFilter(field, "==", value))
-        
-        return len(query.get())
+
+    # ------------------------------------------------------------------
+    # Existence / count helpers
+    # ------------------------------------------------------------------
+
+    async def exists(
+        self, field: str, value: Any, include_deleted: bool = False
+    ) -> bool:
+        """Return True if at least one row matches field == value."""
+        column = getattr(self.model, field, None)
+        if column is None:
+            raise ValueError(f"Model '{self.model.__name__}' has no field '{field}'")
+        stmt = select(literal(1)).select_from(self.model).where(column == value).limit(1)
+        stmt = self._apply_soft_delete_filter(stmt, include_deleted)
+        result = (await self.db.execute(stmt)).scalar()
+        return result is not None
+
+    async def count(
+        self,
+        filters: Optional[Dict[str, Any]] = None,
+        include_deleted: bool = False,
+    ) -> int:
+        """Return the number of rows matching the given filters."""
+        stmt = select(func.count()).select_from(self.model)
+        stmt = self._apply_soft_delete_filter(stmt, include_deleted)
+        stmt = self._apply_filters(stmt, filters)
+        return (await self.db.execute(stmt)).scalar_one()

@@ -1,27 +1,25 @@
-from src.base.BaseModel import BaseModel
-from typing import Optional
+"""
+BaseUser — user-specific sanitisation utilities.
 
-class BaseUser(BaseModel):
-    """Base user model with common user fields"""
-    
-    def __init__(self):
-        super().__init__()
-        self.email: str = ""
-        self.password_hash: str = ""
-        self.first_name: str = ""
-        self.last_name: str = ""
-        self.phone: Optional[str] = None
-        self.role_id: str = ""
-    
-    @property
-    def full_name(self) -> str:
-        """Get full name"""
-        return f"{self.first_name} {self.last_name}".strip()
-    
-    def to_dict(self, include_password: bool = False) -> dict:
-        """Convert user to dictionary"""
-        data = super().to_dict()
-        data['full_name'] = self.full_name
-        if not include_password:
-            data.pop('password_hash', None)
-        return data
+The ORM User model lives in src/models/User.py.
+This module provides constants and helpers for stripping sensitive fields
+from user dicts before they are returned to callers or serialised to JSON.
+"""
+
+from typing import Dict, Any
+
+SENSITIVE_USER_FIELDS: frozenset = frozenset([
+    "password_hash",
+    "password",
+    "reset_token",
+    "reset_token_expires_at",
+])
+
+
+def sanitize_user(user: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Return a shallow copy of *user* with all sensitive fields removed.
+
+    Safe to call even when the fields are absent.
+    """
+    return {k: v for k, v in user.items() if k not in SENSITIVE_USER_FIELDS}

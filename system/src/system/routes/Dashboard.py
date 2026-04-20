@@ -4,20 +4,22 @@ Provides endpoints for system-level analytics and statistics
 """
 import logging
 from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy.ext.asyncio import AsyncSession
 from typing import Dict, Any
 
-from src.core.Dependencies import get_current_system_user
-from src.system.middleware.RoleCheck import SystemRoleCheck
+from src.system.middleware.RoleCheck import SystemPermissionCheck
 from src.system.services.Dashboard import SystemDashboardService
+from src.config.Database import get_db
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/dashboard", tags=["System Dashboard"])
 
 
-@router.get("", response_model=Dict[str, Any], dependencies=[Depends(SystemRoleCheck.require_super_admin)])
+@router.get("", response_model=Dict[str, Any], dependencies=[Depends(SystemPermissionCheck.require('dashboard:read'))])
 async def get_system_dashboard(
-    current_user: Dict[str, Any] = Depends(get_current_system_user)
+    current_user: Dict[str, Any] = Depends(SystemPermissionCheck.require_authenticated),
+    db: AsyncSession = Depends(get_db)
 ):
     """
     Get comprehensive system dashboard data
@@ -29,16 +31,15 @@ async def get_system_dashboard(
     - Top user onboarders
     - Recent activity (last 24 hours)
     - Subscription stats
-    - Registration code stats
     """
     try:
-        stats = SystemDashboardService.get_system_stats()
-        workspace_growth = SystemDashboardService.get_workspace_growth_trend(days=30)
-        user_distribution = SystemDashboardService.get_user_distribution()
-        top_onboarders = SystemDashboardService.get_top_onboarders(limit=5)
-        recent_activity = SystemDashboardService.get_recent_activity(limit=20)
-        subscription_stats = SystemDashboardService.get_subscription_stats()
-        code_stats = SystemDashboardService.get_registration_code_stats()
+        service = SystemDashboardService(db)
+        stats = await service.get_system_stats()
+        workspace_growth = await service.get_workspace_growth_trend(days=30)
+        user_distribution = await service.get_user_distribution()
+        top_onboarders = await service.get_top_onboarders(limit=5)
+        recent_activity = await service.get_recent_activity(limit=20)
+        subscription_stats = await service.get_subscription_stats()
 
         return {
             "success": True,
@@ -49,7 +50,6 @@ async def get_system_dashboard(
                 "top_onboarders": top_onboarders,
                 "recent_activity": recent_activity,
                 "subscription_stats": subscription_stats,
-                "registration_code_stats": code_stats
             }
         }
     except Exception as e:
@@ -60,13 +60,15 @@ async def get_system_dashboard(
         )
 
 
-@router.get("/stats", response_model=Dict[str, Any], dependencies=[Depends(SystemRoleCheck.require_super_admin)])
+@router.get("/stats", response_model=Dict[str, Any], dependencies=[Depends(SystemPermissionCheck.require('dashboard:read'))])
 async def get_system_stats(
-    current_user: Dict[str, Any] = Depends(get_current_system_user)
+    current_user: Dict[str, Any] = Depends(SystemPermissionCheck.require_authenticated),
+    db: AsyncSession = Depends(get_db)
 ):
     """Get overall system statistics"""
     try:
-        stats = SystemDashboardService.get_system_stats()
+        service = SystemDashboardService(db)
+        stats = await service.get_system_stats()
         return {
             "success": True,
             "data": stats
@@ -79,14 +81,16 @@ async def get_system_stats(
         )
 
 
-@router.get("/workspace-growth", response_model=Dict[str, Any], dependencies=[Depends(SystemRoleCheck.require_super_admin)])
+@router.get("/workspace-growth", response_model=Dict[str, Any], dependencies=[Depends(SystemPermissionCheck.require('dashboard:read'))])
 async def get_workspace_growth(
     days: int = 30,
-    current_user: Dict[str, Any] = Depends(get_current_system_user)
+    current_user: Dict[str, Any] = Depends(SystemPermissionCheck.require_authenticated),
+    db: AsyncSession = Depends(get_db)
 ):
     """Get workspace growth trend"""
     try:
-        growth_data = SystemDashboardService.get_workspace_growth_trend(days)
+        service = SystemDashboardService(db)
+        growth_data = await service.get_workspace_growth_trend(days)
         return {
             "success": True,
             "data": growth_data
@@ -99,13 +103,15 @@ async def get_workspace_growth(
         )
 
 
-@router.get("/user-distribution", response_model=Dict[str, Any], dependencies=[Depends(SystemRoleCheck.require_super_admin)])
+@router.get("/user-distribution", response_model=Dict[str, Any], dependencies=[Depends(SystemPermissionCheck.require('dashboard:read'))])
 async def get_user_distribution(
-    current_user: Dict[str, Any] = Depends(get_current_system_user)
+    current_user: Dict[str, Any] = Depends(SystemPermissionCheck.require_authenticated),
+    db: AsyncSession = Depends(get_db)
 ):
     """Get user distribution by role"""
     try:
-        distribution = SystemDashboardService.get_user_distribution()
+        service = SystemDashboardService(db)
+        distribution = await service.get_user_distribution()
         return {
             "success": True,
             "data": distribution
@@ -118,14 +124,16 @@ async def get_user_distribution(
         )
 
 
-@router.get("/top-onboarders", response_model=Dict[str, Any], dependencies=[Depends(SystemRoleCheck.require_super_admin)])
+@router.get("/top-onboarders", response_model=Dict[str, Any], dependencies=[Depends(SystemPermissionCheck.require('dashboard:read'))])
 async def get_top_onboarders(
     limit: int = 5,
-    current_user: Dict[str, Any] = Depends(get_current_system_user)
+    current_user: Dict[str, Any] = Depends(SystemPermissionCheck.require_authenticated),
+    db: AsyncSession = Depends(get_db)
 ):
     """Get top user onboarders"""
     try:
-        onboarders = SystemDashboardService.get_top_onboarders(limit)
+        service = SystemDashboardService(db)
+        onboarders = await service.get_top_onboarders(limit)
         return {
             "success": True,
             "data": onboarders
@@ -138,14 +146,16 @@ async def get_top_onboarders(
         )
 
 
-@router.get("/recent-activity", response_model=Dict[str, Any], dependencies=[Depends(SystemRoleCheck.require_super_admin)])
+@router.get("/recent-activity", response_model=Dict[str, Any], dependencies=[Depends(SystemPermissionCheck.require('dashboard:read'))])
 async def get_recent_activity(
     limit: int = 20,
-    current_user: Dict[str, Any] = Depends(get_current_system_user)
+    current_user: Dict[str, Any] = Depends(SystemPermissionCheck.require_authenticated),
+    db: AsyncSession = Depends(get_db)
 ):
     """Get recent system activity (last 24 hours)"""
     try:
-        activity = SystemDashboardService.get_recent_activity(limit)
+        service = SystemDashboardService(db)
+        activity = await service.get_recent_activity(limit)
         return {
             "success": True,
             "data": activity
