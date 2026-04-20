@@ -20,7 +20,12 @@ class CouponRepository(BaseRepository):
 
         docs = query.limit(1).get()
         if docs:
-            return docs[0].to_dict()
+            doc = docs[0]
+            data = doc.to_dict()
+            # Ensure the document ID is always present in the returned dict
+            if 'id' not in data or not data['id']:
+                data['id'] = doc.id
+            return data
         return None
 
     def get_by_workspace(

@@ -1,9 +1,10 @@
 from fastapi import APIRouter, HTTPException, status, Depends, Query
-from src.schemas.Auth import LoginRequest, LoginResponse, RefreshTokenRequest, RefreshTokenResponse, SignupRequest, SignupResponse
+from src.schemas.Auth import LoginRequest, LoginResponse, RefreshTokenRequest, RefreshTokenResponse, SignupRequest, SignupResponse, ChangePasswordRequest
 from src.application.services.Auth import ApplicationAuthService
 from src.base.BaseSchema import BaseResponse
-from src.core.Security import decode_token, verify_token_type
+from src.core.Security import decode_token, verify_token_type, verify_password, get_password_hash
 from src.core.Dependencies import get_current_application_user
+from src.repositories.UserRepository import UserRepository
 from typing import Dict, Any
 
 router = APIRouter(prefix="/auth", tags=["Application Auth"])
@@ -226,3 +227,50 @@ async def get_current_user(current_user: Dict[str, Any] = Depends(get_current_ap
 async def get_current_user_data(current_user: Dict[str, Any] = Depends(get_current_application_user)):
     """Get current application user data (alias for /me for compatibility)"""
     return await get_current_user(current_user)
+
+
+@router.post("/change-password", response_model=BaseResponse)
+async def change_password(
+    request: ChangePasswordRequest,
+    current_user: Dict[str, Any] = Depends(get_current_application_user)
+):
+    """Change password for the currently authenticated application user"""
+    user_repo = UserRepository("application_users")
+
+    user_id = current_user.get('id')
+    user = user_repo.get_by_id(user_id)
+
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found"
+        )
+
+    # Verify old password
+    if not verify_password(request.old_password, user.get('password_hash', '')):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Current password is incorrect"
+        )
+
+    # Prevent reuse of the same password
+    if verify_password(request.new_password, user.get('password_hash', '')):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="New password must be different from the current password"
+        )
+
+    # Update password
+    new_hash = get_password_hash(request.new_password)
+    success = user_repo.update(user_id, {"password_hash": new_hash})
+
+    if not success:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to update password"
+        )
+
+    return {
+        "success": True,
+        "message": "Password changed successfully"
+    }

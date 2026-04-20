@@ -43,40 +43,57 @@ class ApplicationUserService:
         order_direction: str = "desc"
     ) -> Tuple[List[Dict[str, Any]], int, int]:
         """
-        Get paginated list of application users
-        
-        Args:
-            page: Page number
-            page_size: Number of items per page
-            filters: Additional filters
-            search_query: Search query for name/email
-            include_deleted: Include soft-deleted users
-            order_by: Field to order by
-            order_direction: Order direction (asc/desc)
-            
-        Returns:
-            Tuple of (items, total_count, total_pages)
+        Get paginated list of application users with role name resolved and
+        sensitive fields stripped from every record.
+
+        The caller-supplied filters dict is used as-is (workspace_id,
+        organization_id, etc. are already set by the route layer).
+        is_deleted is appended here only when include_deleted is False so
+        the repository does not apply it a second time.
         """
-        # Build filters
+        import math
+
         if filters is None:
             filters = {}
-        
+
+        # Only add is_deleted to the filter dict when we want to exclude them;
+        # BaseRepository.get_paginated already has its own include_deleted guard
+        # so we pass include_deleted=True and control the filter ourselves to
+        # avoid Firestore duplicate-filter conflicts.
         if not include_deleted:
             filters['is_deleted'] = False
-        
-        # Add search functionality
+
         if search_query:
-            # This would need to be implemented in the repository
-            # For now, we'll get all and filter in memory (not ideal for production)
-            pass
-        
-        return self.user_repo.get_paginated(
-            page=page,
-            page_size=page_size,
-            filters=filters,
-            order_by=order_by,
-            order_direction=order_direction
-        )
+            # Fetch all matching records, filter in memory, then paginate
+            all_items = self.user_repo.get_all(
+                filters=filters if filters else None,
+                include_deleted=True   # is_deleted already in filters above
+            )
+            needle = search_query.lower()
+            filtered = [
+                user for user in all_items
+                if needle in (user.get('email') or '').lower()
+                or needle in (user.get('first_name') or '').lower()
+                or needle in (user.get('last_name') or '').lower()
+            ]
+            total = len(filtered)
+            total_pages = math.ceil(total / page_size) if page_size > 0 else 0
+            start = (page - 1) * page_size
+            end = start + page_size
+            items = filtered[start:end]
+        else:
+            items, total, total_pages = self.user_repo.get_paginated(
+                page=page,
+                page_size=page_size,
+                filters=filters,
+                include_deleted=True,  # is_deleted already in filters above
+                order_by=order_by,
+                order_direction=order_direction
+            )
+
+        return self._enrich_and_sanitize(items), total, total_pages
+
+
     
     def get_by_id(self, user_id: str, include_deleted: bool = False) -> Optional[Dict[str, Any]]:
         """Get user by ID"""
@@ -87,24 +104,46 @@ class ApplicationUserService:
         
         return user
     
+    def _sanitize_user(self, user: Dict[str, Any]) -> Dict[str, Any]:
+        """Strip sensitive fields from a user record."""
+        sensitive = {'password_hash', 'password', 'reset_token', 'reset_token_expires_at'}
+        return {k: v for k, v in user.items() if k not in sensitive}
+
+    def _enrich_and_sanitize(self, users: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """
+        Resolve role_id -> role name and strip sensitive fields for a list of users.
+        Roles are cached in a local dict to avoid redundant Firestore reads.
+        """
+        role_cache: Dict[str, Dict[str, Any]] = {}
+        result = []
+        for user in users:
+            user = self._sanitize_user(user)
+            role_id = user.pop('role_id', None)
+            if role_id:
+                if role_id not in role_cache:
+                    role = self.role_repo.get_by_id(role_id)
+                    role_cache[role_id] = role or {}
+                role = role_cache[role_id]
+                if role:
+                    user['role'] = {
+                        'id': role.get('id'),
+                        'name': role.get('name'),
+                        'role_type': role.get('role_type', 1)
+                    }
+            result.append(user)
+        return result
+
     def get_user_with_role(self, user_id: str) -> Optional[Dict[str, Any]]:
-        """Get user with role information"""
+        """Get a single user with role resolved and sensitive fields stripped."""
         user = self.get_by_id(user_id)
-        
+
         if not user:
             return None
-        
-        # Get role information
-        if user.get('role_id'):
-            role = self.role_repo.get_by_id(user['role_id'])
-            if role:
-                user['role'] = {
-                    'id': role['id'],
-                    'name': role['name'],
-                    'role_type': role.get('role_type', 1)
-                }
-        
-        return user
+
+        users = self._enrich_and_sanitize([user])
+        return users[0] if users else None
+
+
     
     def update_user(self, user_id: str, update_data: Dict[str, Any]) -> bool:
         """Update user"""
@@ -129,9 +168,12 @@ class ApplicationUserService:
         })
     
     def email_exists(self, email: str) -> bool:
-        """Check if email already exists"""
+        """Check if email already exists (case-insensitive)"""
         users = self.user_repo.get_all(filters={'email': email})
-        return len(users) > 0
+        # Firestore equality filter is case-sensitive; perform a case-insensitive
+        # comparison in memory to catch variations in casing.
+        needle = email.lower()
+        return any((u.get('email') or '').lower() == needle for u in users)
     
     def validate_application_role(self, role_id: str) -> bool:
         """Validate that role exists and is an application role (role_type = 1)"""
@@ -143,23 +185,39 @@ class ApplicationUserService:
         # Check if it's an application role (role_type = 1)
         return role.get('role_type') == 1
     
-    def get_users_by_role(self, role_id: str) -> List[Dict[str, Any]]:
-        """Get all users with a specific role"""
-        return self.user_repo.get_all(filters={
+    def get_users_by_role(self, role_id: str, workspace_id: Optional[str] = None) -> List[Dict[str, Any]]:
+        """Get all users with a specific role, optionally scoped to a workspace"""
+        filters: Dict[str, Any] = {
             'role_id': role_id,
             'is_deleted': False
-        })
+        }
+        if workspace_id:
+            filters['workspace_id'] = workspace_id
+        users = self.user_repo.get_all(filters=filters, include_deleted=True)
+        return self._enrich_and_sanitize(users)
+
+
+
     
     def get_users_by_workspace(self, workspace_id: str) -> List[Dict[str, Any]]:
         """Get all users in a workspace"""
-        return self.user_repo.get_all(filters={
+        users = self.user_repo.get_all(filters={
             'workspace_id': workspace_id,
             'is_deleted': False
-        })
+        }, include_deleted=True)
+        return self._enrich_and_sanitize(users)
+
+
     
-    def get_users_by_organization(self, organization_id: str) -> List[Dict[str, Any]]:
-        """Get all users in an organization"""
-        return self.user_repo.get_all(filters={
+    def get_users_by_organization(self, organization_id: str, workspace_id: Optional[str] = None) -> List[Dict[str, Any]]:
+        """Get all users in an organization, optionally scoped to a workspace"""
+        filters: Dict[str, Any] = {
             'organization_id': organization_id,
             'is_deleted': False
-        })
+        }
+        if workspace_id:
+            filters['workspace_id'] = workspace_id
+        users = self.user_repo.get_all(filters=filters, include_deleted=True)
+        return self._enrich_and_sanitize(users)
+
+

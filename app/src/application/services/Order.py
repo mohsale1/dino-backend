@@ -19,7 +19,7 @@ class OrderService(BaseService):
         return f"ORD-{timestamp}-{random_suffix}"
 
     def create_order(self, data: Dict[str, Any]) -> str:
-        """Create new order"""
+        """Create new order and return the new order ID"""
         # Generate order number
         data['order_number'] = self.generate_order_number()
 
@@ -46,7 +46,9 @@ class OrderService(BaseService):
             if organization:
                 data['workspace_id'] = organization.get('workspace_id')
 
-        return self.create(data)
+        created = self.create(data)
+        return created['id']
+
 
     def update_order_status(self, order_id: str, status: str) -> bool:
         """Update order status"""
@@ -64,6 +66,9 @@ class OrderService(BaseService):
 
         Date values may be ISO-format strings or datetime objects.
         """
+        # Work on a copy so the caller's dict is never mutated
+        filters = dict(filters)
+
         # Separate date-range filters from Firestore equality filters
         start_date = filters.pop('start_date', None)
         end_date = filters.pop('end_date', None)
@@ -121,12 +126,10 @@ class OrderService(BaseService):
         today_revenue = 0.0
 
         for order in orders:
-            amount = float(order.get('total_amount') or 0)
-            total_revenue += amount
-
             order_status = order.get('status', 'unknown')
             orders_by_status[order_status] = orders_by_status.get(order_status, 0) + 1
 
+            # Resolve the order timestamp once for reuse below
             created = order.get('created_at') or order.get('order_date')
             if created is not None:
                 if isinstance(created, str):
@@ -137,9 +140,21 @@ class OrderService(BaseService):
                 if isinstance(created, datetime):
                     if created.tzinfo is None:
                         created = created.replace(tzinfo=timezone.utc)
+
+            # Exclude cancelled orders from all revenue calculations
+            if order_status != 'cancelled':
+                amount = float(order.get('total_amount') or 0)
+                total_revenue += amount
+
+                if created is not None and isinstance(created, datetime):
                     if today_start <= created <= today_end:
                         today_orders += 1
                         today_revenue += amount
+            else:
+                # Still count today's cancelled orders in today_orders for status tracking
+                if created is not None and isinstance(created, datetime):
+                    if today_start <= created <= today_end:
+                        today_orders += 1
 
         avg_order_value = (total_revenue / total_orders) if total_orders > 0 else 0.0
 

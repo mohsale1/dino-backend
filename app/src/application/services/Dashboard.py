@@ -87,51 +87,45 @@ class DashboardService:
         }
     
     def _get_orders(
-        self, 
-        workspace_id: str, 
+        self,
+        workspace_id: str,
         organization_id: Optional[str] = None,
         start_date: Optional[str] = None,
         end_date: Optional[str] = None
     ) -> List[Dict[str, Any]]:
-        """Get orders with optional filters"""
+        """Get orders with optional date filters applied in-memory"""
         filters = {"workspace_id": workspace_id}
-        
+
         if organization_id:
             filters["organization_id"] = organization_id
-        
-        # Get all orders (we'll filter by date in memory for simplicity)
+
         orders, _, _ = self.order_service.get_paginated(
             page=1,
-            page_size=1000,  # Get a large batch
+            page_size=1000,
             filters=filters,
             order_by="created_at",
             order_direction="desc"
         )
-        
-        # Filter by date if provided
-        if start_date or end_date:
-            filtered_orders = []
-            for order in orders:
-                order_date = order.get("created_at") or order.get("order_date")
-                if order_date:
-                    if isinstance(order_date, str):
-                        order_date = datetime.fromisoformat(order_date.replace('Z', '+00:00'))
-                    
-                    if start_date:
-                        start = datetime.fromisoformat(start_date.replace('Z', '+00:00'))
-                        if order_date < start:
-                            continue
-                    
-                    if end_date:
-                        end = datetime.fromisoformat(end_date.replace('Z', '+00:00'))
-                        if order_date > end:
-                            continue
-                    
-                    filtered_orders.append(order)
-            
-            return filtered_orders
-        
-        return orders
+
+        if not (start_date or end_date):
+            return orders
+
+        start_dt = self._parse_date_boundary(start_date, end_of_day=False) if start_date else None
+        end_dt   = self._parse_date_boundary(end_date,   end_of_day=True)  if end_date   else None
+
+        filtered_orders = []
+        for order in orders:
+            order_date = self._get_order_date(order)
+            if order_date is None:
+                continue
+            if start_dt and order_date < start_dt:
+                continue
+            if end_dt and order_date > end_dt:
+                continue
+            filtered_orders.append(order)
+
+        return filtered_orders
+
     
     def _calculate_stats(
         self, 
@@ -154,10 +148,6 @@ class DashboardService:
             order_date = self._get_order_date(order)
             if order_date is None:
                 continue
-
-            # Ensure order_date is timezone-aware before comparing
-            if order_date.tzinfo is None:
-                order_date = order_date.replace(tzinfo=timezone.utc)
 
             if order_date.date() == today:
                 todays_orders.append(order)
@@ -227,8 +217,6 @@ class DashboardService:
                 order_date = self._get_order_date(o)
                 if order_date is None:
                     continue
-                if order_date.tzinfo is None:
-                    order_date = order_date.replace(tzinfo=timezone.utc)
                 if order_date.date() == date:
                     day_orders.append(o)
             
@@ -473,13 +461,45 @@ class DashboardService:
         
         return statuses
     
+    def _parse_date_boundary(self, value: str, end_of_day: bool = False) -> datetime:
+        """Parse a date or datetime string into a timezone-aware UTC datetime.
+
+        Handles both date-only strings (e.g. '2026-03-06') and full ISO datetime
+        strings. When end_of_day=True and only a date is supplied, the boundary
+        is set to 23:59:59.999999 UTC so the entire day is included.
+        """
+        value = value.strip().replace('Z', '+00:00')
+        try:
+            dt = datetime.fromisoformat(value)
+        except ValueError:
+            # Fallback: treat as date-only
+            from datetime import date
+            dt = datetime.combine(date.fromisoformat(value[:10]), datetime.min.time())
+
+        # Make timezone-aware
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+
+        # If only a date was given (time is midnight) and we want end-of-day, push to 23:59:59
+        if end_of_day and dt.hour == 0 and dt.minute == 0 and dt.second == 0:
+            dt = dt.replace(hour=23, minute=59, second=59, microsecond=999999)
+
+        return dt
+
     def _get_order_date(self, order: Dict[str, Any]) -> Optional[datetime]:
-        """Get order date as datetime object, or None if not present"""
+        """Get order date as a timezone-aware datetime object, or None if not present"""
         order_date = order.get("created_at") or order.get("order_date")
-        
+
         if isinstance(order_date, str):
-            return datetime.fromisoformat(order_date.replace('Z', '+00:00'))
+            order_date = datetime.fromisoformat(order_date.replace('Z', '+00:00'))
         elif isinstance(order_date, datetime):
-            return order_date
+            pass
         else:
             return None
+
+        # Firestore can return naive datetimes — always normalise to UTC-aware
+        if order_date.tzinfo is None:
+            order_date = order_date.replace(tzinfo=timezone.utc)
+
+        return order_date
+

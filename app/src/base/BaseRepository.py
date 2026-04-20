@@ -1,6 +1,7 @@
 from typing import Optional, List, Dict, Any, Tuple
 from src.config.Database import get_firestore_client
 from google.cloud.firestore_v1 import FieldFilter, Query
+from google.api_core import exceptions as google_exceptions
 from datetime import datetime, timezone
 
 class BaseRepository:
@@ -50,7 +51,14 @@ class BaseRepository:
         """Get document by email field (convenience method)"""
         return self.get_by_field("email", email, include_deleted)
     
-    def get_all(self, filters: Optional[Dict[str, Any]] = None, limit: Optional[int] = None, include_deleted: bool = False) -> List[Dict[str, Any]]:
+    def get_all(
+        self,
+        filters: Optional[Dict[str, Any]] = None,
+        limit: Optional[int] = None,
+        include_deleted: bool = False,
+        order_by: Optional[str] = None,
+        order_direction: str = "asc"
+    ) -> List[Dict[str, Any]]:
         """Get all documents with optional filters (excludes soft-deleted by default)"""
         query = self.collection
         
@@ -66,7 +74,17 @@ class BaseRepository:
             query = query.limit(limit)
         
         docs = query.get()
-        return [doc.to_dict() for doc in docs]
+        results = [doc.to_dict() for doc in docs]
+
+        # Sort in Python to avoid composite index requirements
+        if order_by:
+            reverse = order_direction.lower() == "desc"
+            results.sort(
+                key=lambda d: (d.get(order_by) is None, d.get(order_by)),
+                reverse=reverse
+            )
+
+        return results
     
     def get_paginated(
         self, 
@@ -115,20 +133,21 @@ class BaseRepository:
         return items, total_count, total_pages
     
     def update(self, doc_id: str, data: Dict[str, Any]) -> bool:
-        """Update document by ID"""
+        """Update document by ID. Returns False if document not found, re-raises all other exceptions."""
         try:
             data['updated_at'] = datetime.now(timezone.utc)
             self.collection.document(doc_id).update(data)
             return True
-        except Exception:
+        except google_exceptions.NotFound:
             return False
     
     def delete(self, doc_id: str) -> bool:
-        """Hard delete document by ID (NOT RECOMMENDED - use soft_delete instead)"""
+        """Hard delete document by ID (NOT RECOMMENDED - use soft_delete instead).
+        Returns False if document not found, re-raises all other exceptions."""
         try:
             self.collection.document(doc_id).delete()
             return True
-        except Exception:
+        except google_exceptions.NotFound:
             return False
     
     def soft_delete(self, doc_id: str) -> bool:

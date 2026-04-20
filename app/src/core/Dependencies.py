@@ -22,6 +22,12 @@ async def get_current_user(token: str = Depends(get_current_user_token)) -> Dict
         )
 
     user_id = payload.get("sub")
+    if not user_id:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid token: missing subject"
+        )
+
     user_type = payload.get("user_type", "application")
 
     # Determine collection based on user type
@@ -82,7 +88,18 @@ async def get_current_system_user(token: str = Depends(get_current_user_token)) 
         )
 
     user_id = payload.get("sub")
+    if not user_id:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid token: missing subject"
+        )
+
     user_type = payload.get("user_type")
+    if user_type != "system":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="System access required"
+        )
 
     user_repo = UserRepository("system_users")
     role_repo = RoleRepository()
@@ -119,6 +136,11 @@ async def get_current_application_user(token: str = Depends(get_current_user_tok
         )
 
     user_id = payload.get("sub")
+    if not user_id:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid token: missing subject"
+        )
 
     user_repo = UserRepository("application_users")
     role_repo = RoleRepository()

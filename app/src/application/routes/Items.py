@@ -1,19 +1,41 @@
-from fastapi import APIRouter, HTTPException, status, Depends, Query
+from fastapi import APIRouter, HTTPException, status, Depends, Query, UploadFile, File
 from src.schemas.Item import ItemCreate, ItemUpdate, ItemResponse
 from src.application.services.Item import ItemService
 from src.base.BaseSchema import BaseResponse
 from src.application.middleware.RoleCheck import ApplicationRoleCheck
 from typing import Optional, List
+from pydantic import BaseModel
+import base64
+import uuid
 
 router = APIRouter(prefix="/items", tags=["Application Items"])
+
+
+# ==================== BULK REQUEST MODELS ====================
+
+class BulkUpdateAvailabilityRequest(BaseModel):
+    item_ids: List[str]
+    is_available: bool
+
+
+class BulkDeleteRequest(BaseModel):
+    item_ids: List[str]
+
+
+class BulkUpdateCategoryRequest(BaseModel):
+    item_ids: List[str]
+    category_id: str
+
+
+# ==================== COLLECTION ENDPOINTS ====================
 
 @router.post("", response_model=BaseResponse, dependencies=[Depends(ApplicationRoleCheck.require_admin)])
 async def create_item(item: ItemCreate):
     """Create new item (Admin only)"""
     service = ItemService()
-    
+
     item_id = service.create_item(item.model_dump())
-    
+
     return {
         "success": True,
         "message": "Item created successfully",
@@ -34,7 +56,7 @@ async def get_all_items(
 ):
     """
     Get all items with pagination and filters
-    
+
     Query Parameters:
     - workspace_id: Workspace ID (required)
     - page: Page number (default: 1)
@@ -47,10 +69,10 @@ async def get_all_items(
     - order_direction: Order direction (asc/desc, default: desc)
     """
     service = ItemService()
-    
+
     if page_size > 100:
         page_size = 100
-    
+
     items, total, total_pages = service.get_paginated_items(
         workspace_id=workspace_id,
         page=page,
@@ -62,7 +84,7 @@ async def get_all_items(
         order_by=order_by,
         order_direction=order_direction
     )
-    
+
     return {
         "success": True,
         "message": "Items retrieved successfully",
@@ -77,19 +99,121 @@ async def get_all_items(
         }
     }
 
+
+# ==================== BULK ENDPOINTS (must be BEFORE /{item_id}) ====================
+
+@router.post("/bulk-update-availability", response_model=BaseResponse, dependencies=[Depends(ApplicationRoleCheck.require_manager)])
+async def bulk_update_item_availability(body: BulkUpdateAvailabilityRequest):
+    """Bulk update item availability (Admin, Manager)"""
+    service = ItemService()
+
+    updated_count = 0
+    failed_items = []
+
+    for item_id in body.item_ids:
+        try:
+            item = service.get_item_by_id(item_id)
+            if not item:
+                failed_items.append({"id": item_id, "reason": "Item not found"})
+                continue
+
+            success = service.update_item(item_id, {"is_available": body.is_available})
+            if success:
+                updated_count += 1
+            else:
+                failed_items.append({"id": item_id, "reason": "Update failed"})
+        except Exception as e:
+            failed_items.append({"id": item_id, "reason": str(e)})
+
+    return {
+        "success": True,
+        "message": f"Updated {updated_count} items",
+        "data": {
+            "updated_count": updated_count,
+            "failed_items": failed_items
+        }
+    }
+
+@router.post("/bulk-delete", response_model=BaseResponse, dependencies=[Depends(ApplicationRoleCheck.require_admin)])
+async def bulk_delete_items(body: BulkDeleteRequest):
+    """Bulk soft delete items (Admin only)"""
+    service = ItemService()
+
+    deleted_count = 0
+    failed_items = []
+
+    for item_id in body.item_ids:
+        try:
+            item = service.get_item_by_id(item_id)
+            if not item:
+                failed_items.append({"id": item_id, "reason": "Item not found"})
+                continue
+
+            success = service.soft_delete_item(item_id)
+            if success:
+                deleted_count += 1
+            else:
+                failed_items.append({"id": item_id, "reason": "Delete failed"})
+        except Exception as e:
+            failed_items.append({"id": item_id, "reason": str(e)})
+
+    return {
+        "success": True,
+        "message": f"Deleted {deleted_count} items",
+        "data": {
+            "deleted_count": deleted_count,
+            "failed_items": failed_items
+        }
+    }
+
+@router.post("/bulk-update-category", response_model=BaseResponse, dependencies=[Depends(ApplicationRoleCheck.require_admin)])
+async def bulk_update_item_category(body: BulkUpdateCategoryRequest):
+    """Bulk update item category (Admin only)"""
+    service = ItemService()
+
+    updated_count = 0
+    failed_items = []
+
+    for item_id in body.item_ids:
+        try:
+            item = service.get_item_by_id(item_id)
+            if not item:
+                failed_items.append({"id": item_id, "reason": "Item not found"})
+                continue
+
+            success = service.update_item(item_id, {"category_id": body.category_id})
+            if success:
+                updated_count += 1
+            else:
+                failed_items.append({"id": item_id, "reason": "Update failed"})
+        except Exception as e:
+            failed_items.append({"id": item_id, "reason": str(e)})
+
+    return {
+        "success": True,
+        "message": f"Updated {updated_count} items to new category",
+        "data": {
+            "updated_count": updated_count,
+            "failed_items": failed_items
+        }
+    }
+
+
+# ==================== ITEM-SCOPED ENDPOINTS (/{item_id}) ====================
+
 @router.get("/{item_id}", response_model=BaseResponse, dependencies=[Depends(ApplicationRoleCheck.require_operator)])
 async def get_item(item_id: str):
     """Get item by ID"""
     service = ItemService()
-    
+
     item = service.get_item_by_id(item_id)
-    
+
     if not item:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Item not found"
         )
-    
+
     return {
         "success": True,
         "message": "Item retrieved successfully",
@@ -100,23 +224,22 @@ async def get_item(item_id: str):
 async def update_item(item_id: str, item: ItemUpdate):
     """Update item (Admin only)"""
     service = ItemService()
-    
-    # Check if item exists
+
     existing_item = service.get_item_by_id(item_id)
     if not existing_item:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Item not found"
         )
-    
+
     success = service.update_item(item_id, item.model_dump(exclude_unset=True))
-    
+
     if not success:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Item not found"
         )
-    
+
     return {
         "success": True,
         "message": "Item updated successfully"
@@ -126,23 +249,22 @@ async def update_item(item_id: str, item: ItemUpdate):
 async def delete_item(item_id: str):
     """Soft delete item (Admin only)"""
     service = ItemService()
-    
-    # Check if item exists
+
     item = service.get_item_by_id(item_id)
     if not item:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Item not found"
         )
-    
+
     success = service.soft_delete_item(item_id)
-    
+
     if not success:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Item not found"
         )
-    
+
     return {
         "success": True,
         "message": "Item soft deleted successfully"
@@ -152,29 +274,28 @@ async def delete_item(item_id: str):
 async def restore_item(item_id: str):
     """Restore soft-deleted item (Admin only)"""
     service = ItemService()
-    
-    # Check if item exists (including deleted)
+
     item = service.get_item_by_id(item_id, include_deleted=True)
     if not item:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Item not found"
         )
-    
+
     if not item.get('is_deleted', False):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Item is not deleted"
         )
-    
+
     success = service.restore_item(item_id)
-    
+
     if not success:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Item not found"
         )
-    
+
     return {
         "success": True,
         "message": "Item restored successfully"
@@ -187,126 +308,75 @@ async def toggle_item_availability(
 ):
     """Toggle item availability (Admin, Manager)"""
     service = ItemService()
-    
-    # Check if item exists
+
     item = service.get_item_by_id(item_id)
     if not item:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Item not found"
         )
-    
+
     success = service.update_item(item_id, {"is_available": is_available})
-    
+
     if not success:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Item not found"
         )
-    
+
     return {
         "success": True,
         "message": f"Item {'enabled' if is_available else 'disabled'} successfully"
     }
 
-@router.post("/bulk-update-availability", response_model=BaseResponse, dependencies=[Depends(ApplicationRoleCheck.require_manager)])
-async def bulk_update_item_availability(
-    item_ids: List[str],
-    is_available: bool
-):
-    """Bulk update item availability (Admin, Manager)"""
-    service = ItemService()
-    
-    updated_count = 0
-    failed_items = []
-    
-    for item_id in item_ids:
-        try:
-            item = service.get_item_by_id(item_id)
-            if not item:
-                failed_items.append({"id": item_id, "reason": "Item not found"})
-                continue
-            
-            success = service.update_item(item_id, {"is_available": is_available})
-            if success:
-                updated_count += 1
-            else:
-                failed_items.append({"id": item_id, "reason": "Update failed"})
-        except Exception as e:
-            failed_items.append({"id": item_id, "reason": str(e)})
-    
-    return {
-        "success": True,
-        "message": f"Updated {updated_count} items",
-        "data": {
-            "updated_count": updated_count,
-            "failed_items": failed_items
-        }
-    }
 
-@router.post("/bulk-delete", response_model=BaseResponse, dependencies=[Depends(ApplicationRoleCheck.require_admin)])
-async def bulk_delete_items(item_ids: List[str]):
-    """Bulk soft delete items (Admin only)"""
-    service = ItemService()
-    
-    deleted_count = 0
-    failed_items = []
-    
-    for item_id in item_ids:
-        try:
-            item = service.get_item_by_id(item_id)
-            if not item:
-                failed_items.append({"id": item_id, "reason": "Item not found"})
-                continue
-            
-            success = service.soft_delete_item(item_id)
-            if success:
-                deleted_count += 1
-            else:
-                failed_items.append({"id": item_id, "reason": "Delete failed"})
-        except Exception as e:
-            failed_items.append({"id": item_id, "reason": str(e)})
-    
-    return {
-        "success": True,
-        "message": f"Deleted {deleted_count} items",
-        "data": {
-            "deleted_count": deleted_count,
-            "failed_items": failed_items
-        }
-    }
-
-@router.post("/bulk-update-category", response_model=BaseResponse, dependencies=[Depends(ApplicationRoleCheck.require_admin)])
-async def bulk_update_item_category(
-    item_ids: List[str],
-    category_id: str
+@router.post("/{item_id}/image", response_model=BaseResponse, dependencies=[Depends(ApplicationRoleCheck.require_admin)])
+async def upload_item_image(
+    item_id: str,
+    image: UploadFile = File(..., description="Item image file (JPEG, PNG, WebP, max 5MB)")
 ):
-    """Bulk update item category (Admin only)"""
+    """Upload or replace item image (Admin only). Stores image as base64 data URL in Firestore."""
     service = ItemService()
-    
-    updated_count = 0
-    failed_items = []
-    
-    for item_id in item_ids:
-        try:
-            item = service.get_item_by_id(item_id)
-            if not item:
-                failed_items.append({"id": item_id, "reason": "Item not found"})
-                continue
-            
-            success = service.update_item(item_id, {"category_id": category_id})
-            if success:
-                updated_count += 1
-            else:
-                failed_items.append({"id": item_id, "reason": "Update failed"})
-        except Exception as e:
-            failed_items.append({"id": item_id, "reason": str(e)})
-    
+
+    # Verify item exists
+    item = service.get_item_by_id(item_id)
+    if not item:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Item not found"
+        )
+
+    # Validate content type
+    allowed_types = {"image/jpeg", "image/png", "image/webp", "image/gif"}
+    content_type = image.content_type or ""
+    if content_type not in allowed_types:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Unsupported image type '{content_type}'. Allowed: JPEG, PNG, WebP, GIF"
+        )
+
+    # Read and validate file size (5 MB limit)
+    MAX_SIZE = 5 * 1024 * 1024
+    contents = await image.read()
+    if len(contents) > MAX_SIZE:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail="Image file exceeds the 5 MB size limit"
+        )
+
+    # Encode as base64 data URL for storage in Firestore
+    b64 = base64.b64encode(contents).decode("utf-8")
+    image_url = f"data:{content_type};base64,{b64}"
+
+    success = service.update_item(item_id, {"image_url": image_url})
+    if not success:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to save image"
+        )
+
     return {
         "success": True,
-        "message": f"Updated {updated_count} items to new category",
-        "data": {
-            "updated_count": updated_count,
-            "failed_items": failed_items
-        }
+        "message": "Item image uploaded successfully",
+        "data": {"image_url": image_url}
     }

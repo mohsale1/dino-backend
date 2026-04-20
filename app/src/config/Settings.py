@@ -46,6 +46,9 @@ class Settings(BaseSettings):
 
     CORS_ORIGINS: str = "*"  # Default to allow all, should be restricted in production
 
+    # Frontend URL used for QR code generation
+    FRONTEND_URL: str = "http://localhost:3000"
+
     LOG_LEVEL: str = "INFO"
 
     @property

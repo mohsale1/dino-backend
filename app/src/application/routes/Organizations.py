@@ -1,6 +1,6 @@
 from fastapi import APIRouter, HTTPException, status, Depends
 from src.schemas.Organization import (
-    OrganizationCreate, OrganizationUpdate, OrganizationResponse
+    OrganizationCreate, OrganizationUpdate, OrganizationResponse, OrganizationStatusUpdate
 )
 from src.application.services.Organization import OrganizationService
 from src.base.BaseSchema import BaseResponse
@@ -113,6 +113,44 @@ async def update_organization(organization_id: str, organization: OrganizationUp
     return {
         "success": True,
         "message": "Organization updated successfully"
+    }
+
+@router.put("/{organization_id}/status", response_model=BaseResponse)
+async def update_organization_status(
+    organization_id: str,
+    body: OrganizationStatusUpdate,
+    user: Dict[str, Any] = Depends(ApplicationRoleCheck.require_manager)
+):
+    """Toggle organization open/closed status (Owner + Manager)"""
+    service = OrganizationService()
+
+    organization = service.get_by_id(organization_id)
+
+    if not organization:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Organization not found"
+        )
+
+    # Validate the organization belongs to the given workspace
+    if organization.get("workspace_id") != body.workspace_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Organization does not belong to the specified workspace"
+        )
+
+    success = service.update(organization_id, {"is_open": body.is_open})
+
+    if not success:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to update organization status"
+        )
+
+    status_label = "open" if body.is_open else "closed"
+    return {
+        "success": True,
+        "message": f"Organization is now {status_label}"
     }
 
 @router.delete("/{organization_id}", response_model=BaseResponse, dependencies=[Depends(ApplicationRoleCheck.require_admin)])

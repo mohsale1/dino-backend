@@ -1,7 +1,7 @@
 from src.base.BaseService import BaseService
 from src.repositories.CouponRepository import CouponRepository
 from typing import Optional, List, Dict, Any, Tuple
-from datetime import datetime
+from datetime import datetime, timezone
 
 class CouponService(BaseService):
     """Service for Coupon operations"""
@@ -19,10 +19,22 @@ class CouponService(BaseService):
         
         # Initialize usage count
         data['usage_count'] = 0
-        
-        # Validate discount value
-        if data['discount_type'] == 'percentage' and data['discount_value'] > 100:
+
+        # Validate discount value is non-negative
+        discount_value = data.get('discount_value', 0)
+        if discount_value < 0:
+            raise ValueError("Discount value cannot be negative")
+
+        # Validate percentage discount does not exceed 100
+        if data.get('discount_type') == 'percentage' and discount_value > 100:
             raise ValueError("Percentage discount cannot exceed 100")
+
+        # Validate date range when both boundaries are provided
+        valid_from = data.get('valid_from')
+        valid_until = data.get('valid_until')
+        if valid_from is not None and valid_until is not None:
+            if valid_from >= valid_until:
+                raise ValueError("valid_from must be earlier than valid_until")
         
         return self.create(data)
     
@@ -107,8 +119,8 @@ class CouponService(BaseService):
                 "coupon": coupon
             }
         
-        # Check validity dates
-        now = datetime.utcnow()
+        # Check validity dates using timezone-aware UTC datetime
+        now = datetime.now(timezone.utc)
         valid_from = coupon.get('valid_from')
         valid_until = coupon.get('valid_until')
         

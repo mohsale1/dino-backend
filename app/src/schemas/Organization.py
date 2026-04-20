@@ -21,6 +21,12 @@ class OrganizationUpdate(BaseModel):
     organization_type: Optional[int] = Field(None, ge=0, le=1)
     order_type: Optional[int] = Field(None, ge=0, le=1)
     is_active: Optional[bool] = None
+    is_open: Optional[bool] = None
+
+class OrganizationStatusUpdate(BaseModel):
+    """Schema for toggling organization open/closed status"""
+    is_open: bool
+    workspace_id: str
 
 class OrganizationResponse(OrganizationBase):
     """Organization response schema"""
