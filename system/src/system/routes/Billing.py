@@ -161,7 +161,7 @@ async def get_billing_transactions(
 @router.post(
     "/transactions",
     response_model=BaseResponse,
-    dependencies=[Depends(SystemPermissionCheck.require("billing:create"))],
+    dependencies=[Depends(SystemPermissionCheck.require("billing:subscription"))],
 )
 async def create_billing_transaction(
     transaction_data: BillingTransactionCreate,

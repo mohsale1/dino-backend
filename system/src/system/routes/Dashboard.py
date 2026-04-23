@@ -14,7 +14,7 @@ router = APIRouter(prefix="/dashboard", tags=["System Dashboard"])
 @router.get(
     "",
     response_model=BaseResponse,
-    dependencies=[Depends(SystemPermissionCheck.require("dashboard:read"))],
+    dependencies=[Depends(SystemPermissionCheck.require("dashboard:view"))],
 )
 async def get_full_dashboard(db: AsyncSession = Depends(get_db)):
     """Get full dashboard data."""
@@ -36,7 +36,7 @@ async def get_full_dashboard(db: AsyncSession = Depends(get_db)):
 @router.get(
     "/stats",
     response_model=BaseResponse,
-    dependencies=[Depends(SystemPermissionCheck.require("dashboard:read"))],
+    dependencies=[Depends(SystemPermissionCheck.require("dashboard:view"))],
 )
 async def get_system_stats(db: AsyncSession = Depends(get_db)):
     """Get system statistics."""
@@ -48,7 +48,7 @@ async def get_system_stats(db: AsyncSession = Depends(get_db)):
 @router.get(
     "/workspace-growth",
     response_model=BaseResponse,
-    dependencies=[Depends(SystemPermissionCheck.require("dashboard:read"))],
+    dependencies=[Depends(SystemPermissionCheck.require("dashboard:view"))],
 )
 async def get_workspace_growth(
     days: int = Query(30, ge=1, le=365),
@@ -63,7 +63,7 @@ async def get_workspace_growth(
 @router.get(
     "/user-distribution",
     response_model=BaseResponse,
-    dependencies=[Depends(SystemPermissionCheck.require("dashboard:read"))],
+    dependencies=[Depends(SystemPermissionCheck.require("dashboard:view"))],
 )
 async def get_user_distribution(db: AsyncSession = Depends(get_db)):
     """Get users grouped by role."""
@@ -75,7 +75,7 @@ async def get_user_distribution(db: AsyncSession = Depends(get_db)):
 @router.get(
     "/billing-overview",
     response_model=BaseResponse,
-    dependencies=[Depends(SystemPermissionCheck.require("dashboard:read"))],
+    dependencies=[Depends(SystemPermissionCheck.require("dashboard:view"))],
 )
 async def get_billing_overview(db: AsyncSession = Depends(get_db)):
     """Get billing summary."""
@@ -87,7 +87,7 @@ async def get_billing_overview(db: AsyncSession = Depends(get_db)):
 @router.get(
     "/recent-activity",
     response_model=BaseResponse,
-    dependencies=[Depends(SystemPermissionCheck.require("dashboard:read"))],
+    dependencies=[Depends(SystemPermissionCheck.require("dashboard:view"))],
 )
 async def get_recent_activity(
     limit: int = Query(20, ge=1, le=100),
@@ -102,7 +102,7 @@ async def get_recent_activity(
 @router.get(
     "/top-workspaces",
     response_model=BaseResponse,
-    dependencies=[Depends(SystemPermissionCheck.require("dashboard:read"))],
+    dependencies=[Depends(SystemPermissionCheck.require("dashboard:view"))],
 )
 async def get_top_workspaces(
     limit: int = Query(10, ge=1, le=50),

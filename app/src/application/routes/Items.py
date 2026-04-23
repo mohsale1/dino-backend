@@ -179,7 +179,7 @@ async def delete_item(
 @router.post("/{item_id}/restore", response_model=BaseResponse)
 async def restore_item(
     item_id: int,
-    current_user: Dict[str, Any] = Depends(ApplicationPermissionCheck.require("items:manage")),
+    current_user: Dict[str, Any] = Depends(ApplicationPermissionCheck.require("items:update")),
     db: AsyncSession = Depends(get_db),
 ):
     """Restore a soft-deleted menu item."""

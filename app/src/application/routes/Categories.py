@@ -150,7 +150,7 @@ async def delete_category(
 @router.post("/{category_id}/restore", response_model=BaseResponse)
 async def restore_category(
     category_id: int,
-    current_user: Dict[str, Any] = Depends(ApplicationPermissionCheck.require("categories:restore")),
+    current_user: Dict[str, Any] = Depends(ApplicationPermissionCheck.require("categories:update")),
     db: AsyncSession = Depends(get_db),
 ):
     """Restore a soft-deleted category."""

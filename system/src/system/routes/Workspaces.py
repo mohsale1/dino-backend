@@ -14,7 +14,7 @@ router = APIRouter(prefix="/workspaces", tags=["System Workspaces"])
 
 @router.get(
     "",
-    dependencies=[Depends(SystemPermissionCheck.require("workspaces:list"))],
+    dependencies=[Depends(SystemPermissionCheck.require("workspaces:read"))],
 )
 async def get_workspaces(
     page: int = Query(1, ge=1),
@@ -109,7 +109,7 @@ async def delete_workspace(workspace_id: int, db: AsyncSession = Depends(get_db)
 @router.post(
     "/{workspace_id}/restore",
     response_model=BaseResponse,
-    dependencies=[Depends(SystemPermissionCheck.require("workspaces:manage"))],
+    dependencies=[Depends(SystemPermissionCheck.require("workspaces:update"))],
 )
 async def restore_workspace(workspace_id: int, db: AsyncSession = Depends(get_db)):
     """Restore a soft-deleted workspace."""
@@ -169,7 +169,7 @@ async def update_workspace_billing(
 @router.post(
     "/{workspace_id}/personas/{persona_id}",
     response_model=BaseResponse,
-    dependencies=[Depends(SystemPermissionCheck.require("workspaces:manage"))],
+    dependencies=[Depends(SystemPermissionCheck.require("workspaces:update"))],
 )
 async def add_persona_to_workspace(
     workspace_id: int, persona_id: int, db: AsyncSession = Depends(get_db)
@@ -183,7 +183,7 @@ async def add_persona_to_workspace(
 @router.delete(
     "/{workspace_id}/personas/{persona_id}",
     response_model=BaseResponse,
-    dependencies=[Depends(SystemPermissionCheck.require("workspaces:manage"))],
+    dependencies=[Depends(SystemPermissionCheck.require("workspaces:update"))],
 )
 async def remove_persona_from_workspace(
     workspace_id: int, persona_id: int, db: AsyncSession = Depends(get_db)

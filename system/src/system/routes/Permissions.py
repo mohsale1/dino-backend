@@ -14,6 +14,7 @@ router = APIRouter(prefix="/permissions", tags=["System Permissions"])
 
 @router.get(
     "",
+     dependencies=[Depends(SystemPermissionCheck.require("permissions:read"))],
 )
 async def get_permissions(
     page: int = Query(1, ge=1),
@@ -177,7 +178,7 @@ async def delete_permission(permission_id: int, db: AsyncSession = Depends(get_d
 @router.post(
     "/{permission_id}/restore",
     response_model=BaseResponse,
-    dependencies=[Depends(SystemPermissionCheck.require("permissions:manage"))],
+    dependencies=[Depends(SystemPermissionCheck.require("permissions:update"))],
 )
 async def restore_permission(permission_id: int, db: AsyncSession = Depends(get_db)):
     """Restore a soft-deleted permission."""

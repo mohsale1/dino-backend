@@ -14,7 +14,7 @@ router = APIRouter(prefix="/personas", tags=["System Personas"])
 
 @router.get(
     "",
-    dependencies=[Depends(SystemPermissionCheck.require("personas:list"))],
+    dependencies=[Depends(SystemPermissionCheck.require("personas:read"))],
 )
 async def get_personas(
     page: int = Query(1, ge=1),
@@ -109,7 +109,7 @@ async def delete_persona(persona_id: int, db: AsyncSession = Depends(get_db)):
 @router.post(
     "/{persona_id}/restore",
     response_model=BaseResponse,
-    dependencies=[Depends(SystemPermissionCheck.require("personas:manage"))],
+    dependencies=[Depends(SystemPermissionCheck.require("personas:update"))],
 )
 async def restore_persona(persona_id: int, db: AsyncSession = Depends(get_db)):
     """Restore a soft-deleted persona."""
@@ -149,7 +149,7 @@ async def toggle_persona_status(
 @router.put(
     "/{persona_id}/deactivate",
     response_model=BaseResponse,
-    dependencies=[Depends(SystemPermissionCheck.require("personas:manage"))],
+    dependencies=[Depends(SystemPermissionCheck.require("personas:update"))],
 )
 async def deactivate_persona(persona_id: int, db: AsyncSession = Depends(get_db)):
     """Billing suspension: deactivate persona."""
@@ -163,7 +163,7 @@ async def deactivate_persona(persona_id: int, db: AsyncSession = Depends(get_db)
 @router.put(
     "/{persona_id}/reactivate",
     response_model=BaseResponse,
-    dependencies=[Depends(SystemPermissionCheck.require("personas:manage"))],
+    dependencies=[Depends(SystemPermissionCheck.require("personas:update"))],
 )
 async def reactivate_persona(persona_id: int, db: AsyncSession = Depends(get_db)):
     """Lift billing suspension: reactivate persona."""

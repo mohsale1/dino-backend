@@ -109,6 +109,8 @@ async def create_user(
     }
 
 
+# NOTE: Static sub-path /role/{role_id} must be declared before /{user_id}
+# to prevent FastAPI matching "role" as a user_id integer.
 @router.get("/role/{role_id}", response_model=BaseResponse)
 async def get_users_by_role(
     role_id: int,
@@ -185,7 +187,7 @@ async def delete_user(
 @router.post("/{user_id}/restore", response_model=BaseResponse)
 async def restore_user(
     user_id: int,
-    current_user: Dict[str, Any] = Depends(ApplicationPermissionCheck.require("users:manage")),
+    current_user: Dict[str, Any] = Depends(ApplicationPermissionCheck.require("users:update")),
     db: AsyncSession = Depends(get_db),
 ):
     """Restore a soft-deleted user."""
@@ -209,7 +211,7 @@ async def restore_user(
 async def update_user_role(
     user_id: int,
     request: UpdateRoleRequest,
-    current_user: Dict[str, Any] = Depends(ApplicationPermissionCheck.require("users:manage")),
+    current_user: Dict[str, Any] = Depends(ApplicationPermissionCheck.require("users:update")),
     db: AsyncSession = Depends(get_db),
 ):
     """Update user role."""

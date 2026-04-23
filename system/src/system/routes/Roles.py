@@ -14,7 +14,7 @@ router = APIRouter(prefix="/roles", tags=["System Roles"])
 
 @router.get(
     "",
-    dependencies=[Depends(SystemPermissionCheck.require("roles:list"))],
+    dependencies=[Depends(SystemPermissionCheck.require("roles:read"))],
 )
 async def get_all_roles(
     page: int = Query(1, ge=1),
@@ -139,7 +139,7 @@ async def delete_role(role_id: int, db: AsyncSession = Depends(get_db)):
 @router.post(
     "/{role_id}/restore",
     response_model=BaseResponse,
-    dependencies=[Depends(SystemPermissionCheck.require("roles:manage"))],
+    dependencies=[Depends(SystemPermissionCheck.require("roles:update"))],
 )
 async def restore_role(role_id: int, db: AsyncSession = Depends(get_db)):
     """Restore a soft-deleted role."""
@@ -161,7 +161,7 @@ async def restore_role(role_id: int, db: AsyncSession = Depends(get_db)):
 @router.post(
     "/{role_id}/permissions",
     response_model=BaseResponse,
-    dependencies=[Depends(SystemPermissionCheck.require("roles:manage"))],
+    dependencies=[Depends(SystemPermissionCheck.require("roles:update"))],
 )
 async def add_permissions(
     role_id: int,
@@ -177,7 +177,7 @@ async def add_permissions(
 @router.delete(
     "/{role_id}/permissions",
     response_model=BaseResponse,
-    dependencies=[Depends(SystemPermissionCheck.require("roles:manage"))],
+    dependencies=[Depends(SystemPermissionCheck.require("roles:update"))],
 )
 async def remove_permissions(
     role_id: int,

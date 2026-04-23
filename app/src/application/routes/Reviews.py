@@ -182,7 +182,7 @@ async def update_review(
 @router.put("/{review_id}/approve", response_model=BaseResponse)
 async def approve_review(
     review_id: int,
-    current_user: Dict[str, Any] = Depends(ApplicationPermissionCheck.require("reviews:manage")),
+    current_user: Dict[str, Any] = Depends(ApplicationPermissionCheck.require("reviews:moderate")),
     db: AsyncSession = Depends(get_db),
 ):
     """Approve a review so it appears publicly."""
@@ -204,7 +204,7 @@ async def approve_review(
 @router.put("/{review_id}/unapprove", response_model=BaseResponse)
 async def unapprove_review(
     review_id: int,
-    current_user: Dict[str, Any] = Depends(ApplicationPermissionCheck.require("reviews:manage")),
+    current_user: Dict[str, Any] = Depends(ApplicationPermissionCheck.require("reviews:moderate")),
     db: AsyncSession = Depends(get_db),
 ):
     """Unapprove a review, hiding it from public view."""
@@ -248,7 +248,7 @@ async def delete_review(
 @router.post("/{review_id}/restore", response_model=BaseResponse)
 async def restore_review(
     review_id: int,
-    current_user: Dict[str, Any] = Depends(ApplicationPermissionCheck.require("reviews:manage")),
+    current_user: Dict[str, Any] = Depends(ApplicationPermissionCheck.require("reviews:moderate")),
     db: AsyncSession = Depends(get_db),
 ):
     """Restore a soft-deleted review."""

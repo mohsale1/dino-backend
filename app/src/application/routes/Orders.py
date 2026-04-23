@@ -159,7 +159,7 @@ async def get_transactions(
 async def update_transaction(
     transaction_id: int,
     request: UpdateTransactionRequest,
-    current_user: Dict[str, Any] = Depends(ApplicationPermissionCheck.require("orders:update")),
+    current_user: Dict[str, Any] = Depends(ApplicationPermissionCheck.require("orders:payment")),
     db: AsyncSession = Depends(get_db),
 ):
     """Update a payment transaction."""
@@ -233,7 +233,7 @@ async def get_order(
 async def update_order_status(
     order_id: str,
     request: UpdateStatusRequest,
-    current_user: Dict[str, Any] = Depends(ApplicationPermissionCheck.require("orders:update")),
+    current_user: Dict[str, Any] = Depends(ApplicationPermissionCheck.require("orders:status")),
     db: AsyncSession = Depends(get_db),
 ):
     """Update the status of an order."""

@@ -185,7 +185,7 @@ async def delete_table(
 @router.post("/{table_id}/restore", response_model=BaseResponse)
 async def restore_table(
     table_id: int,
-    current_user: Dict[str, Any] = Depends(ApplicationPermissionCheck.require("tables:manage")),
+    current_user: Dict[str, Any] = Depends(ApplicationPermissionCheck.require("tables:update")),
     db: AsyncSession = Depends(get_db),
 ):
     """Restore a soft-deleted table."""

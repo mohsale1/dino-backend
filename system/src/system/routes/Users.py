@@ -1,6 +1,7 @@
 from typing import Any, Dict, Optional
 
-from fastapi import APIRouter, Body, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.base.BaseSchema import BaseResponse
@@ -12,9 +13,13 @@ from src.system.services.User import SystemUserService
 router = APIRouter(prefix="/users", tags=["System Users"])
 
 
+class UpdateRoleRequest(BaseModel):
+    role_id: int
+
+
 @router.get(
     "",
-    dependencies=[Depends(SystemPermissionCheck.require("users:list"))],
+    dependencies=[Depends(SystemPermissionCheck.require("users:read"))],
 )
 async def get_users(
     page: int = Query(1, ge=1),
@@ -81,6 +86,8 @@ async def create_user(user: UserCreate, db: AsyncSession = Depends(get_db)):
     }
 
 
+# NOTE: Static sub-path /role/{role_id} must be declared before /{user_id}
+# to prevent FastAPI matching "role" as a user_id integer.
 @router.get(
     "/role/{role_id}",
     response_model=BaseResponse,
@@ -146,7 +153,7 @@ async def delete_user(user_id: int, db: AsyncSession = Depends(get_db)):
 @router.post(
     "/{user_id}/restore",
     response_model=BaseResponse,
-    dependencies=[Depends(SystemPermissionCheck.require("users:manage"))],
+    dependencies=[Depends(SystemPermissionCheck.require("users:update"))],
 )
 async def restore_user(user_id: int, db: AsyncSession = Depends(get_db)):
     """Restore a soft-deleted user."""
@@ -168,21 +175,21 @@ async def restore_user(user_id: int, db: AsyncSession = Depends(get_db)):
 @router.put(
     "/{user_id}/role",
     response_model=BaseResponse,
-    dependencies=[Depends(SystemPermissionCheck.require("users:manage"))],
+    dependencies=[Depends(SystemPermissionCheck.require("users:update"))],
 )
 async def update_user_role(
     user_id: int,
-    role_id: int = Body(..., embed=True),
+    request: UpdateRoleRequest,
     db: AsyncSession = Depends(get_db),
 ):
     """Update user role."""
     service = SystemUserService(db)
-    if not await service.validate_system_role(role_id):
+    if not await service.validate_system_role(request.role_id):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Invalid role or role is not a system role (role_type must be 0)",
         )
-    success = await service.update_user(user_id, {"role_id": role_id})
+    success = await service.update_user(user_id, {"role_id": request.role_id})
     if not success:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
     return {"success": True, "message": "User role updated successfully"}

@@ -146,7 +146,7 @@ async def delete_area(
 @router.post("/{area_id}/restore", response_model=BaseResponse)
 async def restore_area(
     area_id: int,
-    current_user: Dict[str, Any] = Depends(ApplicationPermissionCheck.require("areas:restore")),
+    current_user: Dict[str, Any] = Depends(ApplicationPermissionCheck.require("areas:update")),
     db: AsyncSession = Depends(get_db),
 ):
     """Restore a soft-deleted area."""
