@@ -14,7 +14,6 @@ router = APIRouter(prefix="/permissions", tags=["System Permissions"])
 
 @router.get(
     "",
-    dependencies=[Depends(SystemPermissionCheck.require("permissions:list"))],
 )
 async def get_permissions(
     page: int = Query(1, ge=1),

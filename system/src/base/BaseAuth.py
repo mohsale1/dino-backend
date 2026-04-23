@@ -60,27 +60,51 @@ class BaseAuth:
     ) -> Optional[Dict[str, Any]]:
         """
         Return the user dict enriched with role information.
+        Permissions are serialized as dot-notation strings:
+          "{category.lower()}.{resource}.{action}"  e.g. "system.dashboard.view"
         Sensitive fields are stripped before returning.
         """
+        from sqlalchemy import select
+        from sqlalchemy.orm import selectinload
+        from src.models.Role import Role
+
         user = await self.user_repository.get_by_id(user_id)
 
         if not user:
             return None
 
-        role = await self.role_repository.get_by_id(user.get("role_id", ""))
-
         # Strip sensitive / internal fields
         for field in ("password_hash", "created_by", "is_system"):
             user.pop(field, None)
 
-        if role:
+        role_id = user.get("role_id")
+        if role_id is None:
+            return user
+
+        # Load role with permissions eagerly in a single query
+        stmt = (
+            select(Role)
+            .where(Role.id == role_id)
+            .options(selectinload(Role.permissions))
+        )
+        result = await self.role_repository.db.execute(stmt)
+        role_obj = result.scalars().first()
+
+        if role_obj is not None:
+            # Serialize each Permission as "category.lower().resource.action"
+            # so the frontend constants (e.g. "system.dashboard.view") match exactly.
+            permissions = [
+                f"{p.category.lower()}.{p.resource}.{p.action}"
+                for p in role_obj.permissions
+            ]
             user["role"] = {
-                "id": role.get("id"),
-                "name": role.get("name"),
-                "role_type": role.get("role_type"),
-                "permissions": role.get("permissions", []),
+                "id": role_obj.id,
+                "name": role_obj.name,
+                "role_type": role_obj.role_type,
+                "description": role_obj.description,
+                "permissions": permissions,
             }
-            user["role_name"] = role.get("name")
+            user["role_name"] = role_obj.name
 
         return user
 

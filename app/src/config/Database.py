@@ -29,17 +29,34 @@ system_engine = None
 system_session_factory = None
 
 
+def _normalize_db_url(url: str) -> str:
+    """
+    Normalize a PostgreSQL connection URL to the asyncpg dialect format
+    required by SQLAlchemy 2.x.
+
+    Handles the common legacy schemes supplied by cloud providers:
+      postgres://...          -> postgresql+asyncpg://...
+      postgresql://...        -> postgresql+asyncpg://...
+      postgresql+psycopg2://  -> postgresql+asyncpg://...
+    """
+    for prefix in ("postgresql+psycopg2://", "postgresql://", "postgres://"):
+        if url.startswith(prefix):
+            return "postgresql+asyncpg://" + url[len(prefix):]
+    return url
+
+
 async def initialize_db() -> None:
     """Create the async engine(s) and session factory(ies)."""
     global engine, async_session_factory, system_engine, system_session_factory
 
-    parsed = urlparse(settings.DATABASE_URL)
+    db_url = _normalize_db_url(settings.DATABASE_URL)
+    parsed = urlparse(db_url)
     logger.info("Connecting to PostgreSQL (application DB)...")
     logger.info(f"   Host: {parsed.hostname}:{parsed.port}")
     logger.info(f"   Database: {parsed.path.lstrip('/')}")
 
     engine = create_async_engine(
-        settings.DATABASE_URL,
+        db_url,
         pool_size=10,
         max_overflow=20,
         pool_pre_ping=True,
@@ -57,13 +74,14 @@ async def initialize_db() -> None:
 
     # Only create a second engine when a distinct system DB URL is configured.
     if settings.uses_separate_system_db:
-        sys_parsed = urlparse(settings.SYSTEM_DATABASE_URL)
+        sys_url = _normalize_db_url(settings.SYSTEM_DATABASE_URL)
+        sys_parsed = urlparse(sys_url)
         logger.info("Connecting to PostgreSQL (system DB)...")
         logger.info(f"   Host: {sys_parsed.hostname}:{sys_parsed.port}")
         logger.info(f"   Database: {sys_parsed.path.lstrip('/')}")
 
         system_engine = create_async_engine(
-            settings.SYSTEM_DATABASE_URL,
+            sys_url,
             pool_size=5,
             max_overflow=10,
             pool_pre_ping=True,

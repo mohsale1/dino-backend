@@ -20,7 +20,15 @@ class BaseRoleCheck:
 
     @staticmethod
     def check_permission(user: Dict[str, Any], required_permission: str) -> bool:
-        """Return True if the user holds the required permission codename."""
+        """Return True if the user holds the required permission codename.
+
+        Supports both legacy colon format ("dashboard:view") and current
+        dot-notation format ("system.dashboard.view" / "application.orders.read").
+        Wildcard rules (checked in order):
+          1. ``*``              — grants every permission
+          2. ``resource:*``     — grants all actions on a resource (legacy)
+          3. exact match        — grants that specific permission
+        """
         permissions: List[str] = user.get("role", {}).get("permissions", [])
 
         if "*" in permissions:
@@ -29,10 +37,11 @@ class BaseRoleCheck:
         if required_permission in permissions:
             return True
 
-        # Resource-level wildcard: e.g. "system:*" covers "system:manage"
-        resource = required_permission.split(":")[0]
-        if f"{resource}:*" in permissions:
-            return True
+        # Legacy resource-level wildcard: e.g. "system:*" covers "system:manage"
+        if ":" in required_permission:
+            resource = required_permission.split(":")[0]
+            if f"{resource}:*" in permissions:
+                return True
 
         return False
 

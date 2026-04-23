@@ -1,4 +1,5 @@
 import logging
+import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
@@ -30,6 +31,127 @@ logger = logging.getLogger(__name__)
 limiter = Limiter(key_func=get_remote_address)
 
 
+async def _run_migrations() -> None:
+    """
+    Run Alembic migrations fully in-process using the Python API.
+
+    Strategy:
+      1. Connect via asyncpg to check the current alembic_version.
+      2. Load the ScriptDirectory to find the head revision.
+      3. If already at head, skip.
+      4. Otherwise run upgrade using EnvironmentContext.configure() on a
+         live synchronous connection — no subprocess, no env.py file
+         loading, no double-connection conflicts.
+         EnvironmentContext.__enter__ installs the 'op' proxy that
+         migration scripts depend on (from alembic import op).
+
+    SSL is passed via connect_args; the URL never carries ?sslmode=...
+    """
+    import asyncpg
+    from alembic.config import Config
+    from alembic.script import ScriptDirectory
+    from alembic.runtime.environment import EnvironmentContext
+    from sqlalchemy.ext.asyncio import create_async_engine
+    from sqlalchemy import pool as sa_pool
+    from src.config.Database import _normalize_db_url
+
+    raw_url = os.environ.get("DATABASE_URL", settings.DATABASE_URL)
+    clean_url, connect_args = _normalize_db_url(raw_url)
+
+    # asyncpg uses the plain postgresql:// scheme
+    dsn = clean_url.replace("postgresql+asyncpg://", "postgresql://")
+    ssl_ctx = connect_args.get("ssl")
+
+    # ------------------------------------------------------------------
+    # Step 1 — check current revision via asyncpg
+    # ------------------------------------------------------------------
+    current_revision = None
+    try:
+        conn = await asyncpg.connect(dsn=dsn, ssl=ssl_ctx)
+        try:
+            exists = await conn.fetchval(
+                "SELECT EXISTS ("
+                "  SELECT 1 FROM information_schema.tables"
+                "  WHERE table_name = 'alembic_version'"
+                ")"
+            )
+            if exists:
+                current_revision = await conn.fetchval(
+                    "SELECT version_num FROM alembic_version LIMIT 1"
+                )
+        finally:
+            await conn.close()
+    except Exception as exc:
+        logger.warning(
+            f"Could not check alembic_version: {exc} — will attempt migration anyway."
+        )
+
+    # ------------------------------------------------------------------
+    # Step 2 — resolve head revision from the script directory
+    # ------------------------------------------------------------------
+    alembic_cfg = Config()
+    alembic_cfg.set_main_option("script_location", "src/alembic")
+    alembic_cfg.set_main_option("sqlalchemy.url", clean_url)
+
+    script = ScriptDirectory.from_config(alembic_cfg)
+    head_revision = script.get_current_head()
+
+    if current_revision is None:
+        logger.info("Fresh database — running full migration from base...")
+    elif current_revision == head_revision:
+        logger.info(
+            f"Database already at head ({head_revision}) — no migrations needed."
+        )
+        return
+    else:
+        logger.info(
+            f"Database at {current_revision}, head is {head_revision} — upgrading..."
+        )
+
+    # ------------------------------------------------------------------
+    # Step 3 — run upgrade in-process via EnvironmentContext
+    #
+    # EnvironmentContext.__enter__ installs the 'op' proxy (and the
+    # 'context' proxy) that migration scripts import at module level.
+    # We call env_ctx.configure(connection=sync_conn) to bind the live
+    # connection, then env_ctx.run_migrations() to execute the steps.
+    # env.py is never loaded — we replicate exactly what it does.
+    # ------------------------------------------------------------------
+    def _do_upgrade(sync_conn):
+        with EnvironmentContext(
+            alembic_cfg,
+            script,
+            fn=lambda rev, context: script._upgrade_revs("head", rev),
+            as_sql=False,
+            starting_rev=None,
+            destination_rev="head",
+        ) as env_ctx:
+            env_ctx.configure(
+                connection=sync_conn,
+                target_metadata=None,
+                compare_type=True,
+                transaction_per_migration=True,
+            )
+            env_ctx.run_migrations()
+
+    async_engine = create_async_engine(
+        clean_url,
+        connect_args=connect_args,
+        poolclass=sa_pool.NullPool,
+    )
+    try:
+        async with async_engine.begin() as conn:
+            await conn.run_sync(_do_upgrade)
+    finally:
+        await async_engine.dispose()
+
+    logger.info("Alembic upgrade head completed successfully.")
+
+
+
+
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan events."""
@@ -50,6 +172,13 @@ async def lifespan(app: FastAPI):
         logger.info("[OK] Configuration validated")
     except RuntimeError as e:
         logger.critical(f"[FAIL] Invalid production configuration:\n{e}")
+        raise
+
+    try:
+        await _run_migrations()
+        logger.info("[OK] Database migrations applied")
+    except Exception as e:
+        logger.critical(f"[FAIL] Migration failed: {e}", exc_info=True)
         raise
 
     try:
@@ -101,7 +230,7 @@ app.add_middleware(
 
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
-    """Global exception handler"""
+    """Global exception handler."""
     logger.error(f"Unhandled exception: {str(exc)}", exc_info=True)
     return JSONResponse(
         status_code=500,
@@ -115,7 +244,7 @@ async def global_exception_handler(request: Request, exc: Exception):
 
 @app.get("/")
 async def root():
-    """Root endpoint"""
+    """Root endpoint."""
     response: dict = {
         "success": True,
         "message": f"Welcome to {settings.APP_NAME} System Service",
@@ -166,6 +295,7 @@ app.include_router(SystemPersonas.router, prefix=_PREFIX, tags=["System"])
 
 if __name__ == "__main__":
     import uvicorn
+
     uvicorn.run(
         "src.Main:app",
         host=settings.HOST,

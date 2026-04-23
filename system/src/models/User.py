@@ -68,6 +68,7 @@ class User(BigIntPrimaryKeyMixin, EntityMixin, Base):
     )
     workspace: Mapped[Optional["Workspace"]] = relationship(  # noqa: F821
         "Workspace",
+        foreign_keys=[workspace_id],
         back_populates="users",
         lazy="noload",
     )

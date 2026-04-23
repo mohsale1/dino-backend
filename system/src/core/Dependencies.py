@@ -40,13 +40,21 @@ def _row_to_dict(obj: Any) -> Dict[str, Any]:
 
 
 def _extract_permission_codenames(permissions: List[Permission]) -> List[str]:
-    """Return permission codenames as 'resource:action' strings."""
+    """Return permission codenames as 'category.resource.action' dot-notation strings.
+
+    Format: "{category.lower()}.{resource}.{action}"
+    Examples: "system.dashboard.view", "application.orders.read"
+
+    This matches the PERMISSIONS constants used by the frontend
+    (e.g. PERMISSIONS.SYSTEM_DASHBOARD_VIEW = 'system.dashboard.view').
+    """
     codenames: List[str] = []
     for perm in permissions:
+        category = getattr(perm, "category", None)
         resource = getattr(perm, "resource", None)
         action = getattr(perm, "action", None)
-        if resource and action:
-            codenames.append(f"{resource}:{action}")
+        if category and resource and action:
+            codenames.append(f"{category.lower()}.{resource}.{action}")
     return codenames
 
 
