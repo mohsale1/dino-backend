@@ -1,57 +1,53 @@
+"""
+CategoryService — business logic for menu categories.
+"""
+
+from typing import Any, Dict, List, Optional, Tuple
+
 from sqlalchemy.ext.asyncio import AsyncSession
+
 from src.base.BaseService import BaseService
 from src.repositories.CategoryRepository import CategoryRepository
-from typing import Dict, Any, List, Tuple, Optional
 
 
 class CategoryService(BaseService):
-    """Category service"""
+    """Service for managing menu categories."""
 
-    def __init__(self, db: AsyncSession):
-        super().__init__(CategoryRepository(db))
+    def __init__(self, db: AsyncSession) -> None:
+        self.db = db
+        self.category_repo = CategoryRepository(db)
+        super().__init__(self.category_repo)
 
-    async def create_category(self, data: Dict[str, Any]) -> str:
-        """Create new category and return its ID"""
-        result = await self.create(data)
-        if isinstance(result, dict):
-            return result.get('id')
-        return result
-
-    async def get_category_by_id(self, category_id: str, include_deleted: bool = False) -> Optional[Dict[str, Any]]:
-        """Get category by ID"""
-        return await self.get_by_id(category_id, include_deleted)
-
-    async def get_categories_by_workspace(self, workspace_id: str) -> List[Dict[str, Any]]:
-        """Get all categories by workspace"""
-        return await self.repository.get_by_workspace(workspace_id)
+    async def create_category(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        """Create a new category."""
+        data.setdefault("is_active", True)
+        return await self.category_repo.create(data)
 
     async def get_paginated_categories(
         self,
-        workspace_id: str,
-        page: int = 1,
-        page_size: int = 10,
+        workspace_id: int,
+        persona_id: Optional[int] = None,
         is_available: Optional[bool] = None,
-        order_by: str = 'created_at',
-        order_direction: str = 'desc',
+        page: int = 1,
+        page_size: int = 20,
     ) -> Tuple[List[Dict[str, Any]], int, int]:
-        """Get paginated categories"""
-        return await self.repository.get_paginated_by_workspace(
+        """Return paginated categories with optional filters."""
+        return await self.category_repo.get_paginated_by_workspace(
             workspace_id=workspace_id,
+            persona_id=persona_id,
+            is_available=is_available,
             page=page,
             page_size=page_size,
-            is_available=is_available,
-            order_by=order_by,
-            order_direction=order_direction,
         )
 
-    async def update_category(self, category_id: str, data: Dict[str, Any]) -> bool:
-        """Update category"""
-        return await self.update(category_id, data)
+    async def update_category(self, category_id: int, data: Dict[str, Any]) -> bool:
+        """Update a category by ID."""
+        return await self.category_repo.update(category_id, data)
 
-    async def soft_delete_category(self, category_id: str) -> bool:
-        """Soft delete category"""
-        return await self.soft_delete(category_id)
+    async def soft_delete_category(self, category_id: int) -> bool:
+        """Soft-delete a category."""
+        return await self.category_repo.soft_delete(category_id)
 
-    async def restore_category(self, category_id: str) -> bool:
-        """Restore soft-deleted category"""
-        return await self.restore(category_id)
+    async def restore_category(self, category_id: int) -> bool:
+        """Restore a soft-deleted category."""
+        return await self.category_repo.restore(category_id)

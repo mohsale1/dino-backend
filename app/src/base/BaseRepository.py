@@ -111,7 +111,7 @@ class BaseRepository:
             update(self.model)
             .where(self.model.id == entity_id)
             .values(**data)
-            .execution_options(synchronize_session="fetch")
+            .execution_options(synchronize_session=False)
         )
         result = await self.db.execute(stmt)
         return result.rowcount > 0
@@ -143,7 +143,7 @@ class BaseRepository:
         stmt = (
             delete(self.model)
             .where(self.model.id == entity_id)
-            .execution_options(synchronize_session="fetch")
+            .execution_options(synchronize_session=False)
         )
         result = await self.db.execute(stmt)
         return result.rowcount > 0

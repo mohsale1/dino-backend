@@ -34,13 +34,6 @@ class Settings(BaseSettings):
     # PostgreSQL database URL (asyncpg driver)
     DATABASE_URL: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/dino_system"
 
-    # SuperAdmin User Settings - Auto-created on first startup
-    # Default credentials (can be overridden via environment variables)
-    SUPERADMIN_EMAIL: str = "admin@dino.in"
-    SUPERADMIN_PASSWORD: str = "Admin@dino123"
-    # Create default SuperAdmin on startup (set to false to disable)
-    CREATE_DEFAULT_SUPERADMIN: bool = True
-
     CORS_ORIGINS: str = "*"  # Default to allow all, should be restricted in production
 
     LOG_LEVEL: str = "INFO"
@@ -71,7 +64,6 @@ class Settings(BaseSettings):
         logger.info(f"   Port: {self.PORT}")
         logger.info(f"   DB Host: {db_host}")
         logger.info(f"   CORS Origins: {self.CORS_ORIGINS}")
-        logger.info(f"   Create Default SuperAdmin: {self.CREATE_DEFAULT_SUPERADMIN}")
         logger.info(f"   JWT Enabled: {self.ENABLE_JWT}")
 
         # Warn if using default values in production
@@ -88,12 +80,6 @@ class Settings(BaseSettings):
                 "Please set a proper DATABASE_URL pointing to your PostgreSQL instance.",
                 UserWarning,
             )
-
-        # Log SuperAdmin auto-creation status
-        if self.CREATE_DEFAULT_SUPERADMIN:
-            logger.info("   SuperAdmin Auto-Creation: Enabled")
-
-        self._validate_production_config()
 
     def _validate_production_config(self) -> None:
         """Raise RuntimeError for unsafe configurations in production."""

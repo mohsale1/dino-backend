@@ -25,11 +25,16 @@ COPY requirements.txt .
 # Install Python dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 
+# Create non-root user
+RUN useradd -m -u 1000 appuser
+
 # Copy application code
 COPY . .
+
+USER appuser
 
 # Expose port
 EXPOSE 8080
 
 # Run the application
-CMD ["sh", "-c", "uvicorn src.Main:app --host 0.0.0.0 --port ${PORT:-8080}"]
+CMD ["sh", "-c", "uvicorn src.Main:app --host 0.0.0.0 --port ${PORT:-8080} --workers 2"]

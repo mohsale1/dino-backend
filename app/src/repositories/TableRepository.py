@@ -1,40 +1,75 @@
+"""
+TableRepository — async SQLAlchemy 2.x repository for the Table model.
+"""
+
 from typing import Any, Dict, List, Optional, Tuple
 
+from sqlalchemy import and_, case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.base.BaseModel import row_to_dict
 from src.base.BaseRepository import BaseRepository
 from src.models.Table import Table
 
 
 class TableRepository(BaseRepository):
+    """Repository for Table entities."""
+
     def __init__(self, db: AsyncSession) -> None:
         super().__init__(Table, db)
 
-    async def get_by_workspace(self, workspace_id: str) -> List[Dict[str, Any]]:
+    async def get_by_workspace(self, workspace_id: int) -> List[Dict[str, Any]]:
+        """Return all active tables for a workspace."""
         return await self.get_all(filters={"workspace_id": workspace_id})
 
-    async def get_by_area(self, area_id: str) -> List[Dict[str, Any]]:
+    async def get_by_area(self, area_id: int) -> List[Dict[str, Any]]:
+        """Return all active tables in an area."""
         return await self.get_all(filters={"area_id": area_id})
 
     async def get_paginated_by_workspace(
         self,
-        workspace_id: str,
-        page: int = 1,
-        page_size: int = 10,
-        area_id: Optional[str] = None,
+        workspace_id: int,
+        area_id: Optional[int] = None,
         status: Optional[str] = None,
-        order_by: str = "created_at",
-        order_direction: str = "desc",
+        page: int = 1,
+        page_size: int = 20,
     ) -> Tuple[List[Dict[str, Any]], int, int]:
-        filters: Dict[str, Any] = {"workspace_id": workspace_id}
+        """Return paginated tables for a workspace with optional filters."""
+        conditions = [Table.workspace_id == workspace_id, Table.is_active == True]  # noqa: E712
+
         if area_id is not None:
-            filters["area_id"] = area_id
+            conditions.append(Table.area_id == area_id)
         if status is not None:
-            filters["status"] = status
-        return await self.get_paginated(
-            page=page,
-            page_size=page_size,
-            filters=filters,
-            order_by=order_by,
-            order_direction=order_direction,
+            conditions.append(Table.status == status)
+
+        count_stmt = select(func.count()).select_from(Table).where(and_(*conditions))
+        total = (await self.db.execute(count_stmt)).scalar_one() or 0
+        total_pages = max(1, (total + page_size - 1) // page_size)
+
+        offset = (page - 1) * page_size
+        data_stmt = (
+            select(Table)
+            .where(and_(*conditions))
+            .order_by(Table.display_order.asc(), Table.created_at.desc())
+            .limit(page_size)
+            .offset(offset)
         )
+        rows = (await self.db.execute(data_stmt)).scalars().all()
+        return [row_to_dict(r) for r in rows], total, total_pages
+
+    async def get_status_counts(self, workspace_id: int) -> Dict[str, int]:
+        """Return counts of tables grouped by status for a workspace."""
+        stmt = select(
+            func.count(case((Table.status == "available", 1))).label("available"),
+            func.count(case((Table.status == "occupied", 1))).label("occupied"),
+            func.count(case((Table.status == "reserved", 1))).label("reserved"),
+            func.count(case((Table.is_active == False, 1))).label("inactive"),  # noqa: E712
+        ).where(Table.workspace_id == workspace_id)
+
+        row = (await self.db.execute(stmt)).one()
+        return {
+            "available": row.available,
+            "occupied": row.occupied,
+            "reserved": row.reserved,
+            "inactive": row.inactive,
+        }

@@ -1,95 +1,34 @@
 """
-Persona ORM model + workspace_personas association table.
-
-A Persona represents a single outlet / branch.  It can belong to one or
-more Workspaces via the workspace_personas many-to-many table.
-
-persona_type:
-    0 = FOOD
-    1 = NON_FOOD
-
-order_type:
-    0 = Online
-    1 = Manual (Counter)
+Persona ORM model (shared with dino-system).
 """
 
 from typing import Optional
 
-from sqlalchemy import (
-    BigInteger,
-    Boolean,
-    Column,
-    ForeignKey,
-    Index,
-    Integer,
-    String,
-    Table,
-    Text,
-)
+from sqlalchemy import BigInteger, Boolean, ForeignKey, Index, SmallInteger, String, Text, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from src.models.Base import Base, EntityMixin, UUIDPrimaryKeyMixin
+from src.models.Base import Base, BigIntPrimaryKeyMixin, EntityMixin
 
 
-# --------------------------------------------------------------------------- #
-# Association table                                                            #
-# --------------------------------------------------------------------------- #
-workspace_personas = Table(
-    "workspace_personas",
-    Base.metadata,
-    Column(
-        "workspace_id",
-        BigInteger,
-        ForeignKey("workspaces.id", ondelete="CASCADE"),
-        primary_key=True,
-        nullable=False,
-    ),
-    Column(
-        "persona_id",
-        BigInteger,
-        ForeignKey("personas.id", ondelete="CASCADE"),
-        primary_key=True,
-        nullable=False,
-    ),
-)
-
-
-# --------------------------------------------------------------------------- #
-# Persona model                                                                #
-# --------------------------------------------------------------------------- #
-class Persona(UUIDPrimaryKeyMixin, EntityMixin, Base):
-    """A single outlet / branch belonging to one or more workspaces."""
+class Persona(BigIntPrimaryKeyMixin, EntityMixin, Base):
+    """A persona (outlet/branch) that belongs to a Workspace."""
 
     __tablename__ = "personas"
+
+    __table_args__ = (
+        Index("ix_personas_persona_type", "persona_type"),
+        Index("ix_personas_workspace_id", "workspace_id"),
+    )
 
     name: Mapped[str] = mapped_column(String(200), nullable=False)
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     persona_type: Mapped[int] = mapped_column(
-        Integer,
-        nullable=False,
-        default=0,
-        server_default="0",
-        comment="0=FOOD, 1=NON_FOOD",
+        SmallInteger, nullable=False, default=0, server_default=text("0"),
+        comment="0=Food, 1=NonFood",
     )
     order_type: Mapped[int] = mapped_column(
-        Integer,
-        nullable=False,
-        default=0,
-        server_default="0",
+        SmallInteger, nullable=False, default=0, server_default=text("0"),
         comment="0=Online, 1=Manual",
-    )
-    is_open: Mapped[bool] = mapped_column(
-        Boolean,
-        nullable=False,
-        default=True,
-        server_default="true",
-    )
-    # Billing suspension flag — ONLY on Persona, not on any other model
-    is_deactivated: Mapped[bool] = mapped_column(
-        Boolean,
-        nullable=False,
-        default=False,
-        server_default="false",
     )
     logo_url: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
     address: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
@@ -99,57 +38,53 @@ class Persona(UUIDPrimaryKeyMixin, EntityMixin, Base):
     postal_code: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
     phone: Mapped[Optional[str]] = mapped_column(String(30), nullable=True)
     email: Mapped[Optional[str]] = mapped_column(String(254), nullable=True)
-
-    # Primary workspace (denormalised for fast lookups)
-    workspace_id: Mapped[Optional[int]] = mapped_column(
+    is_open: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("true")
+    )
+    is_deactivated: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("false")
+    )
+    workspace_id: Mapped[int] = mapped_column(
         BigInteger,
-        ForeignKey("workspaces.id", ondelete="SET NULL"),
-        nullable=True,
-        index=True,
+        ForeignKey("workspaces.id", ondelete="CASCADE"),
+        nullable=False,
     )
 
-    # ------------------------------------------------------------------ #
-    # Relationships                                                        #
-    # ------------------------------------------------------------------ #
-    workspaces: Mapped[list["Workspace"]] = relationship(  # noqa: F821
+    # Relationships
+    workspace: Mapped["Workspace"] = relationship(  # noqa: F821
         "Workspace",
-        secondary="workspace_personas",
-        back_populates="personas",
-        lazy="select",
+        lazy="noload",
     )
     areas: Mapped[list["Area"]] = relationship(  # noqa: F821
         "Area",
         back_populates="persona",
-        lazy="select",
+        lazy="noload",
     )
     customers: Mapped[list["Customer"]] = relationship(  # noqa: F821
         "Customer",
         back_populates="persona",
-        lazy="select",
+        lazy="noload",
     )
-    users: Mapped[list["ApplicationUser"]] = relationship(  # noqa: F821
-        "ApplicationUser",
+    users: Mapped[list["User"]] = relationship(  # noqa: F821
+        "User",
         secondary="user_personas",
         back_populates="personas",
-        lazy="select",
+        lazy="noload",
+    )
+    order_details: Mapped[list["OrderDetail"]] = relationship(  # noqa: F821
+        "OrderDetail",
+        back_populates="persona",
+        lazy="noload",
     )
     orders: Mapped[list["Order"]] = relationship(  # noqa: F821
         "Order",
         back_populates="persona",
-        lazy="select",
+        lazy="noload",
     )
     reviews: Mapped[list["Review"]] = relationship(  # noqa: F821
         "Review",
         back_populates="persona",
-        lazy="select",
-    )
-
-    # ------------------------------------------------------------------ #
-    # Indexes                                                              #
-    # ------------------------------------------------------------------ #
-    __table_args__ = (
-        Index("ix_personas_is_active", "is_active"),
-        Index("ix_personas_persona_type", "persona_type"),
+        lazy="noload",
     )
 
     def __repr__(self) -> str:

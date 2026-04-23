@@ -1,167 +1,139 @@
+"""
+Dashboard router — analytics and reporting endpoints.
+"""
+
 from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.application.middleware.RoleCheck import ApplicationPermissionCheck
-from src.application.services.Dashboard import DashboardService
+from src.application.services.Dashboard import ApplicationDashboardService
 from src.base.BaseSchema import BaseResponse
 from src.config.Database import get_db
 
-router = APIRouter(prefix="/dashboard", tags=["Application Dashboard"])
+router = APIRouter(prefix="/dashboard", tags=["Dashboard"])
 
 
-def _resolve_persona_id(user: Dict[str, Any], persona_id: Optional[int]) -> Optional[int]:
-    """
-    Resolve the effective persona_id based on the caller's role.
-
-    - Admin/Owner: sees all personas in their workspace — persona_id stays None
-      unless the caller explicitly supplied one.
-    - Manager / Operator: always scoped to their own persona_id from the token.
-      The query param is ignored to prevent cross-persona data leakage.
-    """
-    user_role = user.get('role', {}).get('name')
-
-    if user_role and user_role.lower() in ('admin', 'owner'):
-        # Admin/Owner may optionally filter by a specific persona; otherwise sees all in workspace
-        return persona_id or None
-
-    # Manager / Operator are always scoped to their own persona
-    return user.get('persona_id')
-
-
-@router.get("")
-async def get_dashboard(
-    workspace_id: int = Query(..., description="Workspace ID"),
-    persona_id: Optional[int] = Query(None, description="Persona ID (optional, Admin/Owner only)"),
-    start_date: Optional[str] = Query(None, description="Start date filter (ISO format)"),
-    end_date: Optional[str] = Query(None, description="End date filter (ISO format)"),
-    user: Dict[str, Any] = Depends(ApplicationPermissionCheck.require('dashboard:read')),
-    db: AsyncSession = Depends(get_db)
-):
-    """
-    Get comprehensive dashboard data
-
-    Query Parameters:
-    - workspace_id: Workspace ID (required)
-    - persona_id: Persona ID for filtering (optional, Admin/Owner only)
-    - start_date: Start date for filtering data (ISO format, optional)
-    - end_date: End date for filtering data (ISO format, optional)
-
-    Returns comprehensive dashboard data including:
-    - Statistics (revenue, orders, tables, items)
-    - Analytics (revenue trend, order status, popular items, category performance)
-    - Recent activity
-    - Table statuses
-    """
-    service = DashboardService(db)
-
-    try:
-        effective_persona_id = _resolve_persona_id(user, persona_id)
-
-        dashboard_data = await service.get_venue_dashboard(
-            workspace_id=workspace_id,
-            persona_id=effective_persona_id,
-            start_date=start_date,
-            end_date=end_date
-        )
-
-        return dashboard_data
-
-    except HTTPException:
-        raise
-    except Exception as e:
+def _resolve_workspace(current_user: Dict[str, Any], workspace_id: Optional[int]) -> int:
+    wid = workspace_id or current_user.get("workspace_id")
+    if not wid:
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to retrieve dashboard data: {str(e)}"
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="workspace_id is required",
         )
+    return wid
 
 
-@router.get("/stats")
+@router.get("", response_model=BaseResponse)
+async def get_full_dashboard(
+    workspace_id: Optional[int] = Query(None),
+    persona_id: Optional[int] = Query(None),
+    current_user: Dict[str, Any] = Depends(ApplicationPermissionCheck.require("dashboard:read")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get full dashboard summary (all metrics combined)."""
+    wid = _resolve_workspace(current_user, workspace_id)
+    service = ApplicationDashboardService(db)
+    data = await service.get_full_dashboard(workspace_id=wid, persona_id=persona_id)
+    return {"success": True, "message": "Dashboard data retrieved successfully", "data": data}
+
+
+@router.get("/stats", response_model=BaseResponse)
 async def get_dashboard_stats(
-    workspace_id: int = Query(..., description="Workspace ID"),
-    persona_id: Optional[int] = Query(None, description="Persona ID (optional, Admin/Owner only)"),
-    start_date: Optional[str] = Query(None, description="Start date filter (ISO format)"),
-    end_date: Optional[str] = Query(None, description="End date filter (ISO format)"),
-    user: Dict[str, Any] = Depends(ApplicationPermissionCheck.require('dashboard:read')),
-    db: AsyncSession = Depends(get_db)
+    workspace_id: Optional[int] = Query(None),
+    persona_id: Optional[int] = Query(None),
+    current_user: Dict[str, Any] = Depends(ApplicationPermissionCheck.require("dashboard:read")),
+    db: AsyncSession = Depends(get_db),
 ):
-    """
-    Get dashboard statistics only (lightweight endpoint)
-
-    Query Parameters:
-    - workspace_id: Workspace ID (required)
-    - persona_id: Persona ID for filtering (optional, Admin/Owner only)
-    - start_date: Start date for filtering data (ISO format, optional)
-    - end_date: End date for filtering data (ISO format, optional)
-    """
-    service = DashboardService(db)
-
-    try:
-        effective_persona_id = _resolve_persona_id(user, persona_id)
-
-        stats = await service.get_stats_only(
-            workspace_id=workspace_id,
-            persona_id=effective_persona_id,
-            start_date=start_date,
-            end_date=end_date
-        )
-
-        return {
-            "success": True,
-            "data": {
-                "stats": stats
-            }
-        }
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to retrieve dashboard stats: {str(e)}"
-        )
+    """Get key dashboard metrics (orders, revenue, tables, customers, items)."""
+    wid = _resolve_workspace(current_user, workspace_id)
+    service = ApplicationDashboardService(db)
+    data = await service.get_dashboard_stats(workspace_id=wid, persona_id=persona_id)
+    return {"success": True, "message": "Stats retrieved successfully", "data": data}
 
 
-@router.get("/analytics")
-async def get_dashboard_analytics(
-    workspace_id: int = Query(..., description="Workspace ID"),
-    persona_id: Optional[int] = Query(None, description="Persona ID (optional, Admin/Owner only)"),
-    start_date: Optional[str] = Query(None, description="Start date filter (ISO format)"),
-    end_date: Optional[str] = Query(None, description="End date filter (ISO format)"),
-    user: Dict[str, Any] = Depends(ApplicationPermissionCheck.require('dashboard:read')),
-    db: AsyncSession = Depends(get_db)
+@router.get("/revenue-trend", response_model=BaseResponse)
+async def get_revenue_trend(
+    workspace_id: Optional[int] = Query(None),
+    persona_id: Optional[int] = Query(None),
+    days: int = Query(30, ge=1, le=365),
+    current_user: Dict[str, Any] = Depends(ApplicationPermissionCheck.require("dashboard:read")),
+    db: AsyncSession = Depends(get_db),
 ):
-    """
-    Get dashboard analytics only
+    """Get revenue per day for the last N days."""
+    wid = _resolve_workspace(current_user, workspace_id)
+    service = ApplicationDashboardService(db)
+    data = await service.get_revenue_trend(workspace_id=wid, persona_id=persona_id, days=days)
+    return {"success": True, "message": "Revenue trend retrieved successfully", "data": data}
 
-    Query Parameters:
-    - workspace_id: Workspace ID (required)
-    - persona_id: Persona ID for filtering (optional, Admin/Owner only)
-    - start_date: Start date for filtering data (ISO format, optional)
-    - end_date: End date for filtering data (ISO format, optional)
-    """
-    service = DashboardService(db)
 
-    try:
-        effective_persona_id = _resolve_persona_id(user, persona_id)
+@router.get("/orders-by-status", response_model=BaseResponse)
+async def get_orders_by_status(
+    workspace_id: Optional[int] = Query(None),
+    persona_id: Optional[int] = Query(None),
+    current_user: Dict[str, Any] = Depends(ApplicationPermissionCheck.require("dashboard:read")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get order counts grouped by status (for pie chart)."""
+    wid = _resolve_workspace(current_user, workspace_id)
+    service = ApplicationDashboardService(db)
+    data = await service.get_orders_by_status(workspace_id=wid, persona_id=persona_id)
+    return {"success": True, "message": "Orders by status retrieved successfully", "data": data}
 
-        analytics = await service.get_analytics_only(
-            workspace_id=workspace_id,
-            persona_id=effective_persona_id,
-            start_date=start_date,
-            end_date=end_date
-        )
 
-        return {
-            "success": True,
-            "data": analytics
-        }
+@router.get("/orders-by-type", response_model=BaseResponse)
+async def get_orders_by_type(
+    workspace_id: Optional[int] = Query(None),
+    persona_id: Optional[int] = Query(None),
+    current_user: Dict[str, Any] = Depends(ApplicationPermissionCheck.require("dashboard:read")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get order counts grouped by order type (for bar chart)."""
+    wid = _resolve_workspace(current_user, workspace_id)
+    service = ApplicationDashboardService(db)
+    data = await service.get_orders_by_type(workspace_id=wid, persona_id=persona_id)
+    return {"success": True, "message": "Orders by type retrieved successfully", "data": data}
 
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to retrieve dashboard analytics: {str(e)}"
-        )
+
+@router.get("/top-items", response_model=BaseResponse)
+async def get_top_items(
+    workspace_id: Optional[int] = Query(None),
+    persona_id: Optional[int] = Query(None),
+    limit: int = Query(10, ge=1, le=50),
+    current_user: Dict[str, Any] = Depends(ApplicationPermissionCheck.require("dashboard:read")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get top selling items by quantity."""
+    wid = _resolve_workspace(current_user, workspace_id)
+    service = ApplicationDashboardService(db)
+    data = await service.get_top_items(workspace_id=wid, persona_id=persona_id, limit=limit)
+    return {"success": True, "message": "Top items retrieved successfully", "data": data}
+
+
+@router.get("/payment-summary", response_model=BaseResponse)
+async def get_payment_summary(
+    workspace_id: Optional[int] = Query(None),
+    persona_id: Optional[int] = Query(None),
+    current_user: Dict[str, Any] = Depends(ApplicationPermissionCheck.require("dashboard:read")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get payment breakdown by status and method."""
+    wid = _resolve_workspace(current_user, workspace_id)
+    service = ApplicationDashboardService(db)
+    data = await service.get_payment_summary(workspace_id=wid, persona_id=persona_id)
+    return {"success": True, "message": "Payment summary retrieved successfully", "data": data}
+
+
+@router.get("/hourly-orders", response_model=BaseResponse)
+async def get_hourly_orders(
+    workspace_id: Optional[int] = Query(None),
+    persona_id: Optional[int] = Query(None),
+    current_user: Dict[str, Any] = Depends(ApplicationPermissionCheck.require("dashboard:read")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get order counts grouped by hour of day for today."""
+    wid = _resolve_workspace(current_user, workspace_id)
+    service = ApplicationDashboardService(db)
+    data = await service.get_hourly_orders(workspace_id=wid, persona_id=persona_id)
+    return {"success": True, "message": "Hourly orders retrieved successfully", "data": data}

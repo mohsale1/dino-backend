@@ -1,52 +1,67 @@
-from fastapi import APIRouter, Body, HTTPException, status, Depends
+from datetime import datetime
+from decimal import Decimal
+from typing import Optional
+
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
-from src.system.services.Billing import BillingService
-from src.system.services.Workspace import WorkspaceService
+
 from src.base.BaseSchema import BaseResponse
-from src.system.middleware.RoleCheck import SystemPermissionCheck
 from src.config.Database import get_db
-from pydantic import BaseModel
-from typing import Dict, Any
+from src.schemas.Workspace import WorkspaceBillingUpdate
+from src.system.middleware.RoleCheck import SystemPermissionCheck
+from src.system.services.Billing import BillingService
 
 router = APIRouter(prefix="/billing", tags=["System Billing"])
 
-class UpdateSubscriptionRequest(BaseModel):
-    plan: str
-    status: str
 
-@router.get("/workspaces", dependencies=[Depends(SystemPermissionCheck.require('billing:read'))])
-async def get_all_billing_info(
-    page: int = 1,
-    page_size: int = 10,
-    order_by: str = "created_at",
-    order_direction: str = "desc",
-    db: AsyncSession = Depends(get_db)
+# ---------------------------------------------------------------------------
+# Inline schemas for billing transactions
+# ---------------------------------------------------------------------------
+
+class BillingTransactionCreate(BaseModel):
+    """Schema for creating a billing transaction."""
+    workspace_id: int
+    plan: str = Field(..., max_length=50)
+    amount: Decimal = Field(..., ge=0)
+    currency: str = Field("INR", max_length=10)
+    billing_period_start: datetime
+    billing_period_end: datetime
+    payment_status: str = Field("pending", max_length=30)
+    payment_method: Optional[str] = Field(None, max_length=50)
+    payment_ref: Optional[str] = Field(None, max_length=200)
+    invoice_number: Optional[str] = Field(None, max_length=100)
+    notes: Optional[str] = None
+
+
+class BillingTransactionUpdate(BaseModel):
+    """Schema for updating a billing transaction."""
+    payment_status: Optional[str] = Field(None, max_length=30)
+    paid_amount: Optional[Decimal] = Field(None, ge=0)
+    last_paid_at: Optional[datetime] = None
+    payment_ref: Optional[str] = Field(None, max_length=200)
+    notes: Optional[str] = None
+
+
+# ---------------------------------------------------------------------------
+# Routes
+# ---------------------------------------------------------------------------
+
+@router.get(
+    "/workspaces",
+    dependencies=[Depends(SystemPermissionCheck.require("billing:read"))],
+)
+async def get_all_billing(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    db: AsyncSession = Depends(get_db),
 ):
-    """
-    Get billing info for all workspaces with pagination (BillingManager, SuperAdmin)
-
-    Query Parameters:
-    - page: Page number (default: 1)
-    - page_size: Items per page (default: 10, max: 100)
-    - order_by: Field to order by (default: created_at)
-    - order_direction: Order direction (asc/desc, default: desc)
-    """
-    billing_service = BillingService(db)
-
-    # Validate page_size
-    if page_size > 100:
-        page_size = 100
-
-    items, total, total_pages = await billing_service.get_paginated_billing_info(
-        page=page,
-        page_size=page_size,
-        order_by=order_by,
-        order_direction=order_direction
-    )
-
+    """Get paginated workspace billing records."""
+    service = BillingService(db)
+    items, total, total_pages = await service.get_all_billing(page=page, page_size=page_size)
     return {
         "success": True,
-        "message": "Billing information retrieved successfully",
+        "message": "Billing records retrieved successfully",
         "data": items,
         "pagination": {
             "page": page,
@@ -54,74 +69,132 @@ async def get_all_billing_info(
             "total": total,
             "total_pages": total_pages,
             "has_next": page < total_pages,
-            "has_prev": page > 1
-        }
+            "has_prev": page > 1,
+        },
     }
 
-@router.get("/workspaces/{workspace_id}", response_model=BaseResponse, dependencies=[Depends(SystemPermissionCheck.require('billing:read'))])
+
+@router.get(
+    "/workspaces/{workspace_id}",
+    response_model=BaseResponse,
+    dependencies=[Depends(SystemPermissionCheck.require("billing:read"))],
+)
 async def get_workspace_billing(workspace_id: int, db: AsyncSession = Depends(get_db)):
-    """Get workspace billing information (BillingManager, SuperAdmin)"""
-    billing_service = BillingService(db)
-
-    billing_info = await billing_service.get_workspace_billing(workspace_id)
-
-    if not billing_info:
+    """Get billing information for a specific workspace."""
+    service = BillingService(db)
+    billing = await service.get_workspace_billing(workspace_id)
+    if not billing:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Workspace not found"
+            detail="Billing record not found",
         )
+    return {"success": True, "message": "Billing retrieved successfully", "data": billing}
 
-    return {
-        "success": True,
-        "message": "Billing information retrieved successfully",
-        "data": billing_info
-    }
 
-@router.put("/workspaces/{workspace_id}/subscription", response_model=BaseResponse, dependencies=[Depends(SystemPermissionCheck.require('billing:update'))])
-async def update_subscription(workspace_id: int, request: UpdateSubscriptionRequest, db: AsyncSession = Depends(get_db)):
-    """Update workspace subscription (BillingManager, SuperAdmin)"""
-    billing_service = BillingService(db)
-
-    success = await billing_service.update_subscription(workspace_id, request.plan, request.status)
-
+@router.put(
+    "/workspaces/{workspace_id}",
+    response_model=BaseResponse,
+    dependencies=[Depends(SystemPermissionCheck.require("billing:update"))],
+)
+async def update_workspace_billing(
+    workspace_id: int,
+    billing_data: WorkspaceBillingUpdate,
+    db: AsyncSession = Depends(get_db),
+):
+    """Update billing information for a workspace."""
+    service = BillingService(db)
+    success = await service.update_billing_info(
+        workspace_id, billing_data.model_dump(exclude_unset=True)
+    )
     if not success:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Workspace not found"
+            detail="Billing record not found",
         )
+    return {"success": True, "message": "Billing updated successfully"}
 
-    return {
-        "success": True,
-        "message": "Subscription updated successfully"
-    }
 
-@router.put("/workspaces/{workspace_id}/billing-info", response_model=BaseResponse, dependencies=[Depends(SystemPermissionCheck.require('billing:update'))])
-async def update_billing_info(workspace_id: int, billing_info: Dict[str, Any] = Body(...), db: AsyncSession = Depends(get_db)):
-    """Update workspace billing information (BillingManager, SuperAdmin)"""
-    workspace_service = WorkspaceService(db)
-
-    success = await workspace_service.update_billing_info(workspace_id, billing_info)
-
-    if not success:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Workspace not found"
-        )
-
-    return {
-        "success": True,
-        "message": "Billing information updated successfully"
-    }
-
-@router.get("/stats", response_model=BaseResponse, dependencies=[Depends(SystemPermissionCheck.require('billing:read'))])
+@router.get(
+    "/stats",
+    response_model=BaseResponse,
+    dependencies=[Depends(SystemPermissionCheck.require("billing:read"))],
+)
 async def get_billing_stats(db: AsyncSession = Depends(get_db)):
-    """Get billing statistics (BillingManager, SuperAdmin)"""
-    billing_service = BillingService(db)
+    """Get aggregate billing statistics."""
+    service = BillingService(db)
+    stats = await service.get_billing_stats()
+    return {"success": True, "message": "Billing stats retrieved successfully", "data": stats}
 
-    stats = await billing_service.get_billing_stats()
 
+@router.get(
+    "/transactions",
+    dependencies=[Depends(SystemPermissionCheck.require("billing:read"))],
+)
+async def get_billing_transactions(
+    workspace_id: Optional[int] = Query(None),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get paginated billing transactions."""
+    service = BillingService(db)
+    items, total, total_pages = await service.get_billing_transactions(
+        workspace_id=workspace_id,
+        page=page,
+        page_size=page_size,
+    )
     return {
         "success": True,
-        "message": "Billing statistics retrieved successfully",
-        "data": stats
+        "message": "Billing transactions retrieved successfully",
+        "data": items,
+        "pagination": {
+            "page": page,
+            "page_size": page_size,
+            "total": total,
+            "total_pages": total_pages,
+            "has_next": page < total_pages,
+            "has_prev": page > 1,
+        },
     }
+
+
+@router.post(
+    "/transactions",
+    response_model=BaseResponse,
+    dependencies=[Depends(SystemPermissionCheck.require("billing:create"))],
+)
+async def create_billing_transaction(
+    transaction_data: BillingTransactionCreate,
+    db: AsyncSession = Depends(get_db),
+):
+    """Create a billing transaction record."""
+    service = BillingService(db)
+    created = await service.create_billing_transaction(transaction_data.model_dump())
+    return {
+        "success": True,
+        "message": "Billing transaction created successfully",
+        "data": {"id": created.get("id")},
+    }
+
+
+@router.put(
+    "/transactions/{transaction_id}",
+    response_model=BaseResponse,
+    dependencies=[Depends(SystemPermissionCheck.require("billing:update"))],
+)
+async def update_billing_transaction(
+    transaction_id: int,
+    update_data: BillingTransactionUpdate,
+    db: AsyncSession = Depends(get_db),
+):
+    """Update a billing transaction."""
+    service = BillingService(db)
+    success = await service.update_billing_transaction(
+        transaction_id, update_data.model_dump(exclude_unset=True)
+    )
+    if not success:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Billing transaction not found",
+        )
+    return {"success": True, "message": "Billing transaction updated successfully"}

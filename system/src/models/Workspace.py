@@ -1,30 +1,25 @@
 """
 Workspace ORM model and workspace_personas association table.
 
-owner_id       – references application_users in dino-application; no FK enforced.
-workspace_personas – links workspaces to personas; persona_id has no FK because
-                     Persona may live in a separate schema or service context.
+owner_id   – references users.id (SET NULL on delete)
+referred_by – references users.id (SET NULL on delete)
+No billing columns — billing is in workspace_billing table.
 """
 
-from datetime import datetime
-from decimal import Decimal
 from typing import Optional
 
 from sqlalchemy import (
     BigInteger,
     Column,
-    DateTime,
     ForeignKey,
     Index,
-    Numeric,
     String,
     Table,
     Text,
-    text,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from src.models.Base import Base, UUIDPrimaryKeyMixin, EntityMixin
+from src.models.Base import Base, BigIntPrimaryKeyMixin, EntityMixin
 
 
 # ---------------------------------------------------------------------------
@@ -44,9 +39,9 @@ workspace_personas = Table(
     Column(
         "persona_id",
         BigInteger,
+        ForeignKey("personas.id", ondelete="CASCADE"),
         primary_key=True,
         nullable=False,
-        comment="References personas.id – no FK enforced (cross-service)",
     ),
     Index("ix_workspace_personas_persona_id", "persona_id"),
 )
@@ -56,98 +51,42 @@ workspace_personas = Table(
 # Workspace entity
 # ---------------------------------------------------------------------------
 
-class Workspace(UUIDPrimaryKeyMixin, EntityMixin, Base):
-    """
-    A tenant-level container that groups Personas and holds billing info.
-
-    owner_id
-    --------
-    BigInteger ID of the ApplicationUser who owns this workspace.  Stored
-    without a DB-level FK because ApplicationUser lives in dino-application.
-
-    referred_by
-    -----------
-    VARCHAR(10) FK → system_users.id  (nullable).  Tracks which SystemUser
-    referred this workspace during registration.
-
-    subscription_plan / subscription_status
-    ----------------------------------------
-    Free-text strings kept flexible for future plan additions.
-    Defaults: plan='Free', status='Active'.
-    """
+class Workspace(BigIntPrimaryKeyMixin, EntityMixin, Base):
+    """A tenant-level container that groups Personas and holds billing info."""
 
     __tablename__ = "workspaces"
 
-    __table_args__ = (
-        Index("ix_workspaces_is_active", "is_active"),
-        Index("ix_workspaces_subscription_status", "subscription_status"),
-    )
+    __table_args__ = ()
 
-    # --- Ownership -----------------------------------------------------------
-    name: Mapped[str] = mapped_column(
-        String(255),
-        nullable=False,
-    )
-    description: Mapped[Optional[str]] = mapped_column(
-        Text,
-        nullable=True,
-    )
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
-    # Cross-service – no FK enforced
     owner_id: Mapped[Optional[int]] = mapped_column(
         BigInteger,
-        nullable=True,
-        index=True,
-        comment="References application_users.id – no FK enforced (cross-service)",
-    )
-
-    referred_by: Mapped[Optional[str]] = mapped_column(
-        String(10),
-        ForeignKey("system_users.id", ondelete="SET NULL"),
-        nullable=True,
-        index=True,
-    )
-
-    # --- Billing contact -----------------------------------------------------
-    billing_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
-    billing_email: Mapped[Optional[str]] = mapped_column(String(320), nullable=True)
-    billing_phone: Mapped[Optional[str]] = mapped_column(String(30), nullable=True)
-    billing_address: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
-    billing_city: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
-    billing_state: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
-    billing_postal_code: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
-    billing_country: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
-
-    # --- Subscription --------------------------------------------------------
-    subscription_plan: Mapped[str] = mapped_column(
-        String(50),
-        nullable=False,
-        server_default=text("'Free'"),
-    )
-    subscription_status: Mapped[str] = mapped_column(
-        String(50),
-        nullable=False,
-        server_default=text("'Active'"),
-    )
-    subscription_start_date: Mapped[Optional[datetime]] = mapped_column(
-        DateTime(timezone=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
         nullable=True,
     )
-    next_billing_date: Mapped[Optional[datetime]] = mapped_column(
-        DateTime(timezone=True),
+    referred_by: Mapped[Optional[int]] = mapped_column(
+        BigInteger,
+        ForeignKey("users.id", ondelete="SET NULL"),
         nullable=True,
     )
-    mrr: Mapped[Decimal] = mapped_column(
-        Numeric(10, 2),
-        nullable=False,
-        server_default=text("0"),
-        comment="Monthly Recurring Revenue in base currency",
-    )
 
-    # --- Relationships -------------------------------------------------------
-    referred_by_user: Mapped[Optional["SystemUser"]] = relationship(  # noqa: F821
-        "SystemUser",
+    # Relationships
+    owner: Mapped[Optional["User"]] = relationship(  # noqa: F821
+        "User",
+        foreign_keys=[owner_id],
+        lazy="noload",
+    )
+    referred_by_user: Mapped[Optional["User"]] = relationship(  # noqa: F821
+        "User",
         foreign_keys=[referred_by],
+        lazy="noload",
+    )
+    billing: Mapped[Optional["WorkspaceBilling"]] = relationship(  # noqa: F821
+        "WorkspaceBilling",
+        back_populates="workspace",
+        uselist=False,
         lazy="noload",
     )
     personas: Mapped[list["Persona"]] = relationship(  # noqa: F821
@@ -155,6 +94,12 @@ class Workspace(UUIDPrimaryKeyMixin, EntityMixin, Base):
         secondary="workspace_personas",
         primaryjoin="Workspace.id == workspace_personas.c.workspace_id",
         secondaryjoin="Persona.id == workspace_personas.c.persona_id",
+        lazy="noload",
+    )
+    users: Mapped[list["User"]] = relationship(  # noqa: F821
+        "User",
+        foreign_keys="User.workspace_id",
+        back_populates="workspace",
         lazy="noload",
     )
 

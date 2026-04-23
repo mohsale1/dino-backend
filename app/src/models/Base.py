@@ -1,18 +1,5 @@
 """
-SQLAlchemy 2.x DeclarativeBase with shared mixins.
-
-Mixins
-------
-BigIntPrimaryKeyMixin - auto-incrementing BigInteger primary key (BIGSERIAL)
-EntityMixin           - is_active flag + created_at / updated_at timestamps
-
-Soft-delete convention
-----------------------
-is_active=True  : record is live and visible (active).
-is_active=False : record has been soft-deleted / deactivated.
-
-There is NO is_deleted, deleted_at, or restored_at column anywhere in the
-schema.  All soft-delete logic is expressed exclusively through is_active.
+SQLAlchemy 2.x DeclarativeBase with shared mixins for dino-application.
 """
 
 from datetime import datetime
@@ -23,7 +10,7 @@ from sqlalchemy.sql import func
 
 
 class Base(DeclarativeBase):
-    """Project-wide declarative base.  Alembic imports this directly."""
+    """Project-wide declarative base."""
     pass
 
 
@@ -37,25 +24,12 @@ class BigIntPrimaryKeyMixin:
     )
 
 
-# Backward-compatible alias
-UUIDPrimaryKeyMixin = BigIntPrimaryKeyMixin
-
-
 class EntityMixin:
     """
-    Unified mixin applied to every persisted entity.
+    Unified mixin that adds lifecycle and audit columns to every entity table.
 
-    Columns
-    -------
-    is_active  : bool
-        True  -> record is active/visible.
-        False -> record is soft-deleted/inactive.
-        Never NULL; defaults to True on insert.
-    created_at : datetime (tz-aware)
-        Set once by the database at INSERT time; never changes.
-    updated_at : datetime (tz-aware)
-        Set by the database at INSERT and refreshed automatically on every
-        UPDATE via the onupdate hook.
+    is_active=True  : record is live and visible.
+    is_active=False : record is soft-deleted / inactive.
     """
 
     is_active: Mapped[bool] = mapped_column(

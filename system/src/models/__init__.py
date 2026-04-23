@@ -7,8 +7,6 @@ which is required for Alembic autogenerate to discover every table.
 Usage in alembic/env.py
 -----------------------
     from src.models import Base          # noqa: F401  (triggers all imports)
-    from src.models import *             # alternative
-
     target_metadata = Base.metadata
 """
 
@@ -17,7 +15,6 @@ Usage in alembic/env.py
 from src.models.Base import (  # noqa: F401
     Base,
     BigIntPrimaryKeyMixin,
-    UUIDPrimaryKeyMixin,  # backward-compatible alias
     EntityMixin,
 )
 
@@ -25,24 +22,25 @@ from src.models.Base import (  # noqa: F401
 # those modules is sufficient to register the Table objects with Base.metadata.
 from src.models.Permission import Permission  # noqa: F401
 from src.models.Role import Role, role_permissions  # noqa: F401
-from src.models.SystemUser import SystemUser  # noqa: F401
-from src.models.Persona import Persona  # noqa: F401
 from src.models.Workspace import Workspace, workspace_personas  # noqa: F401
-from src.models.HomePageInfo import HomePageInfo  # noqa: F401
+from src.models.WorkspaceBilling import WorkspaceBilling  # noqa: F401
+from src.models.BillingTransaction import BillingTransaction  # noqa: F401
+from src.models.Persona import Persona  # noqa: F401
+from src.models.User import User  # noqa: F401
 
 __all__ = [
     # Base
     "Base",
     "BigIntPrimaryKeyMixin",
-    "UUIDPrimaryKeyMixin",  # backward-compatible alias
     "EntityMixin",
     # Entity models
     "Permission",
     "Role",
-    "SystemUser",
-    "Persona",
+    "User",
     "Workspace",
-    "HomePageInfo",
+    "WorkspaceBilling",
+    "BillingTransaction",
+    "Persona",
     # Association tables
     "role_permissions",
     "workspace_personas",

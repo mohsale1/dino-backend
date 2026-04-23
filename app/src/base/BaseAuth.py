@@ -9,12 +9,13 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Optional
 
 from fastapi import HTTPException, status
-from jose import JWTError, jwt
+import jwt
+from jwt.exceptions import InvalidTokenError
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
 from src.base.BaseRepository import BaseRepository
-from src.base.BaseUser import SENSITIVE_USER_FIELDS
+from src.base.BaseModel import SENSITIVE_FIELDS
 from src.config.Settings import settings
 from src.core.Security import get_password_hash, verify_password
 from src.models.Role import Role
@@ -94,7 +95,7 @@ class BaseAuth:
         """Decode and verify a JWT token. Returns the payload or None."""
         try:
             return jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
-        except JWTError:
+        except InvalidTokenError:
             return None
 
     # ------------------------------------------------------------------
@@ -115,7 +116,7 @@ class BaseAuth:
 
         # Strip sensitive / internal fields (whitelist approach via exclusion
         # of the known-sensitive set defined in BaseUser).
-        for field in SENSITIVE_USER_FIELDS | {"created_by", "is_system"}:
+        for field in SENSITIVE_FIELDS | {"created_by", "is_system"}:
             user.pop(field, None)
 
         role_id = user.get("role_id")
@@ -132,9 +133,9 @@ class BaseAuth:
 
             if role_obj is not None:
                 codenames = [
-                    perm.codename
+                    f"{perm.resource}:{perm.action}"
                     for perm in role_obj.permissions
-                    if perm.codename
+                    if perm.resource and perm.action
                 ]
                 user["role"] = {
                     "id": role_obj.id,

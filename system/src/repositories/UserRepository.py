@@ -1,50 +1,68 @@
 """
-UserRepository — async SQLAlchemy 2.x repository for the SystemUser model.
-
-Deletion strategy: SystemUser has no is_deleted column.
-A "deleted" user simply has is_active = False.
-All queries filter by is_active unless explicitly told not to.
+UserRepository — async SQLAlchemy 2.x repository for the unified User model.
 """
 
 from typing import Any, Dict, List, Optional, Tuple
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.base.BaseModel import row_to_dict
 from src.base.BaseRepository import BaseRepository
-from src.models.SystemUser import SystemUser
+from src.models.User import User
 
 
 class UserRepository(BaseRepository):
-    """Repository for SystemUser entities."""
+    """Repository for User entities (both system and application users)."""
 
     def __init__(self, db: AsyncSession) -> None:
-        super().__init__(SystemUser, db)
+        super().__init__(User, db)
 
     # ------------------------------------------------------------------
     # Simple lookups
     # ------------------------------------------------------------------
 
-    async def get_by_role(self, role_id: str) -> List[Dict[str, Any]]:
-        """Return all active system users assigned to the given role."""
+    async def get_by_workspace(self, workspace_id: int) -> List[Dict[str, Any]]:
+        """Return all active users belonging to the given workspace."""
+        return await self.get_all(filters={"workspace_id": workspace_id})
+
+    async def get_by_role(self, role_id: int) -> List[Dict[str, Any]]:
+        """Return all active users assigned to the given role."""
         return await self.get_all(filters={"role_id": role_id})
+
+    async def get_by_user_type(self, user_type: int) -> List[Dict[str, Any]]:
+        """Return all active users of the given type (0=System, 1=Application)."""
+        return await self.get_all(filters={"user_type": user_type})
 
     # ------------------------------------------------------------------
     # Existence check
     # ------------------------------------------------------------------
 
     async def email_exists(
-        self, email: str, exclude_id: Optional[str] = None
+        self,
+        email: str,
+        workspace_id: Optional[int] = None,
+        exclude_id: Optional[int] = None,
     ) -> bool:
-        """Return True if a system user with the given email exists."""
+        """
+        Return True if a user with the given email exists.
+
+        For system users (workspace_id=None): checks globally unique email.
+        For application users: checks uniqueness within the workspace.
+        """
         stmt = (
             select(func.count())
             .select_from(self.model)
             .where(self.model.email == email.lower())
         )
+        if workspace_id is None:
+            stmt = stmt.where(self.model.workspace_id.is_(None))
+        else:
+            stmt = stmt.where(self.model.workspace_id == workspace_id)
+
         if exclude_id is not None:
             stmt = stmt.where(self.model.id != exclude_id)
+
         result = await self.db.execute(stmt)
         return (result.scalar_one() or 0) > 0
 
@@ -54,24 +72,29 @@ class UserRepository(BaseRepository):
 
     async def get_paginated_users(
         self,
-        role_id: Optional[str] = None,
+        user_type: Optional[int] = None,
+        workspace_id: Optional[int] = None,
+        role_id: Optional[int] = None,
         search_query: Optional[str] = None,
-        active_only: bool = True,
         page: int = 1,
-        page_size: int = 10,
-        order_by: str = "created_at",
-        order_direction: str = "desc",
+        page_size: int = 20,
+        include_deleted: bool = False,
     ) -> Tuple[List[Dict[str, Any]], int, int]:
         """
         Return (items, total_count, total_pages) with optional filtering.
 
-        active_only=True  → only is_active = True users (default)
-        active_only=False → all users including deactivated/soft-deleted
+        Supports ILIKE search on email, first_name, last_name.
         """
         conditions = []
 
-        if active_only:
+        if not include_deleted:
             conditions.append(self.model.is_active == True)  # noqa: E712
+
+        if user_type is not None:
+            conditions.append(self.model.user_type == user_type)
+
+        if workspace_id is not None:
+            conditions.append(self.model.workspace_id == workspace_id)
 
         if role_id is not None:
             conditions.append(self.model.role_id == role_id)
@@ -89,19 +112,21 @@ class UserRepository(BaseRepository):
         # COUNT query
         count_stmt = select(func.count()).select_from(self.model)
         if conditions:
-            count_stmt = count_stmt.where(*conditions)
+            count_stmt = count_stmt.where(and_(*conditions))
         total = (await self.db.execute(count_stmt)).scalar_one() or 0
         total_pages = max(1, (total + page_size - 1) // page_size)
 
         # Data query
-        col = getattr(self.model, order_by, self.model.created_at)
-        order_col = col.desc() if order_direction.lower() == "desc" else col.asc()
         offset = (page - 1) * page_size
-
         data_stmt = select(self.model)
         if conditions:
-            data_stmt = data_stmt.where(*conditions)
-        data_stmt = data_stmt.order_by(order_col).limit(page_size).offset(offset)
+            data_stmt = data_stmt.where(and_(*conditions))
+        data_stmt = (
+            data_stmt
+            .order_by(self.model.created_at.desc())
+            .limit(page_size)
+            .offset(offset)
+        )
 
         rows = (await self.db.execute(data_stmt)).scalars().all()
         return [row_to_dict(r) for r in rows], total, total_pages

@@ -8,10 +8,10 @@ role_type:
 
 from typing import Optional
 
-from sqlalchemy import BigInteger, Column, ForeignKey, Index, Integer, String, Table, Text
+from sqlalchemy import BigInteger, Column, ForeignKey, Index, SmallInteger, String, Table, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from src.models.Base import Base, EntityMixin, UUIDPrimaryKeyMixin
+from src.models.Base import Base, BigIntPrimaryKeyMixin, EntityMixin
 
 
 # ---------------------------------------------------------------------------
@@ -35,6 +35,7 @@ role_permissions = Table(
         primary_key=True,
         nullable=False,
     ),
+    Index("ix_role_permissions_permission_id", "permission_id"),
 )
 
 
@@ -42,20 +43,20 @@ role_permissions = Table(
 # Role entity
 # ---------------------------------------------------------------------------
 
-class Role(UUIDPrimaryKeyMixin, EntityMixin, Base):
+class Role(BigIntPrimaryKeyMixin, EntityMixin, Base):
     """A named role that groups permissions together."""
 
     __tablename__ = "roles"
 
     __table_args__ = (
-        Index("ix_roles_is_active", "is_active"),
+        UniqueConstraint("name", name="uq_roles_name"),
         Index("ix_roles_role_type", "role_type"),
     )
 
     name: Mapped[str] = mapped_column(String(100), nullable=False)
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     role_type: Mapped[int] = mapped_column(
-        Integer,
+        SmallInteger,
         nullable=False,
         default=0,
         server_default="0",
@@ -69,8 +70,8 @@ class Role(UUIDPrimaryKeyMixin, EntityMixin, Base):
         back_populates="roles",
         lazy="select",
     )
-    system_users: Mapped[list["SystemUser"]] = relationship(  # noqa: F821
-        "SystemUser",
+    users: Mapped[list["User"]] = relationship(  # noqa: F821
+        "User",
         back_populates="role",
         lazy="select",
     )

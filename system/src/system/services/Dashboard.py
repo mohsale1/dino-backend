@@ -1,20 +1,18 @@
 """
-System Dashboard Service
-Provides analytics and statistics for system administrators.
-All queries are executed directly against PostgreSQL via SQLAlchemy async —
-no Firestore / Firebase dependencies.
+SystemDashboardService — analytics and statistics for system administrators.
 """
 
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List
-from datetime import datetime, timezone, timedelta
 
 from sqlalchemy import and_, case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.models.Persona import Persona
 from src.models.Role import Role
-from src.models.SystemUser import SystemUser
+from src.models.User import User
 from src.models.Workspace import Workspace
+from src.models.WorkspaceBilling import WorkspaceBilling
 
 
 class SystemDashboardService:
@@ -23,166 +21,166 @@ class SystemDashboardService:
     def __init__(self, db: AsyncSession) -> None:
         self.db = db
 
-    # ------------------------------------------------------------------
-    # Public async methods
-    # ------------------------------------------------------------------
-
     async def get_system_stats(self) -> Dict[str, Any]:
-        """Return overall system statistics using a single SQL aggregation."""
+        """Return overall system statistics."""
         now = datetime.now(timezone.utc)
         thirty_days_ago = now - timedelta(days=30)
-        sixty_days_ago  = now - timedelta(days=60)
+        sixty_days_ago = now - timedelta(days=60)
 
-        # --- Single query: all Workspace counts in one pass ---------------
+        # Workspace counts
         ws_row = (
             await self.db.execute(
                 select(
-                    func.count().label('total'),
-                    func.count(
-                        case((Workspace.updated_at >= thirty_days_ago, 1))
-                    ).label('active'),
-                    func.count(
-                        case((Workspace.created_at >= thirty_days_ago, 1))
-                    ).label('last_30'),
-                    func.count(
-                        case((
-                            and_(
-                                Workspace.created_at >= sixty_days_ago,
-                                Workspace.created_at < thirty_days_ago,
-                            ),
-                            1,
-                        ))
-                    ).label('prev_30'),
-                ).where(Workspace.is_active == True)  # noqa: E712
+                    func.count().label("total"),
+                    func.count(case((Workspace.is_active == True, 1))).label("active"),  # noqa: E712
+                    func.count(case((Workspace.created_at >= thirty_days_ago, 1))).label("last_30"),
+                    func.count(case((
+                        and_(
+                            Workspace.created_at >= sixty_days_ago,
+                            Workspace.created_at < thirty_days_ago,
+                        ), 1,
+                    ))).label("prev_30"),
+                )
             )
         ).one()
 
-        # --- Single query: all SystemUser counts in one pass --------------
-        su_row = (
+        # System user counts (user_type=0)
+        sys_user_row = (
             await self.db.execute(
                 select(
-                    func.count().label('total'),
-                    func.count(
-                        case((SystemUser.last_login >= thirty_days_ago, 1))
-                    ).label('active'),
-                ).where(SystemUser.is_active == True)  # noqa: E712
+                    func.count().label("total"),
+                    func.count(case((User.last_login >= thirty_days_ago, 1))).label("active"),
+                ).where(User.user_type == 0, User.is_active == True)  # noqa: E712
             )
         ).one()
 
-        # --- Persona count ------------------------------------------------
+        # Application user counts (user_type=1)
+        app_user_row = (
+            await self.db.execute(
+                select(func.count().label("total"))
+                .where(User.user_type == 1, User.is_active == True)  # noqa: E712
+            )
+        ).one()
+
+        # Persona count
         total_personas: int = (
             await self.db.execute(
                 select(func.count()).select_from(Persona).where(Persona.is_active == True)  # noqa: E712
             )
         ).scalar_one()
 
-        # application_users lives in dino-application DB — cross-service boundary.
-        total_app_users = 0
-        users_last_30   = 0
-
         workspace_growth = _calculate_growth_percentage(ws_row.prev_30, ws_row.last_30)
 
         return {
-            'total_workspaces':        ws_row.total,
-            'active_workspaces':       ws_row.active,
-            'total_system_users':      su_row.total,
-            'active_system_users':     su_row.active,
-            'total_app_users':         total_app_users,
-            'total_personas':          total_personas,
-            'workspace_growth':        workspace_growth,
-            'user_growth':             '0%',
-            'workspaces_last_30_days': ws_row.last_30,
-            'users_last_30_days':      users_last_30,
+            "total_workspaces": ws_row.total,
+            "active_workspaces": ws_row.active,
+            "total_system_users": sys_user_row.total,
+            "active_system_users": sys_user_row.active,
+            "total_app_users": app_user_row.total,
+            "total_personas": total_personas,
+            "workspace_growth": workspace_growth,
+            "workspaces_last_30_days": ws_row.last_30,
         }
 
-    async def get_workspace_growth_trend(self, days: int = 30) -> List[Dict[str, Any]]:
-        """
-        Return cumulative workspace counts for each day over the last *days* days.
+    async def get_workspace_growth(self, days: int = 30) -> List[Dict[str, Any]]:
+        """Return workspace creation counts per day for the last N days."""
+        from sqlalchemy import text as _text
 
-        Fetches only the created_at timestamps within the window (not full rows)
-        and computes the cumulative count in Python — one lightweight query.
-        """
         start_date = datetime.now(timezone.utc) - timedelta(days=days)
 
-        stmt = (
-            select(Workspace.created_at)
-            .where(
-                and_(
-                    Workspace.is_active == True,  # noqa: E712
-                    Workspace.created_at >= start_date,
-                )
-            )
-            .order_by(Workspace.created_at)
+        stmt = _text(
+            "SELECT DATE(created_at) AS day, COUNT(*) AS count "
+            "FROM workspaces "
+            "WHERE created_at >= :start "
+            "GROUP BY DATE(created_at) "
+            "ORDER BY day"
         )
-        result = await self.db.execute(stmt)
-        all_dates = [row[0] for row in result.all()]
+        result = await self.db.execute(stmt, {"start": start_date})
+        rows = result.all()
 
+        # Build a lookup: date string -> count
+        counts_by_day: Dict[str, int] = {
+            str(row.day): int(row.count) for row in rows
+        }
+
+        # Fill every day in the range (including days with 0 workspaces)
         growth_data: List[Dict[str, Any]] = []
         for i in range(days + 1):
-            day = start_date + timedelta(days=i)
-            # Keep date_end timezone-aware so it compares correctly with
-            # timezone-aware created_at values from the database.
-            date_end = day.replace(hour=23, minute=59, second=59, microsecond=999999)
-            count = sum(1 for d in all_dates if d and d <= date_end)
+            day_dt = start_date + timedelta(days=i)
+            day_str = day_dt.strftime("%Y-%m-%d")
             growth_data.append({
-                'date':   day.strftime('%Y-%m-%d'),
-                'period': day.strftime('%b %d'),
-                'count':  count,
+                "date": day_str,
+                "period": day_dt.strftime("%b %d"),
+                "count": counts_by_day.get(day_str, 0),
             })
 
         return growth_data
 
+
+
     async def get_user_distribution(self) -> List[Dict[str, Any]]:
-        """Return system-user counts grouped by role name (SQL GROUP BY)."""
+        """Return user counts grouped by role name."""
         stmt = (
-            select(Role.name, func.count(SystemUser.id).label('count'))
-            .join(Role, SystemUser.role_id == Role.id)
-            .where(SystemUser.is_active == True)  # noqa: E712
+            select(Role.name, func.count(User.id).label("count"))
+            .join(Role, User.role_id == Role.id)
+            .where(User.is_active == True)  # noqa: E712
             .group_by(Role.name)
         )
         result = await self.db.execute(stmt)
-        return [{'role': row.name, 'count': row.count} for row in result.all()]
+        return [{"role": row.name, "count": row.count} for row in result.all()]
 
-    async def get_top_onboarders(self, limit: int = 5) -> List[Dict[str, Any]]:  # noqa: ARG002
-        """
-        Return the system users who onboarded the most application users.
+    async def get_billing_overview(self) -> Dict[str, Any]:
+        """Return workspaces by plan and revenue summary from billing_transactions."""
+        from sqlalchemy import distinct
 
-        application_users lives in the dino-application database — a different
-        AsyncSession / connection pool.  Cross-service queries are not supported
-        here; callers should aggregate this via an inter-service API call.
-        """
-        return []
+        plan_stmt = (
+            select(WorkspaceBilling.plan, func.count().label("count"))
+            .group_by(WorkspaceBilling.plan)
+        )
+        plan_result = await self.db.execute(plan_stmt)
+        by_plan = {row.plan: row.count for row in plan_result.all()}
+
+        status_stmt = (
+            select(WorkspaceBilling.plan_status, func.count().label("count"))
+            .group_by(WorkspaceBilling.plan_status)
+        )
+        status_result = await self.db.execute(status_stmt)
+        by_status = {row.plan_status: row.count for row in status_result.all()}
+
+        return {
+            "by_plan": by_plan,
+            "by_status": by_status,
+        }
 
     async def get_recent_activity(self, limit: int = 20) -> List[Dict[str, Any]]:
-        """Return recent system activity from the last 24 hours."""
+        """Return recent workspace creations and user logins."""
         twenty_four_hours_ago = datetime.now(timezone.utc) - timedelta(hours=24)
         activities: List[Dict[str, Any]] = []
 
-        # Recent system-user logins — select only the columns we need.
+        # Recent user logins
         login_stmt = (
-            select(SystemUser.id, SystemUser.email, SystemUser.last_login)
+            select(User.id, User.email, User.last_login)
             .where(
                 and_(
-                    SystemUser.is_active == True,  # noqa: E712
-                    SystemUser.last_login >= twenty_four_hours_ago,
+                    User.is_active == True,  # noqa: E712
+                    User.last_login >= twenty_four_hours_ago,
                 )
             )
-            .order_by(SystemUser.last_login.desc())
+            .order_by(User.last_login.desc())
             .limit(10)
         )
-        login_result = await self.db.execute(login_stmt)
-        for row in login_result.all():
+        for row in (await self.db.execute(login_stmt)).all():
             activities.append({
-                'id':        f'login_{row.id}',
-                'type':      'login',
-                'user':      row.email,
-                'action':    'Logged in',
-                'target':    '',
-                'time':      _get_time_ago(row.last_login),
-                'timestamp': row.last_login.isoformat() if row.last_login else '',
+                "id": f"login_{row.id}",
+                "type": "login",
+                "user": row.email,
+                "action": "Logged in",
+                "target": "",
+                "time": _get_time_ago(row.last_login),
+                "timestamp": row.last_login.isoformat() if row.last_login else "",
             })
 
-        # Recently created workspaces — select only the columns we need.
+        # Recently created workspaces
         ws_stmt = (
             select(Workspace.id, Workspace.name, Workspace.created_at)
             .where(
@@ -194,87 +192,93 @@ class SystemDashboardService:
             .order_by(Workspace.created_at.desc())
             .limit(10)
         )
-        ws_result = await self.db.execute(ws_stmt)
-        for row in ws_result.all():
+        for row in (await self.db.execute(ws_stmt)).all():
             activities.append({
-                'id':        f'workspace_{row.id}',
-                'type':      'workspace_created',
-                'user':      'System',
-                'action':    'Created new workspace',
-                'target':    row.name,
-                'time':      _get_time_ago(row.created_at),
-                'timestamp': row.created_at.isoformat() if row.created_at else '',
+                "id": f"workspace_{row.id}",
+                "type": "workspace_created",
+                "user": "System",
+                "action": "Created new workspace",
+                "target": row.name,
+                "time": _get_time_ago(row.created_at),
+                "timestamp": row.created_at.isoformat() if row.created_at else "",
             })
 
-        activities.sort(key=lambda x: x.get('timestamp', ''), reverse=True)
+        activities.sort(key=lambda x: x.get("timestamp", ""), reverse=True)
         return activities[:limit]
 
-    async def get_subscription_stats(self) -> Dict[str, Any]:
-        """Return subscription and MRR statistics via a single SQL aggregation."""
-        status_col = func.lower(Workspace.subscription_status)
-
-        row = (
-            await self.db.execute(
-                select(
-                    func.count(
-                        case((status_col == 'active', 1))
-                    ).label('active'),
-                    func.count(
-                        case((status_col == 'past due', 1))
-                    ).label('past_due'),
-                    func.count(
-                        case((status_col == 'trial', 1))
-                    ).label('trial'),
-                    func.coalesce(
-                        func.sum(
-                            case((status_col == 'active', Workspace.mrr))
-                        ),
-                        0,
-                    ).label('mrr'),
-                ).where(Workspace.is_active == True)  # noqa: E712
+    async def get_top_workspaces(self, limit: int = 10) -> List[Dict[str, Any]]:
+        """Return workspaces with most personas and users."""
+        persona_count_sq = (
+            select(func.count())
+            .select_from(Persona)
+            .where(
+                Persona.workspace_id == Workspace.id,
+                Persona.is_active == True,  # noqa: E712
             )
-        ).one()
+            .correlate(Workspace)
+            .scalar_subquery()
+        )
+        user_count_sq = (
+            select(func.count())
+            .select_from(User)
+            .where(
+                User.workspace_id == Workspace.id,
+                User.is_active == True,  # noqa: E712
+            )
+            .correlate(Workspace)
+            .scalar_subquery()
+        )
+        stmt = (
+            select(
+                Workspace.id,
+                Workspace.name,
+                Workspace.created_at,
+                persona_count_sq.label("persona_count"),
+                user_count_sq.label("user_count"),
+            )
+            .where(Workspace.is_active == True)  # noqa: E712
+            .order_by(Workspace.created_at.desc())
+            .limit(limit)
+        )
+        result = await self.db.execute(stmt)
+        return [
+            {
+                "id": row.id,
+                "name": row.name,
+                "persona_count": row.persona_count,
+                "user_count": row.user_count,
+                "created_at": row.created_at.isoformat() if row.created_at else None,
+            }
+            for row in result.all()
+        ]
 
-        mrr_float = round(float(row.mrr), 2)
-
-        return {
-            'active_subscriptions':      row.active,
-            'total_revenue':             round(mrr_float * 12, 2),
-            'monthly_recurring_revenue': mrr_float,
-            'past_due':                  row.past_due,
-            'trial_subscriptions':       row.trial,
-        }
 
 
 # ---------------------------------------------------------------------------
-# Module-level helper functions (pure Python — kept sync)
+# Module-level helper functions
 # ---------------------------------------------------------------------------
 
 def _calculate_growth_percentage(previous: int, current: int) -> str:
-    """Return a human-readable growth percentage string."""
     if previous == 0:
-        return '+100%' if current > 0 else '0%'
+        return "+100%" if current > 0 else "0%"
     growth = ((current - previous) / previous) * 100
-    sign = '+' if growth >= 0 else ''
-    return f'{sign}{growth:.1f}%'
+    sign = "+" if growth >= 0 else ""
+    return f"{sign}{growth:.1f}%"
 
 
 def _get_time_ago(dt: datetime) -> str:
-    """Convert a timezone-aware datetime to a human-readable 'X ago' string."""
     if not dt:
-        return 'Unknown'
-
+        return "Unknown"
     try:
-        # Ensure dt is timezone-aware; if naive, assume UTC.
         if dt.tzinfo is None:
             dt = dt.replace(tzinfo=timezone.utc)
         now = datetime.now(timezone.utc)
         seconds = (now - dt).total_seconds()
     except (TypeError, AttributeError):
-        return 'Unknown'
+        return "Unknown"
 
     if seconds < 60:
-        return 'Just now'
+        return "Just now"
     if seconds < 3600:
         minutes = int(seconds / 60)
         return f"{minutes} minute{'s' if minutes != 1 else ''} ago"

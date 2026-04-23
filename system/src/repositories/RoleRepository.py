@@ -47,7 +47,7 @@ class RoleRepository(BaseRepository):
     # ------------------------------------------------------------------
 
     async def add_permissions(
-        self, role_id: str, permission_ids: List[str]
+        self, role_id: int, permission_ids: List[int]
     ) -> bool:
         """
         Insert rows into role_permissions for each permission_id.
@@ -66,7 +66,7 @@ class RoleRepository(BaseRepository):
         return True
 
     async def remove_permissions(
-        self, role_id: str, permission_ids: List[str]
+        self, role_id: int, permission_ids: List[int]
     ) -> bool:
         """
         Delete rows from role_permissions for the given role_id / permission_id pairs.
@@ -83,12 +83,10 @@ class RoleRepository(BaseRepository):
         await self.db.flush()
         return True
 
-    async def get_role_permissions(self, role_id: str) -> List[str]:
-        """
-        Return the list of permission_id strings assigned to the given role.
-        """
+    async def get_role_permissions(self, role_id: int) -> List[int]:
+        """Return the list of permission_ids assigned to the given role."""
         stmt = select(role_permissions.c.permission_id).where(
             role_permissions.c.role_id == role_id
         )
         result = await self.db.execute(stmt)
-        return [str(row) for (row,) in result.all()]
+        return [row for (row,) in result.all()]

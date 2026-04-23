@@ -1,69 +1,74 @@
 """
-Review ORM model.
-
-Reviews are submitted by customers and are scoped to a Workspace and
-optionally a Persona.  An admin approval flag (is_approved) controls
-public visibility.
+Review ORM model — customer reviews for personas within a workspace.
 """
 
 from typing import Optional
 
-from sqlalchemy import BigInteger, Boolean, ForeignKey, Index, Integer, String, Text
+from sqlalchemy import BigInteger, Boolean, CheckConstraint, ForeignKey, Index, SmallInteger, Text, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from src.models.Base import Base, UUIDPrimaryKeyMixin, EntityMixin
+from src.models.Base import Base, BigIntPrimaryKeyMixin, EntityMixin
 
 
-class Review(UUIDPrimaryKeyMixin, EntityMixin, Base):
-    """A customer review / testimonial."""
+class Review(BigIntPrimaryKeyMixin, EntityMixin, Base):
+    """A customer review submitted for a persona within a workspace."""
 
     __tablename__ = "reviews"
 
-    reviewer_name: Mapped[str] = mapped_column(String(200), nullable=False)
-    reviewer_email: Mapped[Optional[str]] = mapped_column(String(254), nullable=True)
-    reviewer_role: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
-    reviewer_avatar: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
-    rating: Mapped[int] = mapped_column(Integer, nullable=False, default=5, server_default="5")
-    comment: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    is_approved: Mapped[bool] = mapped_column(
-        Boolean,
-        nullable=False,
-        default=False,
-        server_default="false",
+    __table_args__ = (
+        CheckConstraint("rating >= 1 AND rating <= 5", name="ck_reviews_rating"),
+        Index("ix_reviews_workspace_id", "workspace_id"),
+        Index("ix_reviews_persona_id", "persona_id"),
+        Index("ix_reviews_user_id", "user_id"),
+        Index("ix_reviews_is_approved", "is_approved"),
+        Index("ix_reviews_rating", "rating"),
     )
 
-    # ------------------------------------------------------------------ #
-    # Foreign keys                                                         #
-    # ------------------------------------------------------------------ #
     workspace_id: Mapped[int] = mapped_column(
         BigInteger,
         ForeignKey("workspaces.id", ondelete="CASCADE"),
         nullable=False,
-        index=True,
     )
     persona_id: Mapped[Optional[int]] = mapped_column(
         BigInteger,
         ForeignKey("personas.id", ondelete="SET NULL"),
         nullable=True,
-        index=True,
+    )
+    user_id: Mapped[Optional[int]] = mapped_column(
+        BigInteger,
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    rating: Mapped[int] = mapped_column(
+        SmallInteger,
+        nullable=False,
+        default=5,
+        server_default=text("5"),
+    )
+    comment: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    is_approved: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=False,
+        server_default=text("false"),
     )
 
-    # ------------------------------------------------------------------ #
-    # Relationships                                                        #
-    # ------------------------------------------------------------------ #
+    # Relationships
+    workspace: Mapped["Workspace"] = relationship(  # noqa: F821
+        "Workspace",
+        back_populates="reviews",
+        lazy="noload",
+    )
     persona: Mapped[Optional["Persona"]] = relationship(  # noqa: F821
         "Persona",
         back_populates="reviews",
-        lazy="select",
+        lazy="noload",
     )
-
-    # ------------------------------------------------------------------ #
-    # Indexes                                                              #
-    # ------------------------------------------------------------------ #
-    __table_args__ = (
-        Index("ix_reviews_is_active", "is_active"),
-        Index("ix_reviews_is_approved", "is_approved"),
+    user: Mapped[Optional["User"]] = relationship(  # noqa: F821
+        "User",
+        back_populates="reviews",
+        lazy="noload",
     )
 
     def __repr__(self) -> str:
-        return f"<Review id={self.id} reviewer={self.reviewer_name!r} rating={self.rating}>"
+        return f"<Review id={self.id} workspace_id={self.workspace_id} rating={self.rating}>"

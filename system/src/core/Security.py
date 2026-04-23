@@ -2,7 +2,8 @@ import logging
 from typing import Optional
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from jose import JWTError, jwt, ExpiredSignatureError
+import jwt
+from jwt.exceptions import ExpiredSignatureError, InvalidTokenError
 from src.config.Settings import settings
 import hashlib
 import base64
@@ -85,7 +86,7 @@ def decode_token(token: str) -> Optional[dict]:
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Token has expired"
         )
-    except JWTError as exc:
+    except InvalidTokenError as exc:
         logger.warning("JWT decode failed: %s", type(exc).__name__)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,

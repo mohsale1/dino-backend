@@ -1,65 +1,36 @@
-"""
-System Personas Routes
-Endpoints for managing personas from the system (SuperAdmin) perspective.
-"""
+from typing import Optional
 
-from typing import Any, Dict, Optional
-
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.base.BaseSchema import BaseResponse
 from src.config.Database import get_db
-from src.repositories.PersonaRepository import PersonaRepository
+from src.schemas.Persona import PersonaCreate, PersonaUpdate
 from src.system.middleware.RoleCheck import SystemPermissionCheck
+from src.system.services.Persona import PersonaService
 
 router = APIRouter(prefix="/personas", tags=["System Personas"])
 
 
-# ---------------------------------------------------------------------------
-# GET /personas
-# ---------------------------------------------------------------------------
-
-@router.get("", dependencies=[Depends(SystemPermissionCheck.require('personas:read'))])
-async def get_all_personas(
-    page: int = Query(1, ge=1, description="Page number"),
-    page_size: int = Query(10, ge=1, le=100, description="Items per page"),
-    workspace_id: Optional[int] = Query(None, description="Filter by workspace"),
-    order_by: str = Query("created_at", description="Field to order by"),
-    order_direction: str = Query("desc", description="Order direction (asc/desc)"),
-    include_inactive: bool = Query(False, description="Include inactive personas"),
+@router.get(
+    "",
+    dependencies=[Depends(SystemPermissionCheck.require("personas:list"))],
+)
+async def get_personas(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    workspace_id: Optional[int] = Query(None),
+    include_deleted: bool = Query(False),
     db: AsyncSession = Depends(get_db),
 ):
-    """
-    Get all personas with pagination (SuperAdmin only).
-
-    Query Parameters:
-    - page: Page number (default: 1)
-    - page_size: Items per page (default: 10, max: 100)
-    - workspace_id: Filter by workspace
-    - order_by: Field to order by (default: created_at)
-    - order_direction: Order direction (asc/desc, default: desc)
-    - include_inactive: Include inactive personas (default: false)
-    """
-    if page_size > 100:
-        page_size = 100
-
-    repo = PersonaRepository(db)
-
-    filters: Dict[str, Any] = {}
-    if workspace_id is not None:
-        filters["workspace_id"] = workspace_id
-    if not include_inactive:
-        filters["is_active"] = True
-
-    items, total, total_pages = await repo.get_paginated(
+    """Get paginated personas."""
+    service = PersonaService(db)
+    items, total, total_pages = await service.get_paginated_personas(
+        workspace_id=workspace_id,
         page=page,
         page_size=page_size,
-        filters=filters,
-        order_by=order_by,
-        order_direction=order_direction,
+        include_deleted=include_deleted,
     )
-
     return {
         "success": True,
         "message": "Personas retrieved successfully",
@@ -75,155 +46,129 @@ async def get_all_personas(
     }
 
 
-# ---------------------------------------------------------------------------
-# GET /personas/workspace/{workspace_id}
-# Must be declared BEFORE GET /{persona_id} to avoid route shadowing.
-# ---------------------------------------------------------------------------
-
-@router.get("/workspace/{workspace_id}", response_model=BaseResponse, dependencies=[Depends(SystemPermissionCheck.require('personas:read'))])
-async def get_personas_by_workspace(
-    workspace_id: int,
-    db: AsyncSession = Depends(get_db),
-):
-    """Get all personas belonging to a specific workspace (SuperAdmin only)."""
-    repo = PersonaRepository(db)
-    personas = await repo.get_by_workspace(workspace_id)
-
+@router.post(
+    "",
+    response_model=BaseResponse,
+    dependencies=[Depends(SystemPermissionCheck.require("personas:create"))],
+)
+async def create_persona(persona: PersonaCreate, db: AsyncSession = Depends(get_db)):
+    """Create a new persona."""
+    service = PersonaService(db)
+    created = await service.create_persona(persona.model_dump())
     return {
         "success": True,
-        "message": "Personas retrieved successfully",
-        "data": personas,
+        "message": "Persona created successfully",
+        "data": {"id": created.get("id")},
     }
 
 
-# ---------------------------------------------------------------------------
-# GET /personas/{persona_id}
-# ---------------------------------------------------------------------------
-
-@router.get("/{persona_id}", response_model=BaseResponse, dependencies=[Depends(SystemPermissionCheck.require('personas:read'))])
-async def get_persona(
-    persona_id: int,
-    db: AsyncSession = Depends(get_db),
-):
-    """Get persona details by ID (SuperAdmin only)."""
-    repo = PersonaRepository(db)
-    persona = await repo.get_by_id(persona_id)
-
+@router.get(
+    "/{persona_id}",
+    response_model=BaseResponse,
+    dependencies=[Depends(SystemPermissionCheck.require("personas:read"))],
+)
+async def get_persona(persona_id: int, db: AsyncSession = Depends(get_db)):
+    """Get persona details."""
+    service = PersonaService(db)
+    persona = await service.get_by_id(persona_id)
     if not persona:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Persona not found",
-        )
-
-    return {
-        "success": True,
-        "message": "Persona retrieved successfully",
-        "data": persona,
-    }
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Persona not found")
+    return {"success": True, "message": "Persona retrieved successfully", "data": persona}
 
 
-# ---------------------------------------------------------------------------
-# PUT /personas/{persona_id}/restore
-# Must be declared BEFORE PUT /{persona_id} to avoid route shadowing.
-# ---------------------------------------------------------------------------
-
-@router.put("/{persona_id}/restore", response_model=BaseResponse, dependencies=[Depends(SystemPermissionCheck.require('personas:restore'))])
-async def restore_persona(
-    persona_id: int,
-    db: AsyncSession = Depends(get_db),
+@router.put(
+    "/{persona_id}",
+    response_model=BaseResponse,
+    dependencies=[Depends(SystemPermissionCheck.require("personas:update"))],
+)
+async def update_persona(
+    persona_id: int, persona: PersonaUpdate, db: AsyncSession = Depends(get_db)
 ):
-    """Restore an inactive persona (SuperAdmin only)."""
-    repo = PersonaRepository(db)
+    """Update persona."""
+    service = PersonaService(db)
+    success = await service.update_persona(persona_id, persona.model_dump(exclude_unset=True))
+    if not success:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Persona not found")
+    return {"success": True, "message": "Persona updated successfully"}
 
-    persona = await repo.get_by_id(persona_id)
+
+@router.delete(
+    "/{persona_id}",
+    response_model=BaseResponse,
+    dependencies=[Depends(SystemPermissionCheck.require("personas:delete"))],
+)
+async def delete_persona(persona_id: int, db: AsyncSession = Depends(get_db)):
+    """Soft delete persona."""
+    service = PersonaService(db)
+    success = await service.soft_delete_persona(persona_id)
+    if not success:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Persona not found")
+    return {"success": True, "message": "Persona deleted successfully"}
+
+
+@router.post(
+    "/{persona_id}/restore",
+    response_model=BaseResponse,
+    dependencies=[Depends(SystemPermissionCheck.require("personas:manage"))],
+)
+async def restore_persona(persona_id: int, db: AsyncSession = Depends(get_db)):
+    """Restore a soft-deleted persona."""
+    service = PersonaService(db)
+    persona = await service.get_by_id(persona_id, include_deleted=True)
     if not persona:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Persona not found",
-        )
-
-    if persona.get("is_active", True):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Persona not found")
+    if persona.get("is_active", False):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Persona is already active",
+            detail="Persona is not deleted",
         )
-
-    success = await repo.update(persona_id, {"is_active": True})
-
+    success = await service.restore_persona(persona_id)
     if not success:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Persona not found",
-        )
-
-    return {
-        "success": True,
-        "message": "Persona restored successfully",
-    }
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Persona not found")
+    return {"success": True, "message": "Persona restored successfully"}
 
 
-# ---------------------------------------------------------------------------
-# PUT /personas/{persona_id}
-# ---------------------------------------------------------------------------
-
-@router.put("/{persona_id}", response_model=BaseResponse, dependencies=[Depends(SystemPermissionCheck.require('personas:update'))])
-async def update_persona(
+@router.put(
+    "/{persona_id}/status",
+    response_model=BaseResponse,
+    dependencies=[Depends(SystemPermissionCheck.require("personas:update"))],
+)
+async def toggle_persona_status(
     persona_id: int,
-    data: Dict[str, Any],
+    is_open: bool = Body(..., embed=True),
     db: AsyncSession = Depends(get_db),
 ):
-    """Update persona details (SuperAdmin only)."""
-    repo = PersonaRepository(db)
-
-    existing = await repo.get_by_id(persona_id)
-    if not existing:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Persona not found",
-        )
-
-    success = await repo.update(persona_id, data)
-
+    """Toggle persona open/closed status."""
+    service = PersonaService(db)
+    success = await service.toggle_open(persona_id, is_open)
     if not success:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Persona not found",
-        )
-
-    return {
-        "success": True,
-        "message": "Persona updated successfully",
-    }
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Persona not found")
+    return {"success": True, "message": f"Persona {'opened' if is_open else 'closed'} successfully"}
 
 
-# ---------------------------------------------------------------------------
-# DELETE /personas/{persona_id}
-# ---------------------------------------------------------------------------
-
-@router.delete("/{persona_id}", response_model=BaseResponse, dependencies=[Depends(SystemPermissionCheck.require('personas:delete'))])
-async def delete_persona(
-    persona_id: int,
-    db: AsyncSession = Depends(get_db),
-):
-    """Deactivate persona (SuperAdmin only) — data is preserved."""
-    repo = PersonaRepository(db)
-
-    existing = await repo.get_by_id(persona_id)
-    if not existing:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Persona not found",
-        )
-
-    success = await repo.update(persona_id, {"is_active": False})
-
+@router.put(
+    "/{persona_id}/deactivate",
+    response_model=BaseResponse,
+    dependencies=[Depends(SystemPermissionCheck.require("personas:manage"))],
+)
+async def deactivate_persona(persona_id: int, db: AsyncSession = Depends(get_db)):
+    """Billing suspension: deactivate persona."""
+    service = PersonaService(db)
+    success = await service.deactivate_persona(persona_id)
     if not success:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Persona not found",
-        )
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Persona not found")
+    return {"success": True, "message": "Persona deactivated (billing suspension)"}
 
-    return {
-        "success": True,
-        "message": "Persona deactivated successfully (data preserved)",
-    }
+
+@router.put(
+    "/{persona_id}/reactivate",
+    response_model=BaseResponse,
+    dependencies=[Depends(SystemPermissionCheck.require("personas:manage"))],
+)
+async def reactivate_persona(persona_id: int, db: AsyncSession = Depends(get_db)):
+    """Lift billing suspension: reactivate persona."""
+    service = PersonaService(db)
+    success = await service.reactivate_persona(persona_id)
+    if not success:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Persona not found")
+    return {"success": True, "message": "Persona reactivated successfully"}

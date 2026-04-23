@@ -19,15 +19,16 @@ from alembic import context
 # ---------------------------------------------------------------------------
 from src.models.Base import Base  # noqa: F401 - registers DeclarativeBase
 
-# Import every model module so their Table objects are attached to Base.metadata
+# Import every model module so their Table objects are attached to Base.metadata.
 # Association tables (role_permissions, workspace_personas) are defined
-# inside Role.py and Persona.py respectively and are pulled in automatically.
+# inside Role.py and Workspace.py respectively and are pulled in automatically.
 import src.models.Permission        # noqa: F401
 import src.models.Role              # noqa: F401
-import src.models.SystemUser        # noqa: F401
+import src.models.User              # noqa: F401
 import src.models.Workspace         # noqa: F401
-import src.models.Persona           # noqa: F401
-import src.models.HomePageInfo      # noqa: F401
+import src.models.WorkspaceBilling    # noqa: F401
+import src.models.BillingTransaction  # noqa: F401
+import src.models.Persona             # noqa: F401
 
 # ---------------------------------------------------------------------------
 # Alembic Config object — provides access to values in alembic.ini

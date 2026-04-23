@@ -1,61 +1,155 @@
 """
-Review Service
-Business logic for managing reviews/testimonials
+ReviewService — business logic for the reviews resource.
 """
 
+from typing import Any, Dict, List, Optional, Tuple
+
+from fastapi import HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
-from typing import Dict, Any, List, Optional
+
+from src.base.BaseService import BaseService
 from src.repositories.ReviewRepository import ReviewRepository
 
 
-class ReviewService:
-    """Service for review management"""
+class ReviewService(BaseService):
+    """Service for managing customer reviews."""
 
-    def __init__(self, db: AsyncSession):
+    def __init__(self, db: AsyncSession) -> None:
+        self.db = db
         self.review_repo = ReviewRepository(db)
+        super().__init__(self.review_repo)
 
-    async def get_all_reviews(self, limit: Optional[int] = None) -> List[Dict[str, Any]]:
-        """Get all reviews"""
-        return await self.review_repo.get_all(limit=limit)
+    # ------------------------------------------------------------------
+    # Write operations
+    # ------------------------------------------------------------------
 
-    async def get_approved_reviews(self, limit: Optional[int] = None) -> List[Dict[str, Any]]:
-        """Get approved reviews ordered by latest"""
-        return await self.review_repo.get_approved_reviews(limit=limit)
+    async def create_review(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Validate and create a new review.
 
-    async def get_by_workspace(self, workspace_id: str, limit: Optional[int] = None) -> List[Dict[str, Any]]:
-        """Get reviews by workspace"""
-        return await self.review_repo.get_by_workspace(workspace_id, limit)
+        Reviews are always created with is_approved=False and require
+        explicit approval before appearing on the homepage.
+        """
+        rating = data.get("rating", 5)
+        if not (1 <= int(rating) <= 5):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Rating must be between 1 and 5.",
+            )
 
-    async def get_by_persona(self, persona_id: str, limit: Optional[int] = None) -> List[Dict[str, Any]]:
-        """Get reviews by organization"""
-        return await self.review_repo.get_by_persona(persona_id, limit)
+        payload = {**data, "is_approved": False}
+        payload.setdefault("is_active", True)
 
-    async def get_by_id(self, review_id: str) -> Optional[Dict[str, Any]]:
-        """Get review by ID"""
-        return await self.review_repo.get_by_id(review_id)
+        return await self.review_repo.create(payload)
 
-    async def create_review(self, review_data: Dict[str, Any]) -> Dict[str, Any]:
-        """Create a new review"""
-        if 'is_approved' not in review_data:
-            review_data['is_approved'] = False
+    async def update_review(self, review_id: int, data: Dict[str, Any]) -> bool:
+        """Update allowed fields on an existing review."""
+        allowed_fields = {"rating", "comment", "is_approved", "is_active"}
+        update_data = {k: v for k, v in data.items() if k in allowed_fields and v is not None}
 
-        if 'rating' not in review_data:
-            review_data['rating'] = 5
+        if "rating" in update_data:
+            rating = int(update_data["rating"])
+            if not (1 <= rating <= 5):
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail="Rating must be between 1 and 5.",
+                )
 
-        return await self.review_repo.create(review_data)
+        if not update_data:
+            return False
 
-    async def update_review(self, review_id: str, review_data: Dict[str, Any]) -> bool:
-        """Update a review"""
-        return await self.review_repo.update(review_id, review_data)
+        return await self.review_repo.update(review_id, update_data)
 
-    async def approve_review(self, review_id: str) -> bool:
-        """Approve a review for public display"""
-        return await self.review_repo.update(review_id, {'is_approved': True})
+    async def approve_review(self, review_id: int) -> bool:
+        """Mark a review as approved (visible on homepage)."""
+        return await self.review_repo.approve_review(review_id)
 
-    async def reject_review(self, review_id: str) -> bool:
-        """Reject/unapprove a review"""
-        return await self.review_repo.update(review_id, {'is_approved': False})
+    async def unapprove_review(self, review_id: int) -> bool:
+        """Withdraw approval from a review."""
+        return await self.review_repo.unapprove_review(review_id)
 
-    async def delete_review(self, review_id: str) -> bool:
-        """Soft delete a review"""
+    async def soft_delete_review(self, review_id: int) -> bool:
+        """Soft-delete a review (sets is_active=False)."""
         return await self.review_repo.soft_delete(review_id)
+
+    async def restore_review(self, review_id: int) -> bool:
+        """Restore a soft-deleted review (sets is_active=True)."""
+        return await self.review_repo.restore(review_id)
+
+    # ------------------------------------------------------------------
+    # Read operations
+    # ------------------------------------------------------------------
+
+    async def get_paginated_reviews(
+        self,
+        workspace_id: int,
+        persona_id: Optional[int] = None,
+        is_approved: Optional[bool] = None,
+        page: int = 1,
+        page_size: int = 20,
+    ) -> Tuple[List[Dict[str, Any]], int, int]:
+        """
+        Return a paginated list of reviews enriched with user_name.
+
+        Returns
+        -------
+        (items, total_count, total_pages)
+        """
+        items, total, total_pages = await self.review_repo.get_paginated_reviews(
+            workspace_id=workspace_id,
+            persona_id=persona_id,
+            is_approved=is_approved,
+            page=page,
+            page_size=page_size,
+        )
+        self._attach_user_name(items)
+        return items, total, total_pages
+
+    async def get_approved_reviews(
+        self,
+        workspace_id: int,
+        persona_id: Optional[int] = None,
+        limit: int = 10,
+    ) -> List[Dict[str, Any]]:
+        """
+        Return approved + active reviews for public display, enriched with user_name.
+        """
+        items = await self.review_repo.get_approved_reviews(
+            workspace_id=workspace_id,
+            persona_id=persona_id,
+            limit=limit,
+        )
+        self._attach_user_name(items)
+        return items
+
+    async def get_rating_summary(
+        self,
+        workspace_id: int,
+        persona_id: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """Delegate rating statistics to the repository."""
+        return await self.review_repo.get_rating_summary(
+            workspace_id=workspace_id,
+            persona_id=persona_id,
+        )
+
+    # ------------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _attach_user_name(reviews: List[Dict[str, Any]]) -> None:
+        """
+        Mutate each review dict in-place: build user_name from the private
+        _user_first_name / _user_last_name keys injected by the repository,
+        then remove those private keys.
+
+        user_name is None when the review has no associated user.
+        """
+        for review in reviews:
+            first = review.pop("_user_first_name", None)
+            last = review.pop("_user_last_name", None)
+            if first is not None or last is not None:
+                review["user_name"] = f"{first or ''} {last or ''}".strip() or None
+            else:
+                review["user_name"] = None

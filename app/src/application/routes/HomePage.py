@@ -1,256 +1,176 @@
 """
-Home Page Routes
-Public endpoints for home page data stored in the homepage_info table.
-
-The homepage_info table contains:
-  - stats        : array of stat objects
-  - testimonials : array of testimonial objects
-  - contact      : contact information object
+HomePage router — public data API for the marketing/landing page.
+All endpoints are unauthenticated and return live data from the database.
 """
 
-from typing import Any, Dict, List, Optional
+from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, Field, field_validator
+from fastapi import APIRouter, Depends, Query
+from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.application.middleware.RoleCheck import ApplicationPermissionCheck
-from src.application.services.HomePage import HomePageService
+from src.base.BaseSchema import BaseResponse
 from src.config.Database import get_db
+from src.models.Customer import Customer
+from src.models.Item import Item
+from src.models.OrderDetail import OrderDetail
+from src.models.Persona import Persona
+from src.models.Review import Review
+from src.models.User import User
+from src.models.Workspace import Workspace
+from src.repositories.ReviewRepository import ReviewRepository
 
-router = APIRouter(prefix="/home", tags=["Home Page"])
-
-
-# ============================================================================
-# REQUEST SCHEMAS
-# ============================================================================
-
-class StatItem(BaseModel):
-    """Schema for a single stat item."""
-    title: str = Field(..., description="Stat title")
-    value: str = Field(..., description="Display value as string")
-    number: float = Field(..., description="Numeric value (supports decimals)")
-    suffix: str = Field(default="+", description="Suffix to display (e.g., '+', 'K', 'M', '%')")
-    label: str = Field(..., description="Label for the stat")
-    icon: str = Field(..., description="Icon name (e.g., 'restaurant', 'shopping_cart')")
+router = APIRouter(prefix="/homepage", tags=["HomePage"])
 
 
-class StatsUpdate(BaseModel):
-    """Schema for updating stats array."""
-    stats: List[StatItem] = Field(..., description="Array of stat objects")
+# ---------------------------------------------------------------------------
+# GET /homepage/stats — live platform-wide statistics
+# ---------------------------------------------------------------------------
 
-
-class TestimonialItem(BaseModel):
-    """Schema for a single testimonial."""
-    name: str = Field(..., min_length=2, max_length=100, description="Customer name")
-    role: Optional[str] = Field(None, max_length=50, description="Customer role/title")
-    restaurant: Optional[str] = Field(None, max_length=100, description="Restaurant name")
-    location: Optional[str] = Field(None, max_length=100, description="Location (city, state)")
-    rating: int = Field(..., ge=1, le=5, description="Rating from 1-5")
-    comment: str = Field(..., min_length=10, max_length=1000, description="Testimonial comment")
-    avatar: Optional[str] = Field(None, max_length=500, description="Avatar URL or initials")
-    created_at: Optional[str] = Field(None, description="Creation timestamp")
-
-    @field_validator("rating")
-    @classmethod
-    def validate_rating(cls, v: int) -> int:
-        if v < 1 or v > 5:
-            raise ValueError("Rating must be between 1 and 5")
-        return v
-
-
-class TestimonialsUpdate(BaseModel):
-    """Schema for updating testimonials array."""
-    testimonials: List[TestimonialItem] = Field(..., description="Array of testimonial objects")
-
-
-class ContactInfo(BaseModel):
-    """Schema for contact information."""
-    email: Optional[str] = Field(None, max_length=100, description="Contact email")
-    phone: Optional[str] = Field(None, max_length=20, description="Contact phone")
-    address: Optional[str] = Field(None, max_length=500, description="Street address")
-    city: Optional[str] = Field(None, max_length=100, description="City")
-    state: Optional[str] = Field(None, max_length=50, description="State/Province")
-    country: Optional[str] = Field(None, max_length=100, description="Country")
-    postal_code: Optional[str] = Field(None, max_length=20, description="Postal/ZIP code")
-
-
-class ContactInfoUpdate(BaseModel):
-    """Schema for updating contact information."""
-    contact: ContactInfo = Field(..., description="Contact information object")
-
-
-class HomePageDataUpdate(BaseModel):
-    """Schema for updating entire homepage data."""
-    stats: Optional[List[StatItem]] = Field(None, description="Stats array")
-    testimonials: Optional[List[TestimonialItem]] = Field(None, description="Testimonials array")
-    contact: Optional[ContactInfo] = Field(None, description="Contact information")
-
-
-# ============================================================================
-# GET ENDPOINTS (Public - no authentication required)
-# ============================================================================
-
-@router.get("/stats")
-async def get_home_stats(db: AsyncSession = Depends(get_db)):
+@router.get("/stats", response_model=BaseResponse)
+async def get_homepage_stats(
+    db: AsyncSession = Depends(get_db),
+):
     """
-    Get home page statistics from the homepage_info table.
-
-    Public endpoint - no authentication required.
+    Return live platform-wide statistics:
+    - total_workspaces: count of active workspaces
+    - total_orders: count of active order_details
+    - total_customers: count of active customers
+    - total_items: count of active items
+    - average_rating: average rating from all approved + active reviews
     """
-    service = HomePageService(db)
-    stats = await service.get_stats()
+    # Run all count queries concurrently via individual awaits (sequential is fine
+    # here since each is a single scalar — no N+1 concern).
+    total_workspaces = (
+        await db.execute(
+            select(func.count(Workspace.id)).where(Workspace.is_active == True)  # noqa: E712
+        )
+    ).scalar_one() or 0
+
+    total_orders = (
+        await db.execute(
+            select(func.count(OrderDetail.id)).where(OrderDetail.is_active == True)  # noqa: E712
+        )
+    ).scalar_one() or 0
+
+    total_customers = (
+        await db.execute(
+            select(func.count(Customer.id)).where(Customer.is_active == True)  # noqa: E712
+        )
+    ).scalar_one() or 0
+
+    total_items = (
+        await db.execute(
+            select(func.count(Item.id)).where(Item.is_active == True)  # noqa: E712
+        )
+    ).scalar_one() or 0
+
+    review_repo = ReviewRepository(db)
+    average_rating = await review_repo.get_global_average_rating()
 
     return {
         "success": True,
-        "message": "Home page stats retrieved successfully",
-        "data": stats,
+        "message": "Homepage stats retrieved successfully",
+        "data": {
+            "total_workspaces": total_workspaces,
+            "total_orders": total_orders,
+            "total_customers": total_customers,
+            "total_items": total_items,
+            "average_rating": average_rating,
+        },
     }
 
 
-@router.get("/testimonials")
-async def get_testimonials(
-    limit: Optional[int] = None,
+# ---------------------------------------------------------------------------
+# GET /homepage/reviews — latest approved reviews (public)
+# ---------------------------------------------------------------------------
+
+@router.get("/reviews", response_model=BaseResponse)
+async def get_homepage_reviews(
+    workspace_id: Optional[int] = Query(None),
+    persona_id: Optional[int] = Query(None),
+    limit: int = Query(6, ge=1, le=20),
     db: AsyncSession = Depends(get_db),
 ):
     """
-    Get customer testimonials from the homepage_info table.
-
-    Public endpoint - no authentication required.
-
-    Query Parameters:
-        - limit: Maximum number of testimonials to return (optional)
+    Return latest approved + active reviews with user_name.
+    Optionally filtered by workspace_id and/or persona_id.
+    Ordered by created_at DESC.
     """
-    service = HomePageService(db)
-    testimonials = await service.get_testimonials(limit=limit)
+    if workspace_id is None:
+        return {
+            "success": True,
+            "message": "Homepage reviews retrieved successfully",
+            "data": [],
+        }
+    review_repo = ReviewRepository(db)
+    reviews = await review_repo.get_approved_reviews(
+        workspace_id=workspace_id,
+        persona_id=persona_id,
+        limit=limit,
+    )
+    return {
+        "success": True,
+        "message": "Homepage reviews retrieved successfully",
+        "data": reviews,
+    }
+
+
+
+# ---------------------------------------------------------------------------
+# GET /homepage/featured-personas — active open personas (public)
+# ---------------------------------------------------------------------------
+
+@router.get("/featured-personas", response_model=BaseResponse)
+async def get_featured_personas(
+    limit: int = Query(6, ge=1, le=20),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Return active, open, non-deactivated personas with their workspace name.
+    Ordered by created_at DESC.
+    """
+    stmt = (
+        select(
+            Persona.id,
+            Persona.name,
+            Persona.description,
+            Persona.persona_type,
+            Persona.order_type,
+            Persona.logo_url,
+            Persona.address,
+            Persona.city,
+            Persona.state,
+            Persona.country,
+            Persona.postal_code,
+            Persona.phone,
+            Persona.email,
+            Persona.is_open,
+            Persona.is_deactivated,
+            Persona.is_active,
+            Persona.workspace_id,
+            Persona.created_at,
+            Persona.updated_at,
+            Workspace.name.label("workspace_name"),
+        )
+        .join(Workspace, Persona.workspace_id == Workspace.id)
+        .where(
+            and_(
+                Persona.is_active == True,        # noqa: E712
+                Persona.is_open == True,           # noqa: E712
+                Persona.is_deactivated == False,   # noqa: E712
+            )
+        )
+        .order_by(Persona.created_at.desc())
+        .limit(limit)
+    )
+
+    result = await db.execute(stmt)
+    rows = result.mappings().all()
+    personas = [dict(r) for r in rows]
 
     return {
         "success": True,
-        "message": "Testimonials retrieved successfully",
-        "data": testimonials,
+        "message": "Featured personas retrieved successfully",
+        "data": personas,
     }
-
-
-@router.get("/contact")
-async def get_contact_info(db: AsyncSession = Depends(get_db)):
-    """
-    Get contact information from the homepage_info table.
-
-    Public endpoint - no authentication required.
-    """
-    service = HomePageService(db)
-    contact = await service.get_contact_info()
-
-    return {
-        "success": True,
-        "message": "Contact information retrieved successfully",
-        "data": contact,
-    }
-
-
-@router.get("/all")
-async def get_all_home_data(db: AsyncSession = Depends(get_db)):
-    """
-    Get all home page data in one call from the homepage_info table.
-
-    Public endpoint - no authentication required.
-    """
-    service = HomePageService(db)
-    data = await service.get_all_home_data()
-
-    return {
-        "success": True,
-        "message": "Home page data retrieved successfully",
-        "data": data,
-    }
-
-
-# ============================================================================
-# PUT ENDPOINTS (Admin only)
-# ============================================================================
-
-@router.put("/stats", dependencies=[Depends(ApplicationPermissionCheck.require('homepage:update'))])
-async def update_stats(
-    data: StatsUpdate,
-    db: AsyncSession = Depends(get_db),
-):
-    """Update stats array in the homepage_info table. Admin only."""
-    try:
-        service = HomePageService(db)
-        stats_list = [stat.model_dump() for stat in data.stats]
-        result = await service.update_stats(stats_list)
-
-        return {
-            "success": True,
-            "message": "Stats updated successfully",
-            "data": result,
-        }
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
-
-
-@router.put("/testimonials", dependencies=[Depends(ApplicationPermissionCheck.require('homepage:update'))])
-async def update_testimonials(
-    data: TestimonialsUpdate,
-    db: AsyncSession = Depends(get_db),
-):
-    """Update testimonials array in the homepage_info table. Admin only."""
-    try:
-        service = HomePageService(db)
-        testimonials_list = [t.model_dump() for t in data.testimonials]
-        result = await service.update_testimonials(testimonials_list)
-
-        return {
-            "success": True,
-            "message": "Testimonials updated successfully",
-            "data": result,
-        }
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
-
-
-@router.put("/contact", dependencies=[Depends(ApplicationPermissionCheck.require('homepage:update'))])
-async def update_contact_info(
-    data: ContactInfoUpdate,
-    db: AsyncSession = Depends(get_db),
-):
-    """Update contact information in the homepage_info table. Admin only."""
-    try:
-        service = HomePageService(db)
-        result = await service.update_contact_info(data.contact.model_dump(exclude_none=True))
-
-        return {
-            "success": True,
-            "message": "Contact information updated successfully",
-            "data": result,
-        }
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
-
-
-@router.put("/all", dependencies=[Depends(ApplicationPermissionCheck.require('homepage:update'))])
-async def update_all_homepage_data(
-    data: HomePageDataUpdate,
-    db: AsyncSession = Depends(get_db),
-):
-    """Update entire homepage_info document (partial updates supported). Admin only."""
-    try:
-        service = HomePageService(db)
-
-        update_data: Dict[str, Any] = {}
-        if data.stats is not None:
-            update_data["stats"] = [stat.model_dump() for stat in data.stats]
-        if data.testimonials is not None:
-            update_data["testimonials"] = [t.model_dump() for t in data.testimonials]
-        if data.contact is not None:
-            update_data["contact"] = data.contact.model_dump(exclude_none=True)
-
-        result = await service.update_all_homepage_data(update_data)
-
-        return {
-            "success": True,
-            "message": "Homepage data updated successfully",
-            "data": result,
-        }
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))

@@ -4,7 +4,7 @@ PermissionRepository — async SQLAlchemy 2.x repository for the Permission mode
 
 from typing import Any, Dict, List, Optional, Tuple
 
-from sqlalchemy import distinct, func, or_, select
+from sqlalchemy import and_, distinct, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.base.BaseModel import row_to_dict
@@ -22,18 +22,6 @@ class PermissionRepository(BaseRepository):
     # Simple lookups
     # ------------------------------------------------------------------
 
-    async def get_by_name(self, name: str) -> Optional[Dict[str, Any]]:
-        """Return the first active permission with the given name."""
-        stmt = (
-            select(self.model)
-            .where(self.model.name == name)
-            .where(self.model.is_active == True)  # noqa: E712
-            .limit(1)
-        )
-        result = await self.db.execute(stmt)
-        row = result.scalars().first()
-        return row_to_dict(row) if row is not None else None
-
     async def get_by_category(self, category: str) -> List[Dict[str, Any]]:
         """Return all active permissions in the given category."""
         return await self.get_all(filters={"category": category})
@@ -42,30 +30,27 @@ class PermissionRepository(BaseRepository):
         """Return all active permissions targeting the given resource."""
         return await self.get_all(filters={"resource": resource})
 
-    async def get_by_action(self, action: str) -> List[Dict[str, Any]]:
-        """Return all active permissions with the given action."""
-        return await self.get_all(filters={"action": action})
-
-    async def get_system_permissions(self) -> List[Dict[str, Any]]:
-        """Return all active built-in (is_system=True) permissions."""
-        return await self.get_all(filters={"is_system": True})
-
     # ------------------------------------------------------------------
     # Existence check
     # ------------------------------------------------------------------
 
     async def permission_exists(
-        self, name: str, exclude_id: Optional[str] = None
+        self,
+        category: str,
+        resource: str,
+        action: str,
+        exclude_id: Optional[int] = None,
     ) -> bool:
         """
-        Return True if an active permission with the given name exists.
+        Return True if a permission with the given (category, resource, action) exists.
         Optionally exclude a specific record (useful for update validation).
         """
         stmt = (
             select(func.count())
             .select_from(self.model)
-            .where(self.model.name == name)
-            .where(self.model.is_active == True)  # noqa: E712
+            .where(self.model.category == category)
+            .where(self.model.resource == resource)
+            .where(self.model.action == action)
         )
         if exclude_id is not None:
             stmt = stmt.where(self.model.id != exclude_id)
@@ -79,56 +64,33 @@ class PermissionRepository(BaseRepository):
     async def get_paginated_with_filters(
         self,
         page: int = 1,
-        page_size: int = 10,
+        page_size: int = 20,
         category: Optional[str] = None,
         resource: Optional[str] = None,
         action: Optional[str] = None,
         is_active: Optional[bool] = None,
-        search_query: Optional[str] = None,
         order_by: str = "created_at",
         order_direction: str = "desc",
-    ) -> Tuple[List[Dict[str, Any]], int]:
-        """
-        Return (items, total_count) with optional filtering and pagination.
+    ) -> Tuple[List[Dict[str, Any]], int, int]:
+        """Return (items, total_count, total_pages) with optional filtering."""
+        conditions = []
 
-        When is_active is None (default), only active records are returned.
-        When is_active is explicitly provided, that value is used as the filter.
-
-        search_query performs a case-insensitive ILIKE match against
-        name, description, and resource columns.
-        """
-        base_conditions = []
-
-        # Default guard: show only active records unless caller explicitly filters
         if is_active is None:
-            base_conditions.append(self.model.is_active == True)  # noqa: E712
+            conditions.append(self.model.is_active == True)  # noqa: E712
         else:
-            base_conditions.append(self.model.is_active == is_active)
+            conditions.append(self.model.is_active == is_active)
 
         if category is not None:
-            base_conditions.append(self.model.category == category)
+            conditions.append(self.model.category == category)
         if resource is not None:
-            base_conditions.append(self.model.resource == resource)
+            conditions.append(self.model.resource == resource)
         if action is not None:
-            base_conditions.append(self.model.action == action)
-        if search_query:
-            pattern = f"%{search_query}%"
-            base_conditions.append(
-                or_(
-                    self.model.name.ilike(pattern),
-                    self.model.description.ilike(pattern),
-                    self.model.resource.ilike(pattern),
-                )
-            )
+            conditions.append(self.model.action == action)
 
         # COUNT query
-        count_stmt = (
-            select(func.count())
-            .select_from(self.model)
-            .where(*base_conditions)
-        )
-        count_result = await self.db.execute(count_stmt)
-        total = count_result.scalar_one() or 0
+        count_stmt = select(func.count()).select_from(self.model).where(and_(*conditions))
+        total = (await self.db.execute(count_stmt)).scalar_one() or 0
+        total_pages = max(1, (total + page_size - 1) // page_size)
 
         # Data query
         col = getattr(self.model, order_by, self.model.created_at)
@@ -137,15 +99,13 @@ class PermissionRepository(BaseRepository):
 
         data_stmt = (
             select(self.model)
-            .where(*base_conditions)
+            .where(and_(*conditions))
             .order_by(order_col)
             .limit(page_size)
             .offset(offset)
         )
-        data_result = await self.db.execute(data_stmt)
-        rows = data_result.scalars().all()
-
-        return [row_to_dict(r) for r in rows], total
+        rows = (await self.db.execute(data_stmt)).scalars().all()
+        return [row_to_dict(r) for r in rows], total, total_pages
 
     # ------------------------------------------------------------------
     # Bulk create
@@ -154,8 +114,26 @@ class PermissionRepository(BaseRepository):
     async def bulk_create_permissions(
         self, permissions: List[Dict[str, Any]]
     ) -> List[Dict[str, Any]]:
-        """Insert multiple permissions and return the created records."""
-        return await self.bulk_create(permissions)
+        """Insert multiple permissions, skipping duplicates, and return created records."""
+        from sqlalchemy.dialects.postgresql import insert as pg_insert
+
+        created = []
+        for perm in permissions:
+            stmt = (
+                pg_insert(self.model)
+                .values(**perm)
+                .on_conflict_do_nothing(
+                    index_elements=None,
+                    constraint="uq_permissions_category_resource_action",
+                )
+                .returning(self.model)
+            )
+            result = await self.db.execute(stmt)
+            row = result.scalars().first()
+            if row is not None:
+                created.append(row_to_dict(row))
+        await self.db.flush()
+        return created
 
     # ------------------------------------------------------------------
     # Distinct value helpers
@@ -174,15 +152,6 @@ class PermissionRepository(BaseRepository):
         """Return all distinct active permission resources."""
         stmt = (
             select(distinct(self.model.resource))
-            .where(self.model.is_active == True)  # noqa: E712
-        )
-        result = await self.db.execute(stmt)
-        return [row for (row,) in result.all() if row is not None]
-
-    async def get_actions(self) -> List[str]:
-        """Return all distinct active permission actions."""
-        stmt = (
-            select(distinct(self.model.action))
             .where(self.model.is_active == True)  # noqa: E712
         )
         result = await self.db.execute(stmt)

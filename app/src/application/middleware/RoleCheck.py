@@ -38,6 +38,7 @@ class ApplicationPermissionCheck(BaseRoleCheck):
         coupons     : coupons:read, coupons:create, coupons:update, coupons:delete, coupons:restore
         reviews     : reviews:read, reviews:create, reviews:update, reviews:delete, reviews:manage
         personas    : personas:read, personas:create, personas:update, personas:delete, personas:restore
+        customers   : customers:read, customers:create, customers:update, customers:delete
         workspaces  : workspaces:read, workspaces:update
         homepage    : homepage:read, homepage:update
     """

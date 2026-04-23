@@ -1,69 +1,93 @@
 """
-Workspace ORM model.
-
-A Workspace is the top-level tenant entity.  Every other resource belongs to
-a workspace.  Billing details are stored in a separate WorkspaceBilling table.
+Workspace ORM model and workspace_personas association table (shared).
 """
 
 from typing import Optional
 
-from sqlalchemy import Index, String, Text
+from sqlalchemy import BigInteger, Column, ForeignKey, Index, String, Table, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from src.models.Base import Base, EntityMixin, UUIDPrimaryKeyMixin
+from src.models.Base import Base, BigIntPrimaryKeyMixin, EntityMixin
 
 
-class Workspace(UUIDPrimaryKeyMixin, EntityMixin, Base):
-    """Top-level tenant / workspace."""
+# ---------------------------------------------------------------------------
+# Association table
+# ---------------------------------------------------------------------------
+
+workspace_personas = Table(
+    "workspace_personas",
+    Base.metadata,
+    Column(
+        "workspace_id",
+        BigInteger,
+        ForeignKey("workspaces.id", ondelete="CASCADE"),
+        primary_key=True,
+        nullable=False,
+    ),
+    Column(
+        "persona_id",
+        BigInteger,
+        ForeignKey("personas.id", ondelete="CASCADE"),
+        primary_key=True,
+        nullable=False,
+    ),
+)
+
+
+class Workspace(BigIntPrimaryKeyMixin, EntityMixin, Base):
+    """A tenant-level container."""
 
     __tablename__ = "workspaces"
 
-    # ------------------------------------------------------------------ #
-    # Core identity                                                        #
-    # ------------------------------------------------------------------ #
     name: Mapped[str] = mapped_column(String(200), nullable=False)
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
-    # ------------------------------------------------------------------ #
-    # Owner reference (system_users.id is VARCHAR(4))                     #
-    # ------------------------------------------------------------------ #
-    owner_id: Mapped[Optional[str]] = mapped_column(
-        String(4),
+    owner_id: Mapped[Optional[int]] = mapped_column(
+        BigInteger,
+        ForeignKey("users.id", ondelete="SET NULL"),
         nullable=True,
-        index=True,
+    )
+    referred_by: Mapped[Optional[int]] = mapped_column(
+        BigInteger,
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
     )
 
-    # ------------------------------------------------------------------ #
-    # Relationships                                                        #
-    # ------------------------------------------------------------------ #
+    # Relationships
     billing: Mapped[Optional["WorkspaceBilling"]] = relationship(  # noqa: F821
         "WorkspaceBilling",
         back_populates="workspace",
         uselist=False,
-        lazy="select",
+        lazy="noload",
+    )
+    billing_details: Mapped[Optional["BillingDetail"]] = relationship(  # noqa: F821
+        "BillingDetail",
+        back_populates="workspace",
+        uselist=False,
+        lazy="noload",
     )
     personas: Mapped[list["Persona"]] = relationship(  # noqa: F821
         "Persona",
         secondary="workspace_personas",
-        back_populates="workspaces",
-        lazy="select",
+        primaryjoin="Workspace.id == workspace_personas.c.workspace_id",
+        secondaryjoin="Persona.id == workspace_personas.c.persona_id",
+        lazy="noload",
     )
-    users: Mapped[list["ApplicationUser"]] = relationship(  # noqa: F821
-        "ApplicationUser",
+    users: Mapped[list["User"]] = relationship(  # noqa: F821
+        "User",
+        foreign_keys="User.workspace_id",
         back_populates="workspace",
-        lazy="select",
+        lazy="noload",
     )
     customers: Mapped[list["Customer"]] = relationship(  # noqa: F821
         "Customer",
         back_populates="workspace",
-        lazy="select",
+        lazy="noload",
     )
-
-    # ------------------------------------------------------------------ #
-    # Indexes                                                              #
-    # ------------------------------------------------------------------ #
-    __table_args__ = (
-        Index("ix_workspaces_is_active", "is_active"),
+    reviews: Mapped[list["Review"]] = relationship(  # noqa: F821
+        "Review",
+        back_populates="workspace",
+        lazy="noload",
     )
 
     def __repr__(self) -> str:

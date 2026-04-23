@@ -21,12 +21,7 @@ class BigIntPrimaryKeyMixin:
         BigInteger,
         primary_key=True,
         autoincrement=True,
-        init=False,
     )
-
-
-# Backward-compatible alias
-UUIDPrimaryKeyMixin = BigIntPrimaryKeyMixin
 
 
 class EntityMixin:
@@ -47,7 +42,7 @@ class EntityMixin:
     is_active   – active/soft-delete flag; NOT NULL, defaults to ``true``
                   on the database side; indexed for fast filtered queries.
     created_at  – set once by the DB on INSERT; NOT NULL.
-    updated_at  – refreshed by the DB on every UPDATE; nullable.
+    updated_at  – refreshed by the DB on every UPDATE; NOT NULL.
     """
 
     is_active: Mapped[bool] = mapped_column(
@@ -61,8 +56,9 @@ class EntityMixin:
         nullable=False,
         server_default=func.now(),
     )
-    updated_at: Mapped[Optional[datetime]] = mapped_column(
+    updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
-        nullable=True,
+        nullable=False,
+        server_default=func.now(),
         onupdate=func.now(),
     )

@@ -1,78 +1,64 @@
+from typing import Optional
+
 from pydantic import BaseModel, EmailStr, Field
-from typing import Optional, Dict, Any
-from datetime import datetime
+
 
 class LoginRequest(BaseModel):
-    """Login request schema"""
     email: EmailStr
     password: str = Field(..., min_length=6)
 
+
 class LoginResponse(BaseModel):
-    """Login response schema"""
     access_token: Optional[str] = None
     refresh_token: Optional[str] = None
     token_type: str = "bearer"
     user: dict
-    jwt_enabled: Optional[bool] = True
+    jwt_enabled: bool = True
+
 
 class RefreshTokenRequest(BaseModel):
-    """Refresh token request schema"""
     refresh_token: str
 
+
 class RefreshTokenResponse(BaseModel):
-    """Refresh token response schema"""
     access_token: str
     token_type: str = "bearer"
 
+
 class ChangePasswordRequest(BaseModel):
-    """Change password request schema"""
     old_password: str = Field(..., min_length=6)
     new_password: str = Field(..., min_length=6)
 
-class PersonaSignupData(BaseModel):
-    """Persona data for signup"""
-    name: str = Field(..., min_length=1, max_length=200)
-    description: Optional[str] = None
-    address: Optional[str] = None
-    city: Optional[str] = None
-    state: Optional[str] = None
-    country: Optional[str] = None
-    postal_code: Optional[str] = None
-    phone: Optional[str] = None
-    email: Optional[EmailStr] = None
-    organization_type: int = Field(0, ge=0, le=1, description="0=FOOD, 1=NON_FOOD")
-    order_type: int = Field(0, ge=0, le=1, description="0=Online, 1=Manual (Counter)")
-
-class AdminUserSignupData(BaseModel):
-    """Admin user data for signup"""
-    email: EmailStr
-    password: str = Field(..., min_length=6)
-    first_name: str = Field(..., min_length=1, max_length=100)
-    last_name: str = Field(..., min_length=1, max_length=100)
-    phone: Optional[str] = None
 
 class SignupRequest(BaseModel):
-    """Signup request schema"""
-    referral_code: str = Field(..., min_length=4, max_length=4, description="4-digit referral code from system user")
+    """Workspace + persona + admin user registration in one request."""
+    # Workspace
     workspace_name: str = Field(..., min_length=1, max_length=200)
     workspace_description: Optional[str] = None
+    owner_referred_by: Optional[int] = None
 
-    # Billing Information
-    billing_name: Optional[str] = None
-    billing_email: Optional[EmailStr] = None
-    billing_phone: Optional[str] = None
-    billing_address: Optional[str] = None
-    billing_city: Optional[str] = None
-    billing_state: Optional[str] = None
-    billing_postal_code: Optional[str] = None
-    billing_country: Optional[str] = None
+    # Persona
+    persona_name: str = Field(..., min_length=1, max_length=200)
+    persona_type: int = Field(default=0, ge=0, le=1)
+    order_type: int = Field(default=0, ge=0, le=1)
+    persona_address: Optional[str] = None
+    persona_city: Optional[str] = None
+    persona_state: Optional[str] = None
+    persona_country: Optional[str] = None
+    persona_postal_code: Optional[str] = None
+    persona_phone: Optional[str] = None
+    persona_email: Optional[str] = None
 
-    persona: PersonaSignupData
-    admin_user: AdminUserSignupData
+    # Admin user
+    admin_email: EmailStr
+    admin_password: str = Field(..., min_length=6)
+    admin_first_name: str = Field(..., min_length=1, max_length=100)
+    admin_last_name: str = Field(..., min_length=1, max_length=100)
+    admin_phone: Optional[str] = None
+
 
 class SignupResponse(BaseModel):
-    """Signup response schema"""
-    workspace: Dict[str, Any]
-    persona: Dict[str, Any]
-    admin_user: Dict[str, Any]
-    message: str = "Signup successful"
+    workspace: dict
+    persona: dict
+    user: dict
+    message: str

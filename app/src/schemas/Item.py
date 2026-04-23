@@ -1,27 +1,24 @@
-from pydantic import BaseModel, Field
-from typing import Optional
 from datetime import datetime
+from typing import Optional
+
+from pydantic import BaseModel, Field
 
 
 class ItemBase(BaseModel):
-    """Base item schema"""
     name: str = Field(..., min_length=1, max_length=200)
     description: Optional[str] = None
-    category_id: int = Field(..., description="Category ID this item belongs to")
-    workspace_id: int = Field(..., description="Workspace ID this item belongs to")
-    price: float = Field(..., ge=0, description="Price in INR")
+    category_id: int
+    workspace_id: int
+    price: float = Field(..., ge=0)
     is_available: bool = True
-    is_vegetarian: Optional[bool] = Field(None, description="True = Veg, False = Non-Veg, None = Not Applicable (Retail)")
+    is_vegetarian: Optional[bool] = None
 
 
 class ItemCreate(ItemBase):
-    """Create item schema"""
     image_url: Optional[str] = None
-    sort_order: int = 0
 
 
 class ItemUpdate(BaseModel):
-    """Update item schema"""
     name: Optional[str] = Field(None, min_length=1, max_length=200)
     description: Optional[str] = None
     category_id: Optional[int] = None
@@ -29,17 +26,22 @@ class ItemUpdate(BaseModel):
     is_available: Optional[bool] = None
     is_vegetarian: Optional[bool] = None
     image_url: Optional[str] = None
-    sort_order: Optional[int] = None
+    is_active: Optional[bool] = None
 
 
-class ItemResponse(ItemBase):
-    """Item response schema"""
+class ItemResponse(BaseModel):
     id: int
+    name: str
+    description: Optional[str] = None
+    category_id: int
+    workspace_id: int
+    price: float
+    is_available: bool
+    is_vegetarian: Optional[bool] = None
     image_url: Optional[str] = None
-    sort_order: int
+    is_active: bool
     created_at: datetime
     updated_at: datetime
-    is_active: bool
 
     class Config:
         from_attributes = True

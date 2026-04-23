@@ -1,64 +1,123 @@
-from pydantic import BaseModel, EmailStr, Field
-from typing import Optional, List
 from datetime import datetime
+from typing import List, Optional
+
+from pydantic import BaseModel, Field
 
 
-class OrderItemSchema(BaseModel):
-    """Order item schema"""
+class OrderLineItem(BaseModel):
+    """A single line item in an order creation request."""
     item_id: int
     item_name: str
     quantity: int = Field(..., gt=0)
     unit_price: float = Field(..., gt=0)
-    total_price: float = Field(..., gt=0)
 
 
-class OrderBase(BaseModel):
-    """Base order schema"""
+class OrderDetailCreate(BaseModel):
+    """Create an order with line items."""
+    order_type: str = Field(default="dine_in", max_length=30)
+    customer_id: Optional[int] = None
     customer_name: str = Field(..., min_length=1, max_length=200)
-    customer_email: Optional[EmailStr] = None
-    customer_phone: Optional[str] = None
-    items: List[OrderItemSchema]
-    currency: str = "USD"
-    special_instructions: Optional[str] = None
-
-
-class OrderCreate(OrderBase):
-    """Create order schema"""
-    persona_id: int
-    workspace_id: Optional[int] = None
     table_id: Optional[int] = None
     area_id: Optional[int] = None
-    order_type: str = "dine_in"
-    subtotal: float = 0
-    tax_amount: float = 0
-    service_charge: float = 0
-    discount_amount: float = 0
-    payment_method: Optional[str] = None
+    currency: str = Field(default="INR", max_length=10)
+    special_instructions: Optional[str] = None
+    workspace_id: int
+    persona_id: int
+    created_by: Optional[int] = None
+    items: List[OrderLineItem]
 
 
-class OrderUpdate(BaseModel):
-    """Update order schema"""
+class OrderDetailUpdate(BaseModel):
+    status: Optional[str] = Field(None, max_length=30)
     customer_name: Optional[str] = Field(None, min_length=1, max_length=200)
-    customer_email: Optional[EmailStr] = None
-    customer_phone: Optional[str] = None
-    status: Optional[str] = None
-    payment_status: Optional[str] = None
+    table_id: Optional[int] = None
+    area_id: Optional[int] = None
     special_instructions: Optional[str] = None
 
 
-class OrderResponse(OrderBase):
-    """Order response schema"""
+class OrderDetailResponse(BaseModel):
     id: int
-    order_number: str
+    order_id: str
+    order_type: str
+    status: str
+    customer_id: Optional[int] = None
+    customer_name: str
+    table_id: Optional[int] = None
+    area_id: Optional[int] = None
+    subtotal: float
+    tax_amount: float
+    service_charge: float
+    discount_amount: float
+    total_amount: float
+    currency: str
+    special_instructions: Optional[str] = None
     workspace_id: int
     persona_id: int
-    total_amount: float
-    status: str
-    payment_status: str
-    order_date: datetime
+    created_by: Optional[int] = None
+    is_active: bool
     created_at: datetime
     updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class OrderResponse(BaseModel):
+    """Response for a single order line item."""
+    sino: int
+    order_id: str
+    item_id: int
+    item_name: str
+    quantity: int
+    unit_price: float
+    line_total: float
+    workspace_id: int
+    persona_id: int
     is_active: bool
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class OrderTransactionCreate(BaseModel):
+    order_id: str
+    customer_id: Optional[int] = None
+    workspace_id: int
+    persona_id: int
+    paid_amount: float = 0
+    total_amount: float = 0
+    currency: str = Field(default="INR", max_length=10)
+    payment_method: Optional[str] = None
+    payment_status: str = Field(default="unpaid", max_length=30)
+    payment_ref: Optional[str] = None
+    notes: Optional[str] = None
+
+
+class OrderTransactionUpdate(BaseModel):
+    payment_status: Optional[str] = Field(None, max_length=30)
+    paid_amount: Optional[float] = None
+    payment_method: Optional[str] = None
+    payment_ref: Optional[str] = None
+    notes: Optional[str] = None
+
+
+class OrderTransactionResponse(BaseModel):
+    id: int
+    order_id: str
+    customer_id: Optional[int] = None
+    workspace_id: int
+    persona_id: int
+    paid_amount: float
+    total_amount: float
+    currency: str
+    payment_method: Optional[str] = None
+    payment_status: str
+    payment_ref: Optional[str] = None
+    notes: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
 
     class Config:
         from_attributes = True

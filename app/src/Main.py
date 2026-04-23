@@ -4,6 +4,9 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from slowapi.util import get_remote_address
 from sqlalchemy import text
 
 from src.config.Database import async_session_factory, close_db, initialize_db
@@ -13,15 +16,13 @@ from src.application.routes import (
     Areas,
     Auth,
     Categories,
-    Coupons,
     Customers,
     Dashboard,
     HomePage,
     Items,
-    Menu,
     Orders,
-    Personas,
     Permissions,
+    Personas,
     Reviews,
     Roles,
     Tables,
@@ -36,6 +37,8 @@ logging.basicConfig(
 
 logger = logging.getLogger(__name__)
 
+limiter = Limiter(key_func=get_remote_address)
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -45,7 +48,18 @@ async def lifespan(app: FastAPI):
     logger.info(f"Deployed At: {settings.DEPLOYED_AT}")
     logger.info(f"Environment: {settings.ENVIRONMENT}")
 
-    await initialize_db()
+    try:
+        settings._validate_production_config()
+        logger.info("Configuration validated.")
+    except RuntimeError as e:
+        logger.critical(f"Invalid production configuration:\n{e}")
+        raise
+
+    try:
+        await initialize_db()
+    except Exception as e:
+        logger.critical(f"PostgreSQL connection failed: {e}")
+        raise
     logger.info("PostgreSQL connection pool initialized.")
 
     yield
@@ -55,12 +69,20 @@ async def lifespan(app: FastAPI):
     logger.info("PostgreSQL connection pool closed.")
 
 
+_docs_url = None if settings.ENVIRONMENT == "production" else "/docs"
+_redoc_url = None if settings.ENVIRONMENT == "production" else "/redoc"
+
 app = FastAPI(
     title=f"{settings.APP_NAME} - Application Service",
     version=settings.APP_VERSION,
     description="Dino Application Service API",
     lifespan=lifespan,
+    docs_url=_docs_url,
+    redoc_url=_redoc_url,
 )
+
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 # CORS middleware
 app.add_middleware(
@@ -75,22 +97,20 @@ app.add_middleware(
 PREFIX = "/api/v1/application"
 
 app.include_router(Auth.router, prefix=PREFIX)
-app.include_router(Orders.router, prefix=PREFIX)
-app.include_router(Customers.router, prefix=PREFIX)
+app.include_router(Users.router, prefix=PREFIX)
 app.include_router(Personas.router, prefix=PREFIX)
-app.include_router(Menu.router, prefix=PREFIX)
 app.include_router(Areas.router, prefix=PREFIX)
+app.include_router(Tables.router, prefix=PREFIX)
 app.include_router(Categories.router, prefix=PREFIX)
 app.include_router(Items.router, prefix=PREFIX)
-app.include_router(Tables.router, prefix=PREFIX)
-app.include_router(Coupons.router, prefix=PREFIX)
-app.include_router(HomePage.router, prefix=PREFIX)
-app.include_router(Dashboard.router, prefix=PREFIX)
-app.include_router(Reviews.router, prefix=PREFIX)
-app.include_router(Users.router, prefix=PREFIX)
-app.include_router(Permissions.router, prefix=PREFIX)
-app.include_router(Roles.router, prefix=PREFIX)
+app.include_router(Orders.router, prefix=PREFIX)
+app.include_router(Customers.router, prefix=PREFIX)
 app.include_router(Workspaces.router, prefix=PREFIX)
+app.include_router(Dashboard.router, prefix=PREFIX)
+app.include_router(Roles.router, prefix=PREFIX)
+app.include_router(Permissions.router, prefix=PREFIX)
+app.include_router(Reviews.router, prefix=PREFIX)
+app.include_router(HomePage.router, prefix=PREFIX)
 
 
 @app.exception_handler(Exception)

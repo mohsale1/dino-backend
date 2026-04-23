@@ -1,46 +1,43 @@
 """
-Permission ORM model.
-
-Permissions are global (not scoped to a workspace) and are assigned to Roles
-via the role_permissions association table defined in Role.py.
+Permission ORM model (shared with dino-system).
+No name, codename, description, or is_system columns.
 """
 
-from typing import Optional
-
-from sqlalchemy import Index, String, Text
+from sqlalchemy import Index, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from src.models.Base import Base, EntityMixin, UUIDPrimaryKeyMixin
+from src.models.Base import Base, BigIntPrimaryKeyMixin, EntityMixin
 
 
-class Permission(UUIDPrimaryKeyMixin, EntityMixin, Base):
-    """A single, named permission (e.g. 'orders:read')."""
+class Permission(BigIntPrimaryKeyMixin, EntityMixin, Base):
+    """Represents a discrete action that can be granted to a Role."""
 
     __tablename__ = "permissions"
 
-    name: Mapped[str] = mapped_column(String(200), nullable=False, unique=True)
-    codename: Mapped[str] = mapped_column(String(100), nullable=False, unique=True)
-    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    resource: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)   # e.g. 'orders'
-    action: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)      # e.g. 'read'
+    __table_args__ = (
+        UniqueConstraint(
+            "category", "resource", "action",
+            name="uq_permissions_category_resource_action",
+        ),
+        Index("ix_permissions_category", "category"),
+        Index("ix_permissions_resource", "resource"),
+    )
 
-    # ------------------------------------------------------------------ #
-    # Relationships                                                        #
-    # ------------------------------------------------------------------ #
+    category: Mapped[str] = mapped_column(
+        String(50),
+        nullable=False,
+        comment="'system' or 'application'",
+    )
+    resource: Mapped[str] = mapped_column(String(100), nullable=False)
+    action: Mapped[str] = mapped_column(String(50), nullable=False)
+
+    # Relationships
     roles: Mapped[list["Role"]] = relationship(  # noqa: F821
         "Role",
         secondary="role_permissions",
         back_populates="permissions",
-        lazy="select",
-    )
-
-    # ------------------------------------------------------------------ #
-    # Indexes                                                              #
-    # ------------------------------------------------------------------ #
-    __table_args__ = (
-        Index("ix_permissions_is_active", "is_active"),
-        Index("ix_permissions_resource", "resource"),
+        lazy="selectin",
     )
 
     def __repr__(self) -> str:
-        return f"<Permission id={self.id} codename={self.codename!r}>"
+        return f"<Permission id={self.id} {self.category}:{self.resource}:{self.action}>"

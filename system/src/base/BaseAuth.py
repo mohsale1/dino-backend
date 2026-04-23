@@ -5,7 +5,9 @@ BaseAuth — async authentication helpers for dino-system.
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Optional
 
-from jose import JWTError, jwt
+from fastapi import HTTPException, status
+import jwt
+from jwt.exceptions import InvalidTokenError
 
 from src.base.BaseRepository import BaseRepository
 from src.config.Settings import settings
@@ -35,7 +37,7 @@ class BaseAuth:
         Returns None if the user does not exist, is inactive, or the
         password does not match.
         """
-        user = await self.user_repository.get_by_field("email", email)
+        user = await self.user_repository.get_by_field("email", email.lower())
 
         if not user:
             return None
@@ -45,6 +47,11 @@ class BaseAuth:
 
         if not verify_password(password, user.get("password_hash", "")):
             return None
+
+        # Stamp last_login — best-effort; do not let a failed update block login.
+        now = datetime.now(timezone.utc)
+        await self.user_repository.update(user["id"], {"last_login": now})
+        user["last_login"] = now.isoformat()
 
         return user
 
@@ -87,10 +94,16 @@ class BaseAuth:
         user = await self.user_repository.get_by_id(user_id)
 
         if not user:
-            raise Exception("User not found")
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="User not found",
+            )
 
         if not verify_password(old_password, user.get("password_hash", "")):
-            raise Exception("Current password is incorrect")
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Current password is incorrect",
+            )
 
         new_hash = get_password_hash(new_password)
         return await self.user_repository.update(user_id, {
@@ -130,5 +143,5 @@ class BaseAuth:
             return jwt.decode(
                 token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM]
             )
-        except JWTError:
+        except InvalidTokenError:
             return None

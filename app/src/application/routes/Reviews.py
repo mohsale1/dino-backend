@@ -1,238 +1,268 @@
 """
-Review Routes
-Endpoints for managing customer reviews/testimonials
+Reviews router — CRUD and moderation endpoints for customer reviews.
 """
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from typing import Any, Dict, Optional
+
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
-from typing import Optional, Dict, Any
-from pydantic import BaseModel, Field
-from src.application.services.Review import ReviewService
+
 from src.application.middleware.RoleCheck import ApplicationPermissionCheck
+from src.application.services.Review import ReviewService
+from src.base.BaseSchema import BaseResponse, PaginatedResponse, PaginationMeta
 from src.config.Database import get_db
+from src.core.Dependencies import get_current_user
+from src.schemas.Review import ReviewCreate, ReviewResponse, ReviewUpdate
 
 router = APIRouter(prefix="/reviews", tags=["Reviews"])
 
 
-# ============================================================================
-# REQUEST SCHEMAS
-# ============================================================================
+# ---------------------------------------------------------------------------
+# POST /reviews — create a review
+# ---------------------------------------------------------------------------
 
-class ReviewCreate(BaseModel):
-    """Schema for creating a new review"""
-    customer_name: str = Field(..., description="Name of the customer")
-    rating: int = Field(..., ge=1, le=5, description="Rating from 1 to 5")
-    comment: str = Field(..., min_length=10, description="Review comment (min 10 characters)")
-    role: Optional[str] = Field(None, description="Customer role/title")
-    restaurant: Optional[str] = Field(None, description="Restaurant name")
-    location: Optional[str] = Field(None, description="Location (city, state)")
-    avatar: Optional[str] = Field(None, description="Avatar URL or initials")
-    workspace_id: Optional[int] = Field(None, description="Associated workspace ID")
-    persona_id: Optional[int] = Field(None, description="Associated persona ID")
-
-
-class ReviewUpdate(BaseModel):
-    """Schema for updating an existing review (all fields optional)"""
-    customer_name: Optional[str] = Field(None, description="Name of the customer")
-    rating: Optional[int] = Field(None, ge=1, le=5, description="Rating from 1 to 5")
-    comment: Optional[str] = Field(None, min_length=10, description="Review comment (min 10 characters)")
-    role: Optional[str] = Field(None, description="Customer role/title")
-    restaurant: Optional[str] = Field(None, description="Restaurant name")
-    location: Optional[str] = Field(None, description="Location (city, state)")
-    avatar: Optional[str] = Field(None, description="Avatar URL or initials")
-    workspace_id: Optional[int] = Field(None, description="Associated workspace ID")
-    persona_id: Optional[int] = Field(None, description="Associated persona ID")
-
-
-# ============================================================================
-# GET ENDPOINTS
-# ============================================================================
-
-@router.get("")
-async def get_reviews(
-    limit: Optional[int] = None,
-    workspace_id: Optional[int] = None,
-    persona_id: Optional[int] = None,
-    approved_only: bool = True,
-    current_user: Dict[str, Any] = Depends(ApplicationPermissionCheck.require_authenticated),
-    db: AsyncSession = Depends(get_db)
+@router.post("", response_model=BaseResponse)
+async def create_review(
+    body: ReviewCreate,
+    current_user: Dict[str, Any] = Depends(ApplicationPermissionCheck.require("reviews:create")),
+    db: AsyncSession = Depends(get_db),
 ):
-    """
-    Get reviews with optional filters
-    Requires authentication
-    """
+    """Create a new review. workspace_id resolved from current_user if not provided."""
+    data = body.model_dump()
+    if not data.get("workspace_id"):
+        data["workspace_id"] = current_user.get("workspace_id")
+    if not data.get("workspace_id"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="workspace_id is required",
+        )
+    data["user_id"] = current_user.get("id")
+
     service = ReviewService(db)
+    review = await service.create_review(data)
+    return {"success": True, "message": "Review created successfully", "data": review}
 
-    if workspace_id:
-        reviews = await service.get_by_workspace(workspace_id, limit)
-    elif persona_id:
-        reviews = await service.get_by_persona(persona_id, limit)
-    elif approved_only:
-        reviews = await service.get_approved_reviews(limit)
-    else:
-        reviews = await service.get_all_reviews(limit)
 
+# ---------------------------------------------------------------------------
+# GET /reviews — paginated list (protected)
+# ---------------------------------------------------------------------------
+
+@router.get("", response_model=PaginatedResponse)
+async def list_reviews(
+    workspace_id: Optional[int] = Query(None),
+    persona_id: Optional[int] = Query(None),
+    is_approved: Optional[bool] = Query(None),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    current_user: Dict[str, Any] = Depends(ApplicationPermissionCheck.require("reviews:read")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get paginated reviews. workspace_id resolved from current_user if not provided."""
+    wid = workspace_id or current_user.get("workspace_id")
+    if not wid:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="workspace_id is required",
+        )
+
+    service = ReviewService(db)
+    items, total, total_pages = await service.get_paginated_reviews(
+        page=page,
+        page_size=page_size,
+        workspace_id=wid,
+        persona_id=persona_id,
+        is_approved=is_approved,
+    )
     return {
         "success": True,
         "message": "Reviews retrieved successfully",
-        "data": reviews
+        "data": items,
+        "pagination": PaginationMeta(
+            page=page,
+            page_size=page_size,
+            total=total,
+            total_pages=total_pages,
+            has_next=page < total_pages,
+            has_prev=page > 1,
+        ),
     }
 
 
-@router.get("/{review_id}")
+# ---------------------------------------------------------------------------
+# GET /reviews/approved — public approved reviews (no auth)
+# ---------------------------------------------------------------------------
+
+@router.get("/approved", response_model=BaseResponse)
+async def get_approved_reviews(
+    workspace_id: int = Query(...),
+    persona_id: Optional[int] = Query(None),
+    limit: int = Query(10, ge=1, le=50),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Public endpoint — returns approved + active reviews with user_name.
+    Intended for homepage / public-facing widgets.
+    """
+    service = ReviewService(db)
+    reviews = await service.get_approved_reviews(
+        workspace_id=workspace_id,
+        persona_id=persona_id,
+        limit=limit,
+    )
+    return {"success": True, "message": "Approved reviews retrieved successfully", "data": reviews}
+
+
+# ---------------------------------------------------------------------------
+# GET /reviews/summary — rating summary (protected)
+# ---------------------------------------------------------------------------
+
+@router.get("/summary", response_model=BaseResponse)
+async def get_rating_summary(
+    workspace_id: Optional[int] = Query(None),
+    persona_id: Optional[int] = Query(None),
+    current_user: Dict[str, Any] = Depends(ApplicationPermissionCheck.require("reviews:read")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Return average_rating, total_reviews, and rating_distribution."""
+    wid = workspace_id or current_user.get("workspace_id")
+    service = ReviewService(db)
+    summary = await service.get_rating_summary(workspace_id=wid, persona_id=persona_id)
+    return {"success": True, "message": "Rating summary retrieved successfully", "data": summary}
+
+
+# ---------------------------------------------------------------------------
+# GET /reviews/{id} — single review (protected)
+# ---------------------------------------------------------------------------
+
+@router.get("/{review_id}", response_model=BaseResponse)
 async def get_review(
     review_id: int,
-    current_user: Dict[str, Any] = Depends(ApplicationPermissionCheck.require_authenticated),
-    db: AsyncSession = Depends(get_db)
+    current_user: Dict[str, Any] = Depends(ApplicationPermissionCheck.require("reviews:read")),
+    db: AsyncSession = Depends(get_db),
 ):
-    """
-    Get a specific review by ID
-    Requires authentication
-    """
+    """Get a single review by ID."""
     service = ReviewService(db)
     review = await service.get_by_id(review_id)
-
     if not review:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Review not found")
-
-    return {
-        "success": True,
-        "message": "Review retrieved successfully",
-        "data": review
-    }
+    return {"success": True, "message": "Review retrieved successfully", "data": review}
 
 
-# ============================================================================
-# WRITE ENDPOINTS
-# ============================================================================
+# ---------------------------------------------------------------------------
+# PUT /reviews/{id} — update review (protected)
+# ---------------------------------------------------------------------------
 
-@router.post("")
-async def create_review(
-    review_data: ReviewCreate,
-    current_user: Dict[str, Any] = Depends(ApplicationPermissionCheck.require_authenticated),
-    db: AsyncSession = Depends(get_db)
-):
-    """
-    Create a new review
-    Requires authentication
-    """
-    service = ReviewService(db)
-    data = review_data.model_dump()
-    # Tag the review with the creating user's ID for ownership checks
-    data['created_by'] = current_user.get('id')
-    review = await service.create_review(data)
-
-    return {
-        "success": True,
-        "message": "Review created successfully",
-        "data": review
-    }
-
-
-@router.put("/{review_id}")
+@router.put("/{review_id}", response_model=BaseResponse)
 async def update_review(
     review_id: int,
-    review_data: ReviewUpdate,
-    current_user: Dict[str, Any] = Depends(ApplicationPermissionCheck.require_authenticated),
-    db: AsyncSession = Depends(get_db)
+    body: ReviewUpdate,
+    current_user: Dict[str, Any] = Depends(ApplicationPermissionCheck.require("reviews:update")),
+    db: AsyncSession = Depends(get_db),
 ):
-    """
-    Update a review.
-    Owners may update their own review; managers may update any review.
-    Requires authentication
-    """
+    """Update a review's rating, comment, or approval status."""
     service = ReviewService(db)
-
-    # Fetch the existing review to perform ownership check
     existing = await service.get_by_id(review_id)
     if not existing:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Review not found")
 
-    user_id = current_user.get('id')
-    user_role = current_user.get('role', {}).get('name', '')
-    is_manager = user_role in ('Manager', 'Admin', 'SuperAdmin')
-    is_owner = existing.get('created_by') == user_id
+    data = body.model_dump(exclude_unset=True)
+    if not data:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No fields to update")
 
-    # Enforce ownership: only the creator or a manager may update
-    if not is_manager and not is_owner:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Not authorized to update this review"
-        )
-
-    update_payload = review_data.model_dump(exclude_unset=True)
-    success = await service.update_review(review_id, update_payload)
-
+    success = await service.update_review(review_id, data)
     if not success:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Review update failed")
-
-    return {
-        "success": True,
-        "message": "Review updated successfully"
-    }
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Review not found")
+    return {"success": True, "message": "Review updated successfully"}
 
 
-@router.patch("/{review_id}/approve")
+# ---------------------------------------------------------------------------
+# PUT /reviews/{id}/approve — approve (reviews:manage)
+# ---------------------------------------------------------------------------
+
+@router.put("/{review_id}/approve", response_model=BaseResponse)
 async def approve_review(
     review_id: int,
-    current_user: Dict[str, Any] = Depends(ApplicationPermissionCheck.require('reviews:manage')),
-    db: AsyncSession = Depends(get_db)
+    current_user: Dict[str, Any] = Depends(ApplicationPermissionCheck.require("reviews:manage")),
+    db: AsyncSession = Depends(get_db),
 ):
-    """
-    Approve a review for public display
-    Requires reviews:manage permission
-    """
+    """Approve a review so it appears publicly."""
     service = ReviewService(db)
+    existing = await service.get_by_id(review_id)
+    if not existing:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Review not found")
+
     success = await service.approve_review(review_id)
-
     if not success:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Review not found")
-
-    return {
-        "success": True,
-        "message": "Review approved successfully"
-    }
+    return {"success": True, "message": "Review approved successfully"}
 
 
-@router.patch("/{review_id}/reject")
-async def reject_review(
+# ---------------------------------------------------------------------------
+# PUT /reviews/{id}/unapprove — unapprove (reviews:manage)
+# ---------------------------------------------------------------------------
+
+@router.put("/{review_id}/unapprove", response_model=BaseResponse)
+async def unapprove_review(
     review_id: int,
-    current_user: Dict[str, Any] = Depends(ApplicationPermissionCheck.require('reviews:manage')),
-    db: AsyncSession = Depends(get_db)
+    current_user: Dict[str, Any] = Depends(ApplicationPermissionCheck.require("reviews:manage")),
+    db: AsyncSession = Depends(get_db),
 ):
-    """
-    Reject/unapprove a review
-    Requires reviews:manage permission
-    """
+    """Unapprove a review, hiding it from public view."""
     service = ReviewService(db)
-    success = await service.reject_review(review_id)
-
-    if not success:
+    existing = await service.get_by_id(review_id)
+    if not existing:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Review not found")
 
-    return {
-        "success": True,
-        "message": "Review rejected successfully"
-    }
+    success = await service.unapprove_review(review_id)
+    if not success:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Review not found")
+    return {"success": True, "message": "Review unapproved successfully"}
 
 
-@router.delete("/{review_id}")
+# ---------------------------------------------------------------------------
+# DELETE /reviews/{id} — soft delete (reviews:delete)
+# ---------------------------------------------------------------------------
+
+@router.delete("/{review_id}", response_model=BaseResponse)
 async def delete_review(
     review_id: int,
-    current_user: Dict[str, Any] = Depends(ApplicationPermissionCheck.require('reviews:delete')),
-    db: AsyncSession = Depends(get_db)
+    current_user: Dict[str, Any] = Depends(ApplicationPermissionCheck.require("reviews:delete")),
+    db: AsyncSession = Depends(get_db),
 ):
-    """
-    Soft delete a review
-    Requires reviews:delete permission
-    """
+    """Soft-delete a review."""
     service = ReviewService(db)
-    success = await service.delete_review(review_id)
+    existing = await service.get_by_id(review_id)
+    if not existing:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Review not found")
 
+    success = await service.soft_delete_review(review_id)
     if not success:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Review not found or delete failed")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Review not found")
+    return {"success": True, "message": "Review deleted successfully"}
 
-    return {
-        "success": True,
-        "message": "Review deleted successfully"
-    }
+
+# ---------------------------------------------------------------------------
+# POST /reviews/{id}/restore — restore (reviews:manage)
+# ---------------------------------------------------------------------------
+
+@router.post("/{review_id}/restore", response_model=BaseResponse)
+async def restore_review(
+    review_id: int,
+    current_user: Dict[str, Any] = Depends(ApplicationPermissionCheck.require("reviews:manage")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Restore a soft-deleted review."""
+    service = ReviewService(db)
+    existing = await service.get_by_id(review_id, include_deleted=True)
+    if not existing:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Review not found")
+    if existing.get("is_active", True):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Review is not deleted",
+        )
+
+    success = await service.restore_review(review_id)
+    if not success:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Review not found")
+    return {"success": True, "message": "Review restored successfully"}

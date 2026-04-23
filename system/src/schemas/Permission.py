@@ -1,30 +1,30 @@
-from pydantic import BaseModel, Field, field_validator
-from typing import Optional, List
 from datetime import datetime
+from typing import List, Optional
+
+from pydantic import BaseModel, Field, field_validator
+
+_VALID_CATEGORIES = {"system", "application"}
+_VALID_ACTIONS = {"create", "read", "update", "delete", "list", "manage", "status"}
 
 
 class PermissionBase(BaseModel):
     """Base permission schema"""
-    name: str = Field(..., min_length=1, max_length=200, description="Permission name (e.g., system:users:create)")
-    description: str = Field(..., min_length=1, max_length=500, description="Permission description")
-    category: str = Field(..., description="Permission category (system/application)")
-    resource: str = Field(..., min_length=1, max_length=100, description="Resource name (e.g., users, roles)")
-    action: str = Field(..., min_length=1, max_length=50, description="Action (create, read, update, delete, *)")
-    is_system: bool = Field(default=False, description="System permission (cannot be deleted)")
+    category: str = Field(..., description="Permission category: system or application")
+    resource: str = Field(..., min_length=1, max_length=100)
+    action: str = Field(..., min_length=1, max_length=50)
 
-    @field_validator('category')
+    @field_validator("category")
     @classmethod
-    def validate_category(cls, v):
-        if v not in ['system', 'application']:
-            raise ValueError('Category must be either "system" or "application"')
+    def validate_category(cls, v: str) -> str:
+        if v not in _VALID_CATEGORIES:
+            raise ValueError(f'category must be one of: {", ".join(sorted(_VALID_CATEGORIES))}')
         return v
 
-    @field_validator('action')
+    @field_validator("action")
     @classmethod
-    def validate_action(cls, v):
-        valid_actions = ['*', 'view', 'create', 'read', 'update', 'delete', 'list', 'manage', 'moderate', 'status', 'payment', 'subscription']
-        if v not in valid_actions:
-            raise ValueError(f'Action must be one of: {", ".join(valid_actions)}')
+    def validate_action(cls, v: str) -> str:
+        if v not in _VALID_ACTIONS:
+            raise ValueError(f'action must be one of: {", ".join(sorted(_VALID_ACTIONS))}')
         return v
 
 
@@ -35,36 +35,35 @@ class PermissionCreate(PermissionBase):
 
 class PermissionUpdate(BaseModel):
     """Update permission schema"""
-    name: Optional[str] = Field(None, min_length=1, max_length=200)
-    description: Optional[str] = Field(None, min_length=1, max_length=500)
     category: Optional[str] = None
     resource: Optional[str] = Field(None, min_length=1, max_length=100)
     action: Optional[str] = Field(None, min_length=1, max_length=50)
     is_active: Optional[bool] = None
 
-    @field_validator('category')
+    @field_validator("category")
     @classmethod
-    def validate_category(cls, v):
-        if v is not None and v not in ['system', 'application']:
-            raise ValueError('Category must be either "system" or "application"')
+    def validate_category(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None and v not in _VALID_CATEGORIES:
+            raise ValueError(f'category must be one of: {", ".join(sorted(_VALID_CATEGORIES))}')
         return v
 
-    @field_validator('action')
+    @field_validator("action")
     @classmethod
-    def validate_action(cls, v):
-        if v is not None:
-            valid_actions = ['*', 'view', 'create', 'read', 'update', 'delete', 'list', 'manage', 'moderate', 'status', 'payment', 'subscription']
-            if v not in valid_actions:
-                raise ValueError(f'Action must be one of: {", ".join(valid_actions)}')
+    def validate_action(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None and v not in _VALID_ACTIONS:
+            raise ValueError(f'action must be one of: {", ".join(sorted(_VALID_ACTIONS))}')
         return v
 
 
-class PermissionResponse(PermissionBase):
+class PermissionResponse(BaseModel):
     """Permission response schema"""
     id: int
-    created_at: datetime
-    updated_at: Optional[datetime] = None
+    category: str
+    resource: str
+    action: str
     is_active: bool
+    created_at: datetime
+    updated_at: datetime
 
     class Config:
         from_attributes = True
@@ -72,4 +71,4 @@ class PermissionResponse(PermissionBase):
 
 class PermissionBulkCreate(BaseModel):
     """Bulk create permissions schema"""
-    permissions: List[PermissionCreate] = Field(..., min_length=1, description="List of permissions to create")
+    permissions: List[PermissionCreate] = Field(..., min_length=1)

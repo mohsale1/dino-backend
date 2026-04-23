@@ -124,8 +124,6 @@ class Settings(BaseSettings):
         if self.CREATE_DEFAULT_SUPERADMIN:
             logger.info("   SuperAdmin Auto-Creation: Enabled")
 
-        self._validate_production_config()
-
     def _validate_production_config(self) -> None:
         """Raise RuntimeError for unsafe configurations in production."""
         if self.ENVIRONMENT != "production":

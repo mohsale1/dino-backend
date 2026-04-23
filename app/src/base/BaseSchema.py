@@ -1,17 +1,13 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from typing import Optional, Any, List, Generic, TypeVar
-from datetime import datetime
 
 T = TypeVar('T')
 
 class BaseSchema(BaseModel):
     """Base Pydantic schema with common fields"""
-    
-    class Config:
-        from_attributes = True
-        json_encoders = {
-            datetime: lambda v: v.isoformat()
-        }
+
+    # from_attributes enables ORM mode; datetime serialization works by default in Pydantic v2
+    model_config = ConfigDict(from_attributes=True)
 
 class BaseResponse(BaseSchema):
     """Base response schema"""

@@ -1,3 +1,7 @@
+"""
+RoleService — manages roles and their permission associations.
+"""
+
 from typing import Any, Dict, List, Optional
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -19,97 +23,64 @@ class RoleService(BaseService):
     # CRUD
     # ------------------------------------------------------------------
 
-    async def create_role(self, data: Dict[str, Any]) -> str:
-        """Create a role and return its ID string."""
-        result = await self.create(data)
-        return result.get('id') if isinstance(result, dict) else result
+    async def create_role(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        """Create a role and return the created dict."""
+        return await self.create(data)
 
     async def get_all_roles(self) -> List[Dict[str, Any]]:
         return await self.get_all()
 
-    async def get_role_by_id(self, role_id, include_deleted: bool = False):
+    async def get_role_by_id(
+        self, role_id: int, include_deleted: bool = False
+    ) -> Optional[Dict[str, Any]]:
         return await self.get_by_id(role_id, include_deleted)
 
-    async def get_roles_by_type(self, role_type) -> List[Dict[str, Any]]:
+    async def get_roles_by_type(self, role_type: int) -> List[Dict[str, Any]]:
         return await self.role_repo.get_by_type(role_type)
 
-    async def update_role(self, role_id, data: Dict[str, Any]):
+    async def update_role(self, role_id: int, data: Dict[str, Any]) -> bool:
         return await self.update(role_id, data)
 
-    async def soft_delete_role(self, role_id):
+    async def soft_delete_role(self, role_id: int) -> bool:
         return await self.soft_delete(role_id)
 
-    async def restore_role(self, role_id):
+    async def restore_role(self, role_id: int) -> bool:
         return await self.restore(role_id)
 
     # ------------------------------------------------------------------
     # Existence / validation
     # ------------------------------------------------------------------
 
-    async def role_exists(self, name: str, role_type) -> bool:
+    async def role_exists(self, name: str, role_type: int) -> bool:
         return await self.role_repo.get_by_name_and_type(name, role_type) is not None
 
     # ------------------------------------------------------------------
     # Permissions
     # ------------------------------------------------------------------
 
-    async def add_permissions(self, role_id, permission_ids: List) -> Any:
+    async def add_permissions(self, role_id: int, permission_ids: List[int]) -> bool:
         return await self.role_repo.add_permissions(role_id, permission_ids)
 
-    async def remove_permissions(self, role_id, permission_ids: List) -> Any:
+    async def remove_permissions(self, role_id: int, permission_ids: List[int]) -> bool:
         return await self.role_repo.remove_permissions(role_id, permission_ids)
 
-    async def get_role_permissions(self, role_id) -> List[Dict[str, Any]]:
+    async def get_role_permissions(self, role_id: int) -> List[int]:
         return await self.role_repo.get_role_permissions(role_id)
 
     # ------------------------------------------------------------------
     # User queries
     # ------------------------------------------------------------------
 
-    async def is_role_in_use(self, role_id) -> bool:
+    async def is_role_in_use(self, role_id: int) -> bool:
+        """Return True if any user is assigned this role."""
         user_repo = UserRepository(self.db)
         users = await user_repo.get_by_role(role_id)
         return bool(users)
 
-    async def get_users_by_role(self, role_id) -> List[Dict[str, Any]]:
+    async def get_users_by_role(self, role_id: int) -> List[Dict[str, Any]]:
+        """Return all users with this role, password_hash stripped."""
         user_repo = UserRepository(self.db)
-        return await user_repo.get_by_role(role_id)
-
-    # ------------------------------------------------------------------
-    # Static helpers (no DB access)
-    # ------------------------------------------------------------------
-
-    def get_default_permissions_for_role(self, role_name: str) -> List[str]:
-        """Return the default permission list for a named role (static data)."""
-        defaults: Dict[str, List[str]] = {
-            "SuperAdmin": ["system:*"],
-            "BillingManager": ["system:billing:*", "system:workspaces:read"],
-            "Owner": ["workspace:*"],
-            "Admin": [
-                "dashboard:*",
-                "items:*",
-                "categories:*",
-                "areas:*",
-                "tables:*",
-                "orders:*",
-                "reviews:*",
-                "users:read",
-                "users:update",
-                "persona:read",
-                "workspace:read",
-            ],
-            "Operator": [
-                "dashboard:read",
-                "items:read",
-                "categories:read",
-                "areas:read",
-                "tables:read",
-                "orders:read",
-                "orders:update",
-                "orders:status",
-                "reviews:read",
-                "persona:read",
-                "workspace:read",
-            ],
-        }
-        return defaults.get(role_name, [])
+        users = await user_repo.get_by_role(role_id)
+        for u in users:
+            u.pop("password_hash", None)
+        return users
