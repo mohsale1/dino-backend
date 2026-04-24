@@ -2,6 +2,7 @@
 BillingService — business logic for workspace billing.
 """
 
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
 from sqlalchemy import and_, func, select
@@ -41,8 +42,6 @@ class BillingService:
         self, workspace_id: int, data: Dict[str, Any]
     ) -> Dict[str, Any]:
         """Upsert billing_details for a workspace using INSERT ... ON CONFLICT DO UPDATE."""
-        from datetime import datetime, timezone
-
         now = datetime.now(timezone.utc)
         insert_values = {**data, "workspace_id": workspace_id, "updated_at": now}
 
@@ -60,6 +59,8 @@ class BillingService:
         )
         result = await self.db.execute(stmt)
         row = result.scalars().first()
+        if row is None:
+            raise RuntimeError("Billing detail upsert returned no row")
         return row_to_dict(row)
 
 

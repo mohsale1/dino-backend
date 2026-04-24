@@ -2,6 +2,7 @@
 ApplicationDashboardService — aggregated metrics for the application dashboard.
 """
 
+import asyncio
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
@@ -31,7 +32,7 @@ class ApplicationDashboardService:
     ) -> list:
         conditions = [
             OrderDetail.workspace_id == workspace_id,
-            OrderDetail.is_active == True,  # noqa: E712
+            OrderDetail.is_active.is_(True),  # noqa: E712
         ]
         if persona_id is not None:
             conditions.append(OrderDetail.persona_id == persona_id)
@@ -74,7 +75,7 @@ class ApplicationDashboardService:
         pending_orders = (await self.db.execute(pending_stmt)).scalar_one() or 0
 
         # Tables
-        table_conditions = [Table.workspace_id == workspace_id, Table.is_active == True]  # noqa: E712
+        table_conditions = [Table.workspace_id == workspace_id, Table.is_active.is_(True)]  # noqa: E712
         active_tables_stmt = select(func.count(Table.id)).where(and_(*table_conditions))
         active_tables = (await self.db.execute(active_tables_stmt)).scalar_one() or 0
 
@@ -86,7 +87,7 @@ class ApplicationDashboardService:
         # Customers
         customer_conditions = [
             Customer.workspace_id == workspace_id,
-            Customer.is_active == True,  # noqa: E712
+            Customer.is_active.is_(True),  # noqa: E712
         ]
         customers_stmt = select(func.count(Customer.id)).where(and_(*customer_conditions))
         total_customers = (await self.db.execute(customers_stmt)).scalar_one() or 0
@@ -94,7 +95,7 @@ class ApplicationDashboardService:
         # Items
         item_conditions = [
             Item.workspace_id == workspace_id,
-            Item.is_active == True,  # noqa: E712
+            Item.is_active.is_(True),  # noqa: E712
         ]
         items_stmt = select(func.count(Item.id)).where(and_(*item_conditions))
         total_items = (await self.db.execute(items_stmt)).scalar_one() or 0
@@ -194,7 +195,7 @@ class ApplicationDashboardService:
         """Return most ordered items by total quantity sold."""
         conditions = [
             Order.workspace_id == workspace_id,
-            Order.is_active == True,  # noqa: E712
+            Order.is_active.is_(True),  # noqa: E712
         ]
         if persona_id is not None:
             conditions.append(Order.persona_id == persona_id)
@@ -307,13 +308,23 @@ class ApplicationDashboardService:
         persona_id: Optional[int] = None,
     ) -> Dict[str, Any]:
         """Aggregate all dashboard data in one call."""
-        stats = await self.get_dashboard_stats(workspace_id, persona_id)
-        orders_by_status = await self.get_orders_by_status(workspace_id, persona_id)
-        orders_by_type = await self.get_orders_by_type(workspace_id, persona_id)
-        top_items = await self.get_top_items(workspace_id, persona_id)
-        payment_summary = await self.get_payment_summary(workspace_id, persona_id)
-        hourly_orders = await self.get_hourly_orders(workspace_id, persona_id)
-        revenue_trend = await self.get_revenue_trend(workspace_id, persona_id, days=30)
+        (
+            stats,
+            orders_by_status,
+            orders_by_type,
+            top_items,
+            payment_summary,
+            hourly_orders,
+            revenue_trend,
+        ) = await asyncio.gather(
+            self.get_dashboard_stats(workspace_id, persona_id),
+            self.get_orders_by_status(workspace_id, persona_id),
+            self.get_orders_by_type(workspace_id, persona_id),
+            self.get_top_items(workspace_id, persona_id),
+            self.get_payment_summary(workspace_id, persona_id),
+            self.get_hourly_orders(workspace_id, persona_id),
+            self.get_revenue_trend(workspace_id, persona_id, days=30),
+        )
 
         return {
             "stats": stats,

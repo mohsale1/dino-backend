@@ -5,7 +5,7 @@ Workspaces router — workspace info and billing management.
 from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from pydantic import BaseModel
+from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.application.middleware.RoleCheck import ApplicationPermissionCheck
@@ -22,13 +22,11 @@ router = APIRouter(prefix="/workspaces", tags=["Workspaces"])
 # ---------------------------------------------------------------------------
 
 class UpdateWorkspaceRequest(BaseModel):
-    name: Optional[str] = None
-    description: Optional[str] = None
+    name: Optional[str] = Field(None, max_length=200)
+    description: Optional[str] = Field(None, max_length=500)
 
 
 class UpdateWorkspaceBillingRequest(BaseModel):
-    plan: Optional[str] = None
-    plan_status: Optional[str] = None
     billing_cycle: Optional[str] = None
     billing_email: Optional[str] = None
     billing_name: Optional[str] = None
@@ -43,15 +41,15 @@ class UpdateWorkspaceBillingRequest(BaseModel):
 class UpsertBillingDetailRequest(BaseModel):
     legal_name: Optional[str] = None
     trade_name: Optional[str] = None
-    gstin: Optional[str] = None
-    pan: Optional[str] = None
-    billing_email: Optional[str] = None
-    billing_phone: Optional[str] = None
-    address_line1: Optional[str] = None
-    city: Optional[str] = None
-    state: Optional[str] = None
-    country: Optional[str] = None
-    postal_code: Optional[str] = None
+    gstin: Optional[str] = Field(None, max_length=15)
+    pan: Optional[str] = Field(None, max_length=10)
+    billing_email: Optional[EmailStr] = None
+    billing_phone: Optional[str] = Field(None, max_length=30)
+    address_line1: Optional[str] = Field(None, max_length=255)
+    city: Optional[str] = Field(None, max_length=100)
+    state: Optional[str] = Field(None, max_length=100)
+    country: Optional[str] = Field(None, max_length=100)
+    postal_code: Optional[str] = Field(None, max_length=20)
 
 
 # ---------------------------------------------------------------------------
@@ -84,6 +82,8 @@ async def get_workspace(
     db: AsyncSession = Depends(get_db),
 ):
     """Get a workspace by ID."""
+    if workspace_id != current_user.get("workspace_id"):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
     repo = WorkspaceRepository(db)
     workspace = await repo.get_by_id(workspace_id)
     if not workspace:
@@ -99,6 +99,8 @@ async def update_workspace(
     db: AsyncSession = Depends(get_db),
 ):
     """Update workspace details."""
+    if workspace_id != current_user.get("workspace_id"):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
     repo = WorkspaceRepository(db)
     existing = await repo.get_by_id(workspace_id)
     if not existing:
@@ -117,6 +119,8 @@ async def get_workspace_billing(
     db: AsyncSession = Depends(get_db),
 ):
     """Get workspace billing plan info."""
+    if workspace_id != current_user.get("workspace_id"):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
     service = BillingService(db)
     billing = await service.get_workspace_billing(workspace_id)
     if not billing:
@@ -132,6 +136,8 @@ async def update_workspace_billing(
     db: AsyncSession = Depends(get_db),
 ):
     """Update workspace billing plan info."""
+    if workspace_id != current_user.get("workspace_id"):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
     service = BillingService(db)
     data = request.model_dump(exclude_unset=True)
     result = await service.update_workspace_billing(workspace_id, data)
@@ -147,6 +153,8 @@ async def get_billing_detail(
     db: AsyncSession = Depends(get_db),
 ):
     """Get billing details (GST/tax info) for a workspace."""
+    if workspace_id != current_user.get("workspace_id"):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
     service = BillingService(db)
     detail = await service.get_billing_detail(workspace_id)
     return {"success": True, "message": "Billing detail retrieved successfully", "data": detail}
@@ -160,6 +168,8 @@ async def upsert_billing_detail(
     db: AsyncSession = Depends(get_db),
 ):
     """Create or update billing details for a workspace."""
+    if workspace_id != current_user.get("workspace_id"):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
     service = BillingService(db)
     data = request.model_dump(exclude_unset=True)
     result = await service.create_or_update_billing_detail(workspace_id, data)
@@ -176,6 +186,8 @@ async def get_billing_transactions(
     db: AsyncSession = Depends(get_db),
 ):
     """Get paginated billing transactions for a workspace."""
+    if workspace_id != current_user.get("workspace_id"):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
     service = BillingService(db)
     items, total, total_pages = await service.get_billing_transactions(
         workspace_id=workspace_id,

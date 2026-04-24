@@ -5,7 +5,7 @@ All methods are async and simply await the corresponding repository method,
 keeping business-logic services free of direct database concerns.
 """
 
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 from src.base.BaseRepository import BaseRepository
 
@@ -22,7 +22,7 @@ class BaseService:
 
     async def get_by_id(
         self,
-        entity_id: str,
+        entity_id: Union[str, int],
         include_deleted: bool = False,
     ) -> Optional[dict]:
         """Retrieve an entity by primary key."""
@@ -70,19 +70,19 @@ class BaseService:
             order_direction=order_direction,
         )
 
-    async def update(self, entity_id: str, data: Dict[str, Any]) -> bool:
+    async def update(self, entity_id: Union[str, int], data: Dict[str, Any]) -> bool:
         """Update an entity by primary key."""
         return await self.repository.update(entity_id, data)
 
-    async def soft_delete(self, entity_id: str) -> bool:
+    async def soft_delete(self, entity_id: Union[str, int]) -> bool:
         """Soft-delete an entity (recommended over hard delete)."""
         return await self.repository.soft_delete(entity_id)
 
-    async def restore(self, entity_id: str) -> bool:
+    async def restore(self, entity_id: Union[str, int]) -> bool:
         """Restore a soft-deleted entity."""
         return await self.repository.restore(entity_id)
 
-    async def delete(self, entity_id: str) -> bool:
+    async def delete(self, entity_id: Union[str, int]) -> bool:
         """Hard-delete an entity."""
         return await self.repository.delete(entity_id)
 

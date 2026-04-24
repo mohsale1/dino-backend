@@ -27,7 +27,7 @@ class CustomerRepository(BaseRepository):
             .where(
                 Customer.mobile == mobile,
                 Customer.workspace_id == workspace_id,
-                Customer.is_active == True,  # noqa: E712
+                Customer.is_active.is_(True),  # noqa: E712
             )
             .limit(1)
         )
@@ -39,7 +39,7 @@ class CustomerRepository(BaseRepository):
         self, workspace_id: int, page: int = 1, page_size: int = 20
     ) -> Tuple[List[Dict[str, Any]], int, int]:
         """Return paginated customers for a workspace."""
-        conditions = [Customer.workspace_id == workspace_id, Customer.is_active == True]  # noqa: E712
+        conditions = [Customer.workspace_id == workspace_id, Customer.is_active.is_(True)]  # noqa: E712
 
         count_stmt = select(func.count()).select_from(Customer).where(and_(*conditions))
         total = (await self.db.execute(count_stmt)).scalar_one() or 0

@@ -6,9 +6,9 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Optional
 
-from sqlalchemy import BigInteger, DateTime, ForeignKey, Index, Numeric, String, Text
+from sqlalchemy import BigInteger, DateTime, ForeignKey, Index, Numeric, String, Text, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
-from sqlalchemy.sql import func, text
+from sqlalchemy.sql import func
 
 from src.models.Base import Base, BigIntPrimaryKeyMixin
 
@@ -21,6 +21,7 @@ class OrderTransaction(BigIntPrimaryKeyMixin, Base):
     __table_args__ = (
         Index("ix_order_transactions_order_id", "order_id"),
         Index("ix_order_transactions_workspace_id", "workspace_id"),
+        Index("ix_order_transactions_persona_id", "persona_id"),
     )
 
     order_id: Mapped[str] = mapped_column(String(50), nullable=False)
@@ -33,8 +34,8 @@ class OrderTransaction(BigIntPrimaryKeyMixin, Base):
     persona_id: Mapped[int] = mapped_column(
         BigInteger, ForeignKey("personas.id", ondelete="RESTRICT"), nullable=False
     )
-    paid_amount: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False, server_default="0")
-    total_amount: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False, server_default="0")
+    paid_amount: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False, server_default=text("0"))
+    total_amount: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False, server_default=text("0"))
     currency: Mapped[str] = mapped_column(String(10), nullable=False, server_default=text("'INR'"))
     payment_method: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
     payment_status: Mapped[str] = mapped_column(String(30), nullable=False, server_default=text("'unpaid'"))
@@ -48,7 +49,7 @@ class OrderTransaction(BigIntPrimaryKeyMixin, Base):
     )
 
     # Relationships
-    customer: Mapped[Optional["Customer"]] = relationship("Customer", lazy="noload")  # noqa: F821
+    customer: Mapped[Optional["Customer"]] = relationship("Customer", lazy="noload", viewonly=True)  # noqa: F821
 
     def __repr__(self) -> str:
         return f"<OrderTransaction id={self.id} order_id={self.order_id!r} status={self.payment_status!r}>"

@@ -8,7 +8,7 @@ workspace_id is required for application users.
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import BigInteger, Column, DateTime, ForeignKey, Index, SmallInteger, String, Table, UniqueConstraint
+from sqlalchemy import BigInteger, Column, DateTime, ForeignKey, Index, SmallInteger, String, Table, UniqueConstraint, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from src.models.Base import Base, BigIntPrimaryKeyMixin, EntityMixin
@@ -52,8 +52,7 @@ class User(BigIntPrimaryKeyMixin, EntityMixin, Base):
     user_type: Mapped[int] = mapped_column(
         SmallInteger,
         nullable=False,
-        default=1,
-        server_default="1",
+        server_default=text("1"),
         comment="0=System, 1=Application",
     )
     email: Mapped[str] = mapped_column(String(320), nullable=False)
@@ -78,10 +77,12 @@ class User(BigIntPrimaryKeyMixin, EntityMixin, Base):
     # Relationships
     role: Mapped["Role"] = relationship(  # noqa: F821
         "Role",
+        back_populates="users",
         lazy="selectin",
     )
     workspace: Mapped[Optional["Workspace"]] = relationship(  # noqa: F821
         "Workspace",
+        foreign_keys="[User.workspace_id]",
         back_populates="users",
         lazy="noload",
     )

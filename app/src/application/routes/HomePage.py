@@ -5,7 +5,7 @@ All endpoints are unauthenticated and return live data from the database.
 
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -16,7 +16,6 @@ from src.models.Item import Item
 from src.models.OrderDetail import OrderDetail
 from src.models.Persona import Persona
 from src.models.Review import Review
-from src.models.User import User
 from src.models.Workspace import Workspace
 from src.repositories.ReviewRepository import ReviewRepository
 
@@ -39,29 +38,27 @@ async def get_homepage_stats(
     - total_items: count of active items
     - average_rating: average rating from all approved + active reviews
     """
-    # Run all count queries concurrently via individual awaits (sequential is fine
-    # here since each is a single scalar — no N+1 concern).
     total_workspaces = (
         await db.execute(
-            select(func.count(Workspace.id)).where(Workspace.is_active == True)  # noqa: E712
+            select(func.count(Workspace.id)).where(Workspace.is_active.is_(True))
         )
     ).scalar_one() or 0
 
     total_orders = (
         await db.execute(
-            select(func.count(OrderDetail.id)).where(OrderDetail.is_active == True)  # noqa: E712
+            select(func.count(OrderDetail.id)).where(OrderDetail.is_active.is_(True))
         )
     ).scalar_one() or 0
 
     total_customers = (
         await db.execute(
-            select(func.count(Customer.id)).where(Customer.is_active == True)  # noqa: E712
+            select(func.count(Customer.id)).where(Customer.is_active.is_(True))
         )
     ).scalar_one() or 0
 
     total_items = (
         await db.execute(
-            select(func.count(Item.id)).where(Item.is_active == True)  # noqa: E712
+            select(func.count(Item.id)).where(Item.is_active.is_(True))
         )
     ).scalar_one() or 0
 
@@ -98,11 +95,10 @@ async def get_homepage_reviews(
     Ordered by created_at DESC.
     """
     if workspace_id is None:
-        return {
-            "success": True,
-            "message": "Homepage reviews retrieved successfully",
-            "data": [],
-        }
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="workspace_id is required",
+        )
     review_repo = ReviewRepository(db)
     reviews = await review_repo.get_approved_reviews(
         workspace_id=workspace_id,
@@ -114,7 +110,6 @@ async def get_homepage_reviews(
         "message": "Homepage reviews retrieved successfully",
         "data": reviews,
     }
-
 
 
 # ---------------------------------------------------------------------------
@@ -156,9 +151,9 @@ async def get_featured_personas(
         .join(Workspace, Persona.workspace_id == Workspace.id)
         .where(
             and_(
-                Persona.is_active == True,        # noqa: E712
-                Persona.is_open == True,           # noqa: E712
-                Persona.is_deactivated == False,   # noqa: E712
+                Persona.is_active.is_(True),
+                Persona.is_open.is_(True),
+                Persona.is_deactivated.is_(False),
             )
         )
         .order_by(Persona.created_at.desc())

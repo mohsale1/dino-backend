@@ -1,39 +1,40 @@
 from datetime import datetime
-from typing import Optional
+from typing import Literal, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
 
 class BillingDetailCreate(BaseModel):
-    workspace_id: int
-    legal_name: Optional[str] = None
-    trade_name: Optional[str] = None
-    gstin: Optional[str] = None
-    pan: Optional[str] = None
-    billing_email: Optional[str] = None
-    billing_phone: Optional[str] = None
-    address_line1: Optional[str] = None
-    city: Optional[str] = None
-    state: Optional[str] = None
-    country: Optional[str] = None
-    postal_code: Optional[str] = None
+    legal_name: Optional[str] = Field(None, max_length=200)
+    trade_name: Optional[str] = Field(None, max_length=200)
+    gstin: Optional[str] = Field(None, max_length=15, pattern=r'^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1}$')
+    pan: Optional[str] = Field(None, max_length=10, pattern=r'^[A-Z]{5}[0-9]{4}[A-Z]{1}$')
+    billing_email: Optional[EmailStr] = None
+    billing_phone: Optional[str] = Field(None, max_length=30, pattern=r'^\+?[0-9\s\-\(\)]{7,30}$')
+    address_line1: Optional[str] = Field(None, max_length=300)
+    city: Optional[str] = Field(None, max_length=100)
+    state: Optional[str] = Field(None, max_length=100)
+    country: Optional[str] = Field(None, max_length=100)
+    postal_code: Optional[str] = Field(None, max_length=20)
 
 
 class BillingDetailUpdate(BaseModel):
-    legal_name: Optional[str] = None
-    trade_name: Optional[str] = None
-    gstin: Optional[str] = None
-    pan: Optional[str] = None
-    billing_email: Optional[str] = None
-    billing_phone: Optional[str] = None
-    address_line1: Optional[str] = None
-    city: Optional[str] = None
-    state: Optional[str] = None
-    country: Optional[str] = None
-    postal_code: Optional[str] = None
+    legal_name: Optional[str] = Field(None, max_length=200)
+    trade_name: Optional[str] = Field(None, max_length=200)
+    gstin: Optional[str] = Field(None, max_length=15, pattern=r'^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1}$')
+    pan: Optional[str] = Field(None, max_length=10, pattern=r'^[A-Z]{5}[0-9]{4}[A-Z]{1}$')
+    billing_email: Optional[EmailStr] = None
+    billing_phone: Optional[str] = Field(None, max_length=30, pattern=r'^\+?[0-9\s\-\(\)]{7,30}$')
+    address_line1: Optional[str] = Field(None, max_length=300)
+    city: Optional[str] = Field(None, max_length=100)
+    state: Optional[str] = Field(None, max_length=100)
+    country: Optional[str] = Field(None, max_length=100)
+    postal_code: Optional[str] = Field(None, max_length=20)
 
 
 class BillingDetailResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     id: int
     workspace_id: int
     legal_name: Optional[str] = None
@@ -50,9 +51,6 @@ class BillingDetailResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
 
-    class Config:
-        from_attributes = True
-
 
 class BillingTransactionCreate(BaseModel):
     workspace_id: int
@@ -61,7 +59,7 @@ class BillingTransactionCreate(BaseModel):
     currency: str = Field(default="INR", max_length=10)
     billing_period_start: datetime
     billing_period_end: datetime
-    payment_status: str = Field(default="pending", max_length=30)
+    payment_status: Literal['pending', 'paid', 'failed', 'refunded'] = 'pending'
     payment_method: Optional[str] = None
     payment_ref: Optional[str] = None
     invoice_number: Optional[str] = None
@@ -69,7 +67,7 @@ class BillingTransactionCreate(BaseModel):
 
 
 class BillingTransactionUpdate(BaseModel):
-    payment_status: Optional[str] = Field(None, max_length=30)
+    payment_status: Optional[Literal['pending', 'paid', 'failed', 'refunded']] = None
     paid_amount: Optional[float] = Field(None, ge=0)
     payment_method: Optional[str] = None
     payment_ref: Optional[str] = None
@@ -78,6 +76,8 @@ class BillingTransactionUpdate(BaseModel):
 
 
 class BillingTransactionResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     id: int
     workspace_id: int
     plan: str
@@ -94,6 +94,3 @@ class BillingTransactionResponse(BaseModel):
     notes: Optional[str] = None
     created_at: datetime
     updated_at: datetime
-
-    class Config:
-        from_attributes = True

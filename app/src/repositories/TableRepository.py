@@ -35,7 +35,7 @@ class TableRepository(BaseRepository):
         page_size: int = 20,
     ) -> Tuple[List[Dict[str, Any]], int, int]:
         """Return paginated tables for a workspace with optional filters."""
-        conditions = [Table.workspace_id == workspace_id, Table.is_active == True]  # noqa: E712
+        conditions = [Table.workspace_id == workspace_id, Table.is_active.is_(True)]
 
         if area_id is not None:
             conditions.append(Table.area_id == area_id)
@@ -63,10 +63,12 @@ class TableRepository(BaseRepository):
             func.count(case((Table.status == "available", 1))).label("available"),
             func.count(case((Table.status == "occupied", 1))).label("occupied"),
             func.count(case((Table.status == "reserved", 1))).label("reserved"),
-            func.count(case((Table.is_active == False, 1))).label("inactive"),  # noqa: E712
+            func.count(case((Table.is_active.is_(False), 1))).label("inactive")
         ).where(Table.workspace_id == workspace_id)
 
-        row = (await self.db.execute(stmt)).one()
+        row = (await self.db.execute(stmt)).one_or_none()
+        if row is None:
+            return {"available": 0, "occupied": 0, "reserved": 0, "inactive": 0}
         return {
             "available": row.available,
             "occupied": row.occupied,

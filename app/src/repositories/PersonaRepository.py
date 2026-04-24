@@ -32,7 +32,7 @@ class PersonaRepository(BaseRepository):
         """Return paginated personas for a workspace."""
         conditions = [Persona.workspace_id == workspace_id]
         if not include_deleted:
-            conditions.append(Persona.is_active == True)  # noqa: E712
+            conditions.append(Persona.is_active.is_(True))  # noqa: E712
 
         count_stmt = select(func.count()).select_from(Persona).where(and_(*conditions))
         total = (await self.db.execute(count_stmt)).scalar_one() or 0

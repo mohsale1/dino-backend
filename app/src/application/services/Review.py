@@ -4,7 +4,6 @@ ReviewService — business logic for the reviews resource.
 
 from typing import Any, Dict, List, Optional, Tuple
 
-from fastapi import HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.base.BaseService import BaseService
@@ -30,13 +29,6 @@ class ReviewService(BaseService):
         Reviews are always created with is_approved=False and require
         explicit approval before appearing on the homepage.
         """
-        rating = data.get("rating", 5)
-        if not (1 <= int(rating) <= 5):
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail="Rating must be between 1 and 5.",
-            )
-
         payload = {**data, "is_approved": False}
         payload.setdefault("is_active", True)
 
@@ -44,16 +36,8 @@ class ReviewService(BaseService):
 
     async def update_review(self, review_id: int, data: Dict[str, Any]) -> bool:
         """Update allowed fields on an existing review."""
-        allowed_fields = {"rating", "comment", "is_approved", "is_active"}
-        update_data = {k: v for k, v in data.items() if k in allowed_fields and v is not None}
-
-        if "rating" in update_data:
-            rating = int(update_data["rating"])
-            if not (1 <= rating <= 5):
-                raise HTTPException(
-                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                    detail="Rating must be between 1 and 5.",
-                )
+        allowed_fields = {"rating", "comment", "is_approved"}
+        update_data = {k: v for k, v in data.items() if k in allowed_fields}
 
         if not update_data:
             return False

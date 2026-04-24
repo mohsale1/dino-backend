@@ -21,12 +21,12 @@ class Table(BigIntPrimaryKeyMixin, EntityMixin, Base):
     )
 
     table_number: Mapped[str] = mapped_column(String(50), nullable=False)
-    capacity: Mapped[int] = mapped_column(Integer, nullable=False, server_default="4")
+    capacity: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("4"))
     status: Mapped[str] = mapped_column(
         String(30), nullable=False, server_default=text("'available'"),
         comment="available | occupied | reserved | inactive",
     )
-    display_order: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    display_order: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
     workspace_id: Mapped[int] = mapped_column(
         BigInteger,
         ForeignKey("workspaces.id", ondelete="CASCADE"),

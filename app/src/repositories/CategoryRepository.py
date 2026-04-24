@@ -31,7 +31,7 @@ class CategoryRepository(BaseRepository):
         page_size: int = 20,
     ) -> Tuple[List[Dict[str, Any]], int, int]:
         """Return paginated categories for a workspace with optional filters."""
-        conditions = [Category.workspace_id == workspace_id, Category.is_active == True]  # noqa: E712
+        conditions = [Category.workspace_id == workspace_id, Category.is_active.is_(True)]  # noqa: E712
 
         if persona_id is not None:
             conditions.append(Category.persona_id == persona_id)

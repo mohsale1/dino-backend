@@ -3,15 +3,16 @@ Orders router — CRUD for order_details, order line items, and transactions.
 """
 
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.application.middleware.RoleCheck import ApplicationPermissionCheck
 from src.application.services.Order import OrderService
 from src.application.services.OrderTransaction import OrderTransactionService
+from src.application.services.Persona import PersonaService
 from src.base.BaseSchema import BaseResponse
 from src.config.Database import get_db
 
@@ -24,11 +25,10 @@ router = APIRouter(prefix="/orders", tags=["Orders"])
 
 class OrderItemIn(BaseModel):
     item_id: int
-    quantity: int = 1
+    quantity: int = Field(1, ge=1)
 
 
 class CreateOrderRequest(BaseModel):
-    workspace_id: int
     persona_id: int
     order_type: str = "dine_in"
     customer_id: Optional[int] = None
@@ -40,15 +40,14 @@ class CreateOrderRequest(BaseModel):
     tax_amount: Optional[float] = 0.0
     service_charge: Optional[float] = 0.0
     discount_amount: Optional[float] = 0.0
-    items: List[OrderItemIn]
+    items: List[OrderItemIn] = Field(..., min_length=1)
 
 
 class UpdateStatusRequest(BaseModel):
-    status: str
+    status: Literal["pending", "confirmed", "preparing", "ready", "completed", "cancelled"]
 
 
 class CreateTransactionRequest(BaseModel):
-    workspace_id: int
     persona_id: int
     customer_id: Optional[int] = None
     paid_amount: float = 0.0
@@ -80,8 +79,19 @@ async def create_order(
     db: AsyncSession = Depends(get_db),
 ):
     """Create a new order with line items atomically."""
+    workspace_id = current_user.get("workspace_id")
+
+    # Validate persona belongs to the caller's workspace
+    persona_service = PersonaService(db)
+    persona = await persona_service.get_by_id(request.persona_id)
+    if not persona:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Persona not found or access denied")
+    if persona.get("workspace_id") != workspace_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Persona does not belong to your workspace")
+
     service = OrderService(db)
     data = request.model_dump()
+    data["workspace_id"] = workspace_id
     data["items"] = [i.model_dump() for i in request.items]
     data["created_by"] = current_user.get("id")
     try:
@@ -93,7 +103,6 @@ async def create_order(
 
 @router.get("/statistics", response_model=BaseResponse)
 async def get_order_statistics(
-    workspace_id: Optional[int] = Query(None),
     persona_id: Optional[int] = Query(None),
     start_date: Optional[datetime] = Query(None),
     end_date: Optional[datetime] = Query(None),
@@ -101,7 +110,7 @@ async def get_order_statistics(
     db: AsyncSession = Depends(get_db),
 ):
     """Get aggregated order statistics."""
-    wid = workspace_id or current_user.get("workspace_id")
+    wid = current_user.get("workspace_id")
     if not wid:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="workspace_id required")
     service = OrderService(db)
@@ -116,7 +125,6 @@ async def get_order_statistics(
 
 @router.get("/transactions", response_model=BaseResponse)
 async def get_transactions(
-    workspace_id: Optional[int] = Query(None),
     persona_id: Optional[int] = Query(None),
     payment_status: Optional[str] = Query(None),
     start_date: Optional[datetime] = Query(None),
@@ -127,7 +135,7 @@ async def get_transactions(
     db: AsyncSession = Depends(get_db),
 ):
     """Get paginated order transactions."""
-    wid = workspace_id or current_user.get("workspace_id")
+    wid = current_user.get("workspace_id")
     if not wid:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="workspace_id required")
     service = OrderTransactionService(db)
@@ -167,6 +175,8 @@ async def update_transaction(
     existing = await service.get_by_id(transaction_id)
     if not existing:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Transaction not found")
+    if existing.get("workspace_id") != current_user.get("workspace_id"):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
     data = request.model_dump(exclude_unset=True)
     success = await service.update_transaction(transaction_id, data)
     if not success:
@@ -226,6 +236,8 @@ async def get_order(
     order = await service.get_order_with_items(order_id)
     if not order:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Order not found")
+    if order.get("workspace_id") != current_user.get("workspace_id"):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
     return {"success": True, "message": "Order retrieved successfully", "data": order}
 
 
@@ -238,6 +250,11 @@ async def update_order_status(
 ):
     """Update the status of an order."""
     service = OrderService(db)
+    order = await service.get_order_with_items(order_id)
+    if not order:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Order not found")
+    if order.get("workspace_id") != current_user.get("workspace_id"):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
     success = await service.update_order_status(order_id, request.status)
     if not success:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Order not found")
@@ -252,6 +269,11 @@ async def cancel_order(
 ):
     """Cancel an order."""
     service = OrderService(db)
+    order = await service.get_order_with_items(order_id)
+    if not order:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Order not found")
+    if order.get("workspace_id") != current_user.get("workspace_id"):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
     success = await service.cancel_order(order_id)
     if not success:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Order not found")
@@ -266,6 +288,11 @@ async def get_order_items(
 ):
     """Get all line items for an order."""
     service = OrderService(db)
+    order = await service.get_order_with_items(order_id)
+    if not order:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Order not found")
+    if order.get("workspace_id") != current_user.get("workspace_id"):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
     items = await service.get_order_items(order_id)
     return {"success": True, "message": "Order items retrieved successfully", "data": items}
 
@@ -274,18 +301,23 @@ async def get_order_items(
 async def create_transaction(
     order_id: str,
     request: CreateTransactionRequest,
-    current_user: Dict[str, Any] = Depends(ApplicationPermissionCheck.require("orders:create")),
+    current_user: Dict[str, Any] = Depends(ApplicationPermissionCheck.require("orders:payment")),
     db: AsyncSession = Depends(get_db),
 ):
     """Create a payment transaction for an order."""
-    # Verify order exists
+    workspace_id = current_user.get("workspace_id")
+
+    # Verify order exists and belongs to the caller's workspace
     order_service = OrderService(db)
     order = await order_service.get_order_with_items(order_id)
     if not order:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Order not found")
+    if order.get("workspace_id") != workspace_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
 
     tx_service = OrderTransactionService(db)
     data = request.model_dump()
+    data["workspace_id"] = workspace_id
     data["order_id"] = order_id
     transaction = await tx_service.create_transaction(data)
     return {"success": True, "message": "Transaction created successfully", "data": transaction}
@@ -298,6 +330,12 @@ async def get_order_transaction(
     db: AsyncSession = Depends(get_db),
 ):
     """Get the payment transaction for an order."""
+    order_service = OrderService(db)
+    order = await order_service.get_order_with_items(order_id)
+    if not order:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Order not found")
+    if order.get("workspace_id") != current_user.get("workspace_id"):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
     service = OrderTransactionService(db)
     transaction = await service.get_transaction_by_order(order_id)
     if not transaction:

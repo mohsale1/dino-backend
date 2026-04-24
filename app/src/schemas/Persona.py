@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Optional
 
-from pydantic import BaseModel, Field
+from pydantic import AnyHttpUrl, BaseModel, ConfigDict, EmailStr, Field
 
 
 class PersonaBase(BaseModel):
@@ -9,18 +9,17 @@ class PersonaBase(BaseModel):
     description: Optional[str] = None
     persona_type: int = Field(default=0, ge=0, le=1)
     order_type: int = Field(default=0, ge=0, le=1)
-    workspace_id: int
 
 
 class PersonaCreate(PersonaBase):
-    logo_url: Optional[str] = None
-    address: Optional[str] = None
-    city: Optional[str] = None
-    state: Optional[str] = None
-    country: Optional[str] = None
-    postal_code: Optional[str] = None
-    phone: Optional[str] = None
-    email: Optional[str] = None
+    logo_url: Optional[AnyHttpUrl] = None
+    address: Optional[str] = Field(None, max_length=500)
+    city: Optional[str] = Field(None, max_length=100)
+    state: Optional[str] = Field(None, max_length=100)
+    country: Optional[str] = Field(None, max_length=100)
+    postal_code: Optional[str] = Field(None, max_length=20)
+    phone: Optional[str] = Field(None, max_length=30, pattern=r'^\+?[0-9\s\-\(\)]{7,30}$')
+    email: Optional[EmailStr] = None
 
 
 class PersonaUpdate(BaseModel):
@@ -28,17 +27,15 @@ class PersonaUpdate(BaseModel):
     description: Optional[str] = None
     persona_type: Optional[int] = Field(None, ge=0, le=1)
     order_type: Optional[int] = Field(None, ge=0, le=1)
-    logo_url: Optional[str] = None
-    address: Optional[str] = None
-    city: Optional[str] = None
-    state: Optional[str] = None
-    country: Optional[str] = None
-    postal_code: Optional[str] = None
-    phone: Optional[str] = None
-    email: Optional[str] = None
-    is_active: Optional[bool] = None
+    logo_url: Optional[AnyHttpUrl] = None
+    address: Optional[str] = Field(None, max_length=500)
+    city: Optional[str] = Field(None, max_length=100)
+    state: Optional[str] = Field(None, max_length=100)
+    country: Optional[str] = Field(None, max_length=100)
+    postal_code: Optional[str] = Field(None, max_length=20)
+    phone: Optional[str] = Field(None, max_length=30, pattern=r'^\+?[0-9\s\-\(\)]{7,30}$')
+    email: Optional[EmailStr] = None
     is_open: Optional[bool] = None
-    is_deactivated: Optional[bool] = None
 
 
 class PersonaResponse(BaseModel):
@@ -62,5 +59,4 @@ class PersonaResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)

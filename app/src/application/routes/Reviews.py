@@ -11,7 +11,6 @@ from src.application.middleware.RoleCheck import ApplicationPermissionCheck
 from src.application.services.Review import ReviewService
 from src.base.BaseSchema import BaseResponse, PaginatedResponse, PaginationMeta
 from src.config.Database import get_db
-from src.core.Dependencies import get_current_user
 from src.schemas.Review import ReviewCreate, ReviewResponse, ReviewUpdate
 
 router = APIRouter(prefix="/reviews", tags=["Reviews"])
@@ -145,6 +144,8 @@ async def get_review(
     review = await service.get_by_id(review_id)
     if not review:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Review not found")
+    if review.get("workspace_id") != current_user.get("workspace_id"):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
     return {"success": True, "message": "Review retrieved successfully", "data": review}
 
 
@@ -164,8 +165,11 @@ async def update_review(
     existing = await service.get_by_id(review_id)
     if not existing:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Review not found")
+    if existing.get("workspace_id") != current_user.get("workspace_id"):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
 
     data = body.model_dump(exclude_unset=True)
+    data.pop("is_approved", None)
     if not data:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No fields to update")
 
@@ -190,6 +194,8 @@ async def approve_review(
     existing = await service.get_by_id(review_id)
     if not existing:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Review not found")
+    if existing.get("workspace_id") != current_user.get("workspace_id"):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
 
     success = await service.approve_review(review_id)
     if not success:
@@ -212,6 +218,8 @@ async def unapprove_review(
     existing = await service.get_by_id(review_id)
     if not existing:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Review not found")
+    if existing.get("workspace_id") != current_user.get("workspace_id"):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
 
     success = await service.unapprove_review(review_id)
     if not success:
@@ -234,6 +242,8 @@ async def delete_review(
     existing = await service.get_by_id(review_id)
     if not existing:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Review not found")
+    if existing.get("workspace_id") != current_user.get("workspace_id"):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
 
     success = await service.soft_delete_review(review_id)
     if not success:
@@ -256,6 +266,8 @@ async def restore_review(
     existing = await service.get_by_id(review_id, include_deleted=True)
     if not existing:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Review not found")
+    if existing.get("workspace_id") != current_user.get("workspace_id"):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
     if existing.get("is_active", True):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,

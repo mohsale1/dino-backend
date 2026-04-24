@@ -1,6 +1,9 @@
+import logging
 from typing import Any, Dict, List, Optional
 
 from fastapi import HTTPException, status
+
+logger = logging.getLogger(__name__)
 
 # Actions that `resource:manage` implicitly covers.
 _MANAGE_IMPLIES: frozenset = frozenset({"read", "create", "update", "delete"})
@@ -95,9 +98,14 @@ class BaseRoleCheck:
                 detail="Not authenticated",
             )
         if not BaseRoleCheck.check_permission(user, required_permission):
+            logger.warning(
+                "Permission denied for user '%s': '%s' is required",
+                user.get("id"),
+                required_permission,
+            )
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"Permission denied: '{required_permission}' is required",
+                detail="You do not have permission to perform this action.",
             )
 
     @staticmethod
@@ -121,7 +129,12 @@ class BaseRoleCheck:
                 detail="Not authenticated",
             )
         if not BaseRoleCheck.check_any_permission(user, required_permissions):
+            logger.warning(
+                "Permission denied for user '%s': one of %s is required",
+                user.get("id"),
+                required_permissions,
+            )
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"Permission denied: one of {required_permissions} is required",
+                detail="You do not have permission to perform this action.",
             )

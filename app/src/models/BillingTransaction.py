@@ -45,7 +45,7 @@ class BillingTransaction(BigIntPrimaryKeyMixin, Base):
     last_paid_at: Mapped[Optional[datetime]] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
-    paid_amount: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False, server_default="0")
+    paid_amount: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False, server_default=text("0"))
     notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()

@@ -1,5 +1,5 @@
 from pydantic import BaseModel, ConfigDict, Field
-from typing import Optional, Any, List, Generic, TypeVar
+from typing import Optional, Any, List, Generic, Literal, TypeVar
 
 T = TypeVar('T')
 
@@ -26,7 +26,7 @@ class PaginationParams(BaseSchema):
     page: int = Field(1, ge=1, description="Page number")
     page_size: int = Field(10, ge=1, le=100, description="Items per page")
     order_by: Optional[str] = Field(None, description="Field to order by")
-    order_direction: str = Field("asc", description="Order direction (asc/desc)")
+    order_direction: Literal['asc', 'desc'] = Field('asc', description='Order direction: asc or desc')
 
 class PaginationMeta(BaseSchema):
     """Pagination metadata"""

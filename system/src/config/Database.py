@@ -31,13 +31,18 @@ def _normalize_db_url(url: str) -> tuple:
     import ssl as _ssl
     from urllib.parse import urlparse, urlunparse
 
-    # 1. Fix the scheme
-    for prefix in ("postgresql+psycopg2://", "postgresql://", "postgres://"):
+    # 1. Normalise scheme — covers all common variants incl. already-correct ones
+    for prefix in (
+        "postgresql+psycopg2://",
+        "postgresql+asyncpg://",
+        "postgresql://",
+        "postgres://",
+    ):
         if url.startswith(prefix):
             url = "postgresql+asyncpg://" + url[len(prefix):]
             break
 
-    # 2. Extract and strip ALL query parameters — asyncpg ignores them anyway
+    # 2. Extract and strip ALL query parameters — asyncpg rejects them
     parsed = urlparse(url)
     query = parsed.query or ""
     params = {}
@@ -62,16 +67,13 @@ def _normalize_db_url(url: str) -> tuple:
     return clean_url, connect_args
 
 
-
-
-
 async def initialize_db() -> None:
     """Create the async engine and session factory."""
     global engine, async_session_factory
 
     db_url, connect_args = _normalize_db_url(settings.DATABASE_URL)
     parsed = urlparse(db_url)
-    logger.info("Connecting to PostgreSQL...")
+    logger.info("Connecting to PostgreSQL (application DB)...")
     logger.info(f"   Host: {parsed.hostname}:{parsed.port}")
     logger.info(f"   Database: {parsed.path.lstrip('/')}")
 
@@ -91,9 +93,7 @@ async def initialize_db() -> None:
         expire_on_commit=False,
     )
 
-    logger.info("PostgreSQL engine initialised successfully.")
-
-
+    logger.info("PostgreSQL application engine initialised successfully.")
 
 
 async def get_db() -> AsyncGenerator[AsyncSession, None]:
@@ -120,4 +120,4 @@ async def close_db() -> None:
         await engine.dispose()
         engine = None
         async_session_factory = None
-        logger.info("PostgreSQL engine disposed.")
+        logger.info("PostgreSQL application engine disposed.")

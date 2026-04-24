@@ -59,7 +59,7 @@ class CustomerService(BaseService):
         """Return paginated customers with optional search."""
         conditions = [
             Customer.workspace_id == workspace_id,
-            Customer.is_active == True,  # noqa: E712
+            Customer.is_active.is_(True),  # noqa: E712
         ]
         if persona_id is not None:
             conditions.append(Customer.persona_id == persona_id)
@@ -97,7 +97,7 @@ class CustomerService(BaseService):
         """Return paginated order_details for a customer."""
         conditions = [
             OrderDetail.customer_id == customer_id,
-            OrderDetail.is_active == True,  # noqa: E712
+            OrderDetail.is_active.is_(True),  # noqa: E712
         ]
         where_expr = and_(*conditions)
 

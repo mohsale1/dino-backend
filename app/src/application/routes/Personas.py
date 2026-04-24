@@ -5,7 +5,7 @@ Personas router — CRUD for persona (outlet/branch) profiles.
 from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from pydantic import BaseModel
+from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.application.middleware.RoleCheck import ApplicationPermissionCheck
@@ -21,33 +21,32 @@ router = APIRouter(prefix="/personas", tags=["Personas"])
 # ---------------------------------------------------------------------------
 
 class CreatePersonaRequest(BaseModel):
-    name: str
+    name: str = Field(..., min_length=1, max_length=200)
     description: Optional[str] = None
-    workspace_id: Optional[int] = None
     persona_type: int = 0
     order_type: int = 0
-    address: Optional[str] = None
-    city: Optional[str] = None
-    state: Optional[str] = None
-    country: Optional[str] = None
-    postal_code: Optional[str] = None
-    phone: Optional[str] = None
-    email: Optional[str] = None
+    address: Optional[str] = Field(None, max_length=500)
+    city: Optional[str] = Field(None, max_length=100)
+    state: Optional[str] = Field(None, max_length=100)
+    country: Optional[str] = Field(None, max_length=100)
+    postal_code: Optional[str] = Field(None, max_length=20)
+    phone: Optional[str] = Field(None, max_length=30)
+    email: Optional[EmailStr] = None
     is_open: bool = False
 
 
 class UpdatePersonaRequest(BaseModel):
-    name: Optional[str] = None
+    name: Optional[str] = Field(None, min_length=1, max_length=200)
     description: Optional[str] = None
     persona_type: Optional[int] = None
     order_type: Optional[int] = None
-    address: Optional[str] = None
-    city: Optional[str] = None
-    state: Optional[str] = None
-    country: Optional[str] = None
-    postal_code: Optional[str] = None
-    phone: Optional[str] = None
-    email: Optional[str] = None
+    address: Optional[str] = Field(None, max_length=500)
+    city: Optional[str] = Field(None, max_length=100)
+    state: Optional[str] = Field(None, max_length=100)
+    country: Optional[str] = Field(None, max_length=100)
+    postal_code: Optional[str] = Field(None, max_length=20)
+    phone: Optional[str] = Field(None, max_length=30)
+    email: Optional[EmailStr] = None
 
 
 class ToggleOpenRequest(BaseModel):
@@ -100,7 +99,7 @@ async def create_persona(
     db: AsyncSession = Depends(get_db),
 ):
     """Create a new persona and link it to the workspace."""
-    wid = request.workspace_id or current_user.get("workspace_id")
+    wid = current_user.get("workspace_id")
     if not wid:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="workspace_id required")
     service = PersonaService(db)
@@ -121,6 +120,8 @@ async def get_persona(
     persona = await service.get_by_id(persona_id)
     if not persona:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Persona not found")
+    if persona.get("workspace_id") != current_user.get("workspace_id"):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
     return {"success": True, "message": "Persona retrieved successfully", "data": persona}
 
 
@@ -136,6 +137,8 @@ async def update_persona(
     existing = await service.get_by_id(persona_id)
     if not existing:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Persona not found")
+    if existing.get("workspace_id") != current_user.get("workspace_id"):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
     data = request.model_dump(exclude_unset=True)
     success = await service.update_persona(persona_id, data)
     if not success:
@@ -155,6 +158,8 @@ async def toggle_persona_open(
     existing = await service.get_by_id(persona_id)
     if not existing:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Persona not found")
+    if existing.get("workspace_id") != current_user.get("workspace_id"):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
     success = await service.toggle_open(persona_id, request.is_open)
     if not success:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Persona not found")
@@ -172,6 +177,8 @@ async def delete_persona(
     existing = await service.get_by_id(persona_id)
     if not existing:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Persona not found")
+    if existing.get("workspace_id") != current_user.get("workspace_id"):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
     success = await service.soft_delete_persona(persona_id)
     if not success:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Persona not found")
@@ -189,6 +196,8 @@ async def restore_persona(
     existing = await service.get_by_id(persona_id, include_deleted=True)
     if not existing:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Persona not found")
+    if existing.get("workspace_id") != current_user.get("workspace_id"):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
     if existing.get("is_active", False):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Persona is not deleted")
     success = await service.restore_persona(persona_id)

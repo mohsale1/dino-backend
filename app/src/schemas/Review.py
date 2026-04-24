@@ -13,21 +13,19 @@ from src.base.BaseSchema import BaseSchema
 class ReviewCreate(BaseSchema):
     """Payload for creating a new review."""
 
-    # workspace_id is optional in the request body — resolved from current_user in the route
-    workspace_id: Optional[int] = None
+    # workspace_id and user_id are always injected server-side from current_user in the route
     persona_id: Optional[int] = None
-    user_id: Optional[int] = None
     rating: int = Field(default=5, ge=1, le=5, description="Star rating from 1 to 5")
-    comment: Optional[str] = None
+    comment: Optional[str] = Field(default=None, max_length=2000)
 
 
 class ReviewUpdate(BaseSchema):
     """Payload for updating an existing review (all fields optional)."""
 
+    # is_active is managed exclusively via delete/restore endpoints
     rating: Optional[int] = Field(default=None, ge=1, le=5, description="Star rating from 1 to 5")
-    comment: Optional[str] = None
+    comment: Optional[str] = Field(default=None, max_length=2000)
     is_approved: Optional[bool] = None
-    is_active: Optional[bool] = None
 
 
 class ReviewResponse(BaseSchema):

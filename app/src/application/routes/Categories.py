@@ -5,7 +5,7 @@ Categories router — CRUD for menu categories.
 from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.application.middleware.RoleCheck import ApplicationPermissionCheck
@@ -21,9 +21,8 @@ router = APIRouter(prefix="/categories", tags=["Categories"])
 # ---------------------------------------------------------------------------
 
 class CreateCategoryRequest(BaseModel):
-    name: str
-    description: Optional[str] = None
-    workspace_id: Optional[int] = None
+    name: str = Field(..., min_length=1, max_length=200)
+    description: Optional[str] = Field(None, max_length=500)
     persona_id: Optional[int] = None
     image_url: Optional[str] = None
     is_available: bool = True
@@ -31,8 +30,8 @@ class CreateCategoryRequest(BaseModel):
 
 
 class UpdateCategoryRequest(BaseModel):
-    name: Optional[str] = None
-    description: Optional[str] = None
+    name: Optional[str] = Field(None, min_length=1, max_length=200)
+    description: Optional[str] = Field(None, max_length=500)
     persona_id: Optional[int] = None
     image_url: Optional[str] = None
     is_available: Optional[bool] = None
@@ -87,7 +86,7 @@ async def create_category(
     db: AsyncSession = Depends(get_db),
 ):
     """Create a new category."""
-    wid = request.workspace_id or current_user.get("workspace_id")
+    wid = current_user.get("workspace_id")
     if not wid:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="workspace_id required")
     service = CategoryService(db)
@@ -108,6 +107,8 @@ async def get_category(
     category = await service.get_by_id(category_id)
     if not category:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Category not found")
+    if category.get("workspace_id") != current_user.get("workspace_id"):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
     return {"success": True, "message": "Category retrieved successfully", "data": category}
 
 
@@ -123,6 +124,8 @@ async def update_category(
     existing = await service.get_by_id(category_id)
     if not existing:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Category not found")
+    if existing.get("workspace_id") != current_user.get("workspace_id"):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
     data = request.model_dump(exclude_unset=True)
     success = await service.update_category(category_id, data)
     if not success:
@@ -141,6 +144,8 @@ async def delete_category(
     existing = await service.get_by_id(category_id)
     if not existing:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Category not found")
+    if existing.get("workspace_id") != current_user.get("workspace_id"):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
     success = await service.soft_delete_category(category_id)
     if not success:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Category not found")
@@ -158,6 +163,8 @@ async def restore_category(
     existing = await service.get_by_id(category_id, include_deleted=True)
     if not existing:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Category not found")
+    if existing.get("workspace_id") != current_user.get("workspace_id"):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
     if existing.get("is_active", False):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Category is not deleted")
     success = await service.restore_category(category_id)

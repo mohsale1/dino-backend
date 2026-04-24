@@ -39,7 +39,7 @@ class WorkspaceRepository(BaseRepository):
             conditions.append(Workspace.is_active == is_active)
         else:
             # Default: only active workspaces
-            conditions.append(Workspace.is_active == True)  # noqa: E712
+            conditions.append(Workspace.is_active.is_(True))
 
         where_expr = and_(*conditions) if conditions else None
 

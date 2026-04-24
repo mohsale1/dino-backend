@@ -52,10 +52,18 @@ class BaseAuth:
         if not user:
             return None
 
-        if not user.get("is_active", False):
+        # Guard: no password set — cannot authenticate.
+        if not user.get("password_hash"):
             return None
 
-        if not verify_password(password, user.get("password_hash", "")):
+        # Always call verify_password before checking is_active to prevent
+        # timing side-channel attacks that could reveal account existence.
+        password_ok = verify_password(password, user["password_hash"])
+
+        if not password_ok:
+            return None
+
+        if not user.get("is_active", False):
             return None
 
         # Stamp last_login — best-effort; do not let a failed update block login.
@@ -64,6 +72,7 @@ class BaseAuth:
         user["last_login"] = now.isoformat()
 
         return user
+
 
     # ------------------------------------------------------------------
     # Token operations (synchronous — no DB access)
@@ -161,8 +170,21 @@ class BaseAuth:
         HTTPException 404
             If the user is not found.
         HTTPException 400
-            If the old password is incorrect.
+            If the new password is too short, matches the current password,
+            or the old password is incorrect.
         """
+        if len(new_password) < 8:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Password must be at least 8 characters",
+            )
+
+        if new_password == old_password:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="New password must differ from current password",
+            )
+
         user = await self.user_repository.get_by_id(user_id)
         if not user:
             raise HTTPException(
@@ -180,3 +202,4 @@ class BaseAuth:
             "password_hash": get_password_hash(new_password),
             "updated_at": datetime.now(timezone.utc),
         })
+

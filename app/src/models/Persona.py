@@ -54,6 +54,7 @@ class Persona(BigIntPrimaryKeyMixin, EntityMixin, Base):
     workspace: Mapped["Workspace"] = relationship(  # noqa: F821
         "Workspace",
         lazy="noload",
+        # One-sided — Workspace does not declare a matching back_populates
     )
     areas: Mapped[list["Area"]] = relationship(  # noqa: F821
         "Area",
@@ -79,6 +80,7 @@ class Persona(BigIntPrimaryKeyMixin, EntityMixin, Base):
     orders: Mapped[list["Order"]] = relationship(  # noqa: F821
         "Order",
         back_populates="persona",
+        foreign_keys="[Order.persona_id]",
         lazy="noload",
     )
     reviews: Mapped[list["Review"]] = relationship(  # noqa: F821

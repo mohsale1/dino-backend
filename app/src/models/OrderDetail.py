@@ -40,11 +40,11 @@ class OrderDetail(BigIntPrimaryKeyMixin, EntityMixin, Base):
     area_id: Mapped[Optional[int]] = mapped_column(
         BigInteger, ForeignKey("areas.id", ondelete="SET NULL"), nullable=True
     )
-    subtotal: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False, server_default="0")
-    tax_amount: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False, server_default="0")
-    service_charge: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False, server_default="0")
-    discount_amount: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False, server_default="0")
-    total_amount: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False, server_default="0")
+    subtotal: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False, server_default=text("0"))
+    tax_amount: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False, server_default=text("0"))
+    service_charge: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False, server_default=text("0"))
+    discount_amount: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False, server_default=text("0"))
+    total_amount: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False, server_default=text("0"))
     currency: Mapped[str] = mapped_column(
         String(10), nullable=False, server_default=text("'INR'")
     )
@@ -60,15 +60,15 @@ class OrderDetail(BigIntPrimaryKeyMixin, EntityMixin, Base):
     )
 
     # Relationships
-    customer: Mapped[Optional["Customer"]] = relationship("Customer", lazy="noload")  # noqa: F821
-    table: Mapped[Optional["Table"]] = relationship("Table", lazy="noload")  # noqa: F821
-    area: Mapped[Optional["Area"]] = relationship("Area", lazy="noload")  # noqa: F821
-    workspace: Mapped["Workspace"] = relationship("Workspace", lazy="noload")  # noqa: F821
+    customer: Mapped[Optional["Customer"]] = relationship("Customer", lazy="noload", viewonly=True)  # noqa: F821
+    table: Mapped[Optional["Table"]] = relationship("Table", lazy="noload", viewonly=True)  # noqa: F821
+    area: Mapped[Optional["Area"]] = relationship("Area", lazy="noload", viewonly=True)  # noqa: F821
+    workspace: Mapped["Workspace"] = relationship("Workspace", lazy="noload", viewonly=True)  # noqa: F821
     persona: Mapped["Persona"] = relationship(  # noqa: F821
         "Persona", back_populates="order_details", lazy="noload"
     )
     created_by_user: Mapped[Optional["User"]] = relationship(  # noqa: F821
-        "User", foreign_keys=[created_by], lazy="noload"
+        "User", foreign_keys=[created_by], lazy="noload", viewonly=True
     )
     order_items: Mapped[list["Order"]] = relationship(  # noqa: F821
         "Order",

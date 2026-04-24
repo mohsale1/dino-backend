@@ -17,6 +17,7 @@ class Category(BigIntPrimaryKeyMixin, EntityMixin, Base):
 
     __table_args__ = (
         Index("ix_categories_workspace_id", "workspace_id"),
+        Index("ix_categories_persona_id", "persona_id"),
     )
 
     name: Mapped[str] = mapped_column(String(200), nullable=False)

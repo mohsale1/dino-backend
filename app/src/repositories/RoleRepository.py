@@ -23,7 +23,7 @@ class RoleRepository(BaseRepository):
             .where(
                 Role.name == name,
                 Role.role_type == role_type,
-                Role.is_active == True,  # noqa: E712
+                Role.is_active.is_(True),  # noqa: E712
             )
             .limit(1)
         )

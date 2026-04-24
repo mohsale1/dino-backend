@@ -5,12 +5,11 @@ Resolves the authenticated application user (user_type=1) from a JWT token.
 Uses the unified users table.
 """
 
-from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any, Dict, List
 
 from fastapi import Depends, HTTPException, status
-from sqlalchemy import select, update
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -33,8 +32,6 @@ _USER_SAFE_FIELDS: frozenset = frozenset([
 
 
 def _coerce_value(value: Any) -> Any:
-    if isinstance(value, datetime):
-        return value.isoformat()
     if isinstance(value, Decimal):
         return float(value)
     return value
@@ -71,51 +68,6 @@ async def _fetch_application_user(user_id: int, db: AsyncSession) -> Dict[str, A
             detail="User not found",
         )
 
-    # Stamp last_login
-    now = datetime.now(timezone.utc)
-    await db.execute(
-        update(User)
-        .where(User.id == user_obj.id)
-        .values(last_login=now)
-        .execution_options(synchronize_session=False)
-    )
-
-    user_dict: Dict[str, Any] = {
-        field: _coerce_value(getattr(user_obj, field, None))
-        for field in _USER_SAFE_FIELDS
-        if hasattr(user_obj, field)
-    }
-    user_dict["last_login"] = now.isoformat()
-
-    role_obj = user_obj.role
-    if role_obj is not None:
-        user_dict["role"] = {
-            "id": role_obj.id,
-            "name": role_obj.name,
-            "role_type": role_obj.role_type,
-            "permissions": _extract_permission_codenames(role_obj.permissions),
-        }
-
-    return user_dict
-
-
-async def _fetch_first_application_user(db: AsyncSession) -> Dict[str, Any]:
-    """Dev bypass: fetch the first active application user (user_type=1)."""
-    stmt = (
-        select(User)
-        .where(User.is_active.is_(True), User.user_type == 1)
-        .options(selectinload(User.role).selectinload(Role.permissions))
-        .limit(1)
-    )
-    result = await db.execute(stmt)
-    user_obj = result.scalar_one_or_none()
-
-    if user_obj is None:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="No active application user found for dev bypass.",
-        )
-
     user_dict: Dict[str, Any] = {
         field: _coerce_value(getattr(user_obj, field, None))
         for field in _USER_SAFE_FIELDS
@@ -144,13 +96,10 @@ async def get_current_application_user(
 ) -> Dict[str, Any]:
     """Resolve the authenticated application user (user_type=1) from a JWT token."""
     if not settings.ENABLE_JWT:
-        if settings.ENVIRONMENT == "production":
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail="JWT must be enabled in production",
-            )
-        # Dev bypass — return first active application user
-        return await _fetch_first_application_user(db)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="JWT authentication is not enabled",
+        )
 
     payload = decode_token(token)
     if payload is None:
@@ -173,7 +122,15 @@ async def get_current_application_user(
             detail="Invalid token: missing subject",
         )
 
-    return await _fetch_application_user(int(user_id), db)
+    try:
+        uid = int(user_id)
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid token: subject is not a valid user ID",
+        )
+
+    return await _fetch_application_user(uid, db)
 
 
 async def get_current_user(

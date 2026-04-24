@@ -2,10 +2,10 @@
 Tables router — CRUD for restaurant tables.
 """
 
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.application.middleware.RoleCheck import ApplicationPermissionCheck
@@ -21,24 +21,23 @@ router = APIRouter(prefix="/tables", tags=["Tables"])
 # ---------------------------------------------------------------------------
 
 class CreateTableRequest(BaseModel):
-    table_number: str
-    workspace_id: Optional[int] = None
+    table_number: str = Field(..., min_length=1, max_length=50)
     area_id: Optional[int] = None
-    capacity: Optional[int] = None
-    status: str = "available"
+    capacity: Optional[int] = Field(None, ge=1, le=50)
+    status: Literal["available", "occupied", "reserved", "out_of_service"] = "available"
     display_order: Optional[int] = None
 
 
 class UpdateTableRequest(BaseModel):
-    table_number: Optional[str] = None
+    table_number: Optional[str] = Field(None, min_length=1, max_length=50)
     area_id: Optional[int] = None
-    capacity: Optional[int] = None
-    status: Optional[str] = None
+    capacity: Optional[int] = Field(None, ge=1, le=50)
+    status: Optional[Literal["available", "occupied", "reserved", "out_of_service"]] = None
     display_order: Optional[int] = None
 
 
 class UpdateTableStatusRequest(BaseModel):
-    status: str
+    status: Literal["available", "occupied", "reserved", "out_of_service"]
 
 
 # ---------------------------------------------------------------------------
@@ -104,7 +103,7 @@ async def create_table(
     db: AsyncSession = Depends(get_db),
 ):
     """Create a new table."""
-    wid = request.workspace_id or current_user.get("workspace_id")
+    wid = current_user.get("workspace_id")
     if not wid:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="workspace_id required")
     service = TableService(db)
@@ -125,6 +124,8 @@ async def get_table(
     table = await service.get_by_id(table_id)
     if not table:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Table not found")
+    if table.get("workspace_id") != current_user.get("workspace_id"):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
     return {"success": True, "message": "Table retrieved successfully", "data": table}
 
 
@@ -140,6 +141,8 @@ async def update_table(
     existing = await service.get_by_id(table_id)
     if not existing:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Table not found")
+    if existing.get("workspace_id") != current_user.get("workspace_id"):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
     data = request.model_dump(exclude_unset=True)
     success = await service.update_table(table_id, data)
     if not success:
@@ -159,6 +162,8 @@ async def update_table_status(
     existing = await service.get_by_id(table_id)
     if not existing:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Table not found")
+    if existing.get("workspace_id") != current_user.get("workspace_id"):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
     success = await service.update_table_status(table_id, request.status)
     if not success:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Table not found")
@@ -176,6 +181,8 @@ async def delete_table(
     existing = await service.get_by_id(table_id)
     if not existing:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Table not found")
+    if existing.get("workspace_id") != current_user.get("workspace_id"):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
     success = await service.soft_delete_table(table_id)
     if not success:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Table not found")
@@ -193,6 +200,8 @@ async def restore_table(
     existing = await service.get_by_id(table_id, include_deleted=True)
     if not existing:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Table not found")
+    if existing.get("workspace_id") != current_user.get("workspace_id"):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
     if existing.get("is_active", False):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Table is not deleted")
     success = await service.restore_table(table_id)

@@ -4,7 +4,7 @@ Role ORM model and role_permissions association table (shared with dino-system).
 
 from typing import Optional
 
-from sqlalchemy import BigInteger, Column, ForeignKey, Index, SmallInteger, String, Table, Text, UniqueConstraint
+from sqlalchemy import BigInteger, Column, ForeignKey, Index, SmallInteger, String, Table, Text, UniqueConstraint, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from src.models.Base import Base, BigIntPrimaryKeyMixin, EntityMixin
@@ -49,8 +49,7 @@ class Role(BigIntPrimaryKeyMixin, EntityMixin, Base):
     role_type: Mapped[int] = mapped_column(
         SmallInteger,
         nullable=False,
-        default=0,
-        server_default="0",
+        server_default=text("0"),
         comment="0=System, 1=Application",
     )
 
@@ -60,6 +59,11 @@ class Role(BigIntPrimaryKeyMixin, EntityMixin, Base):
         secondary="role_permissions",
         back_populates="roles",
         lazy="select",
+    )
+    users: Mapped[list["User"]] = relationship(  # noqa: F821
+        "User",
+        back_populates="role",
+        lazy="noload",
     )
 
     def __repr__(self) -> str:

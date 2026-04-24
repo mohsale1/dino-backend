@@ -1,7 +1,7 @@
 from datetime import datetime
-from typing import List, Optional
+from typing import List, Literal, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class OrderLineItem(BaseModel):
@@ -14,25 +14,22 @@ class OrderLineItem(BaseModel):
 
 class OrderDetailCreate(BaseModel):
     """Create an order with line items."""
-    order_type: str = Field(default="dine_in", max_length=30)
+    order_type: Literal['dine_in', 'takeaway', 'delivery'] = 'dine_in'
     customer_id: Optional[int] = None
     customer_name: str = Field(..., min_length=1, max_length=200)
     table_id: Optional[int] = None
     area_id: Optional[int] = None
     currency: str = Field(default="INR", max_length=10)
-    special_instructions: Optional[str] = None
-    workspace_id: int
-    persona_id: int
-    created_by: Optional[int] = None
+    special_instructions: Optional[str] = Field(None, max_length=1000)
     items: List[OrderLineItem]
 
 
 class OrderDetailUpdate(BaseModel):
-    status: Optional[str] = Field(None, max_length=30)
+    status: Optional[Literal['pending', 'confirmed', 'preparing', 'ready', 'completed', 'cancelled']] = None
     customer_name: Optional[str] = Field(None, min_length=1, max_length=200)
     table_id: Optional[int] = None
     area_id: Optional[int] = None
-    special_instructions: Optional[str] = None
+    special_instructions: Optional[str] = Field(None, max_length=1000)
 
 
 class OrderDetailResponse(BaseModel):
@@ -58,8 +55,7 @@ class OrderDetailResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class OrderResponse(BaseModel):
@@ -77,27 +73,24 @@ class OrderResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class OrderTransactionCreate(BaseModel):
     order_id: str
     customer_id: Optional[int] = None
-    workspace_id: int
-    persona_id: int
-    paid_amount: float = 0
-    total_amount: float = 0
+    paid_amount: float = Field(default=0, ge=0)
+    total_amount: float = Field(default=0, ge=0)
     currency: str = Field(default="INR", max_length=10)
     payment_method: Optional[str] = None
-    payment_status: str = Field(default="unpaid", max_length=30)
+    payment_status: Literal['unpaid', 'partial', 'paid', 'refunded'] = 'unpaid'
     payment_ref: Optional[str] = None
     notes: Optional[str] = None
 
 
 class OrderTransactionUpdate(BaseModel):
-    payment_status: Optional[str] = Field(None, max_length=30)
-    paid_amount: Optional[float] = None
+    payment_status: Optional[Literal['unpaid', 'partial', 'paid', 'refunded']] = None
+    paid_amount: Optional[float] = Field(None, ge=0)
     payment_method: Optional[str] = None
     payment_ref: Optional[str] = None
     notes: Optional[str] = None
@@ -119,5 +112,4 @@ class OrderTransactionResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)

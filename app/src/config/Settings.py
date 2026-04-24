@@ -3,7 +3,7 @@ import warnings
 from typing import List, Optional
 from urllib.parse import urlparse
 
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 logger = logging.getLogger(__name__)
 
@@ -33,60 +33,39 @@ class Settings(BaseSettings):
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7
 
-    # PostgreSQL connection URL (asyncpg driver) — primary application DB
+    # PostgreSQL connection URL (asyncpg driver)
     DATABASE_URL: str = _DEFAULT_DATABASE_URL
 
-    # Optional: URL for the dino-system PostgreSQL database.
-    # Used only for cross-service queries (referral validation, signup).
-    # When unset or identical to DATABASE_URL the primary session is reused,
-    # so no second connection pool is created in single-DB deployments.
-    SYSTEM_DATABASE_URL: Optional[str] = None
-
     # SuperAdmin User Settings - Auto-created on first startup
-    # Default credentials (can be overridden via environment variables)
-    SUPERADMIN_EMAIL: str = "admin@dino.in"
-    SUPERADMIN_PASSWORD: str = "Admin@dino123"
+    # Credentials must be supplied via environment variables; no hardcoded defaults
+    SUPERADMIN_EMAIL: Optional[str] = None
+    SUPERADMIN_PASSWORD: Optional[str] = None
     # Create default SuperAdmin on startup (set to false to disable)
     CREATE_DEFAULT_SUPERADMIN: bool = True
 
-    CORS_ORIGINS: str = "*"  # Default to allow all, should be restricted in production
+    # Comma-separated list of allowed CORS origins.
+    # Empty string means no CORS origins are configured (restrictive default).
+    CORS_ORIGINS: str = ""
 
     # Frontend URL used for QR code generation
     FRONTEND_URL: str = "http://localhost:3000"
 
     LOG_LEVEL: str = "INFO"
 
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        case_sensitive=True,
+        extra="ignore",
+    )
+
     @property
     def cors_origins_list(self) -> List[str]:
         if self.CORS_ORIGINS == "*":
             return ["*"]
-        return [origin.strip() for origin in self.CORS_ORIGINS.split(",")]
-
-    @property
-    def effective_system_database_url(self) -> str:
-        """
-        Return the system DB URL to use for cross-service queries.
-
-        Falls back to DATABASE_URL when SYSTEM_DATABASE_URL is not configured
-        or is identical to the primary URL (single-DB dev deployments).
-        """
-        if not self.SYSTEM_DATABASE_URL or self.SYSTEM_DATABASE_URL == self.DATABASE_URL:
-            return self.DATABASE_URL
-        return self.SYSTEM_DATABASE_URL
-
-    @property
-    def uses_separate_system_db(self) -> bool:
-        """True when a distinct system DB URL has been configured."""
-        return bool(
-            self.SYSTEM_DATABASE_URL
-            and self.SYSTEM_DATABASE_URL != self.DATABASE_URL
-        )
-
-    class Config:
-        env_file = ".env"
-        env_file_encoding = "utf-8"
-        case_sensitive = True
-        extra = "ignore"  # Ignore extra fields in .env
+        if not self.CORS_ORIGINS.strip():
+            return []
+        return [origin.strip() for origin in self.CORS_ORIGINS.split(",") if origin.strip()]
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -100,10 +79,9 @@ class Settings(BaseSettings):
         logger.info(f"   Debug: {self.DEBUG}")
         logger.info(f"   Port: {self.PORT}")
         logger.info(f"   Database Host: {db_host}")
-        logger.info(f"   CORS Origins: {self.CORS_ORIGINS}")
+        logger.info(f"   CORS Origins: {self.CORS_ORIGINS!r}")
         logger.info(f"   Create Default SuperAdmin: {self.CREATE_DEFAULT_SUPERADMIN}")
         logger.info(f"   JWT Enabled: {self.ENABLE_JWT}")
-        logger.info(f"   Separate System DB: {self.uses_separate_system_db}")
 
         # Warn if using default values in production
         if self.ENVIRONMENT == "production" and self.SECRET_KEY == _DEFAULT_SECRET_KEY:
@@ -120,9 +98,11 @@ class Settings(BaseSettings):
                 UserWarning,
             )
 
-        # Log SuperAdmin auto-creation status
-        if self.CREATE_DEFAULT_SUPERADMIN:
+        # Log SuperAdmin auto-creation status only when enabled and credentials are present
+        if self.CREATE_DEFAULT_SUPERADMIN and self.SUPERADMIN_EMAIL and self.SUPERADMIN_PASSWORD:
             logger.info("   SuperAdmin Auto-Creation: Enabled")
+
+        self._validate_production_config()
 
     def _validate_production_config(self) -> None:
         """Raise RuntimeError for unsafe configurations in production."""
@@ -141,6 +121,18 @@ class Settings(BaseSettings):
             errors.append(
                 "SECRET_KEY is set to the default development value. "
                 "Generate a secure key with: openssl rand -hex 32"
+            )
+
+        if self.CORS_ORIGINS.strip() == "*":
+            errors.append(
+                "CORS_ORIGINS is set to wildcard '*' in production. "
+                "Restrict CORS_ORIGINS to specific trusted origins."
+            )
+
+        if self.CREATE_DEFAULT_SUPERADMIN and not (self.SUPERADMIN_EMAIL and self.SUPERADMIN_PASSWORD):
+            errors.append(
+                "CREATE_DEFAULT_SUPERADMIN is True but SUPERADMIN_EMAIL and/or "
+                "SUPERADMIN_PASSWORD are not set. Provide both credentials via environment variables."
             )
 
         if errors:

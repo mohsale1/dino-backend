@@ -37,7 +37,7 @@ class ItemRepository(BaseRepository):
         search_query: Optional[str] = None,
     ) -> Tuple[List[Dict[str, Any]], int, int]:
         """Return paginated items for a workspace with optional filters."""
-        clauses = [Item.workspace_id == workspace_id, Item.is_active == True]  # noqa: E712
+        clauses = [Item.workspace_id == workspace_id, Item.is_active.is_(True)]  # noqa: E712
 
         if category_id is not None:
             clauses.append(Item.category_id == category_id)

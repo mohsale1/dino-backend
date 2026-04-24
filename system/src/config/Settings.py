@@ -1,12 +1,14 @@
 import logging
 import warnings
 from typing import List
+from urllib.parse import urlparse
 
 from pydantic_settings import BaseSettings
 
 logger = logging.getLogger(__name__)
 
 _DEFAULT_SECRET_KEY = "dev-secret-key-change-in-production-use-openssl-rand-hex-32"
+_DEFAULT_DATABASE_URL = "postgresql+asyncpg://postgres:postgres@localhost:5432/dino_application"
 
 
 class Settings(BaseSettings):
@@ -31,10 +33,20 @@ class Settings(BaseSettings):
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7
 
-    # PostgreSQL database URL (asyncpg driver)
-    DATABASE_URL: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/dino_system"
+    # PostgreSQL connection URL (asyncpg driver)
+    DATABASE_URL: str = _DEFAULT_DATABASE_URL
+
+    # SuperAdmin User Settings - Auto-created on first startup
+    # Default credentials (can be overridden via environment variables)
+    SUPERADMIN_EMAIL: str = "admin@dino.in"
+    SUPERADMIN_PASSWORD: str = "Admin@dino123"
+    # Create default SuperAdmin on startup (set to false to disable)
+    CREATE_DEFAULT_SUPERADMIN: bool = True
 
     CORS_ORIGINS: str = "*"  # Default to allow all, should be restricted in production
+
+    # Frontend URL used for QR code generation
+    FRONTEND_URL: str = "http://localhost:3000"
 
     LOG_LEVEL: str = "INFO"
 
@@ -53,7 +65,6 @@ class Settings(BaseSettings):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
 
-        from urllib.parse import urlparse
         parsed = urlparse(self.DATABASE_URL)
         db_host = f"{parsed.hostname}:{parsed.port}"
 
@@ -62,8 +73,9 @@ class Settings(BaseSettings):
         logger.info(f"   Environment: {self.ENVIRONMENT}")
         logger.info(f"   Debug: {self.DEBUG}")
         logger.info(f"   Port: {self.PORT}")
-        logger.info(f"   DB Host: {db_host}")
+        logger.info(f"   Database Host: {db_host}")
         logger.info(f"   CORS Origins: {self.CORS_ORIGINS}")
+        logger.info(f"   Create Default SuperAdmin: {self.CREATE_DEFAULT_SUPERADMIN}")
         logger.info(f"   JWT Enabled: {self.ENABLE_JWT}")
 
         # Warn if using default values in production
@@ -76,10 +88,14 @@ class Settings(BaseSettings):
 
         if self.ENVIRONMENT == "production" and "localhost" in self.DATABASE_URL:
             warnings.warn(
-                "WARNING: DATABASE_URL contains 'localhost' in production! "
-                "Please set a proper DATABASE_URL pointing to your PostgreSQL instance.",
+                "WARNING: DATABASE_URL points to localhost in production! "
+                "Please set DATABASE_URL to a remote PostgreSQL instance.",
                 UserWarning,
             )
+
+        # Log SuperAdmin auto-creation status
+        if self.CREATE_DEFAULT_SUPERADMIN:
+            logger.info("   SuperAdmin Auto-Creation: Enabled")
 
     def _validate_production_config(self) -> None:
         """Raise RuntimeError for unsafe configurations in production."""

@@ -24,7 +24,7 @@ class OrderDetailRepository(BaseRepository):
         """Return the order detail with the given order_id."""
         stmt = (
             select(OrderDetail)
-            .where(OrderDetail.order_id == order_id)
+            .where(OrderDetail.order_id == order_id, OrderDetail.is_active.is_(True))
             .limit(1)
         )
         result = await self.db.execute(stmt)
@@ -43,7 +43,7 @@ class OrderDetailRepository(BaseRepository):
         """Return paginated order details for a workspace."""
         conditions = [OrderDetail.workspace_id == workspace_id]
         if not include_deleted:
-            conditions.append(OrderDetail.is_active == True)  # noqa: E712
+            conditions.append(OrderDetail.is_active.is_(True))
         if persona_id is not None:
             conditions.append(OrderDetail.persona_id == persona_id)
         if status is not None:
@@ -76,7 +76,7 @@ class OrderRepository(BaseRepository):
         """Return all line items for an order_id."""
         stmt = (
             select(Order)
-            .where(Order.order_id == order_id, Order.is_active == True)  # noqa: E712
+            .where(Order.order_id == order_id, Order.is_active.is_(True))
             .order_by(Order.sino.asc())
         )
         result = await self.db.execute(stmt)
@@ -94,7 +94,7 @@ class OrderRepository(BaseRepository):
         page_size: int = 20,
     ) -> Tuple[List[Dict[str, Any]], int, int]:
         """Return paginated order line items for a workspace."""
-        conditions = [Order.workspace_id == workspace_id, Order.is_active == True]  # noqa: E712
+        conditions = [Order.workspace_id == workspace_id, Order.is_active.is_(True)]
         if persona_id is not None:
             conditions.append(Order.persona_id == persona_id)
 

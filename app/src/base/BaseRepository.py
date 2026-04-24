@@ -55,7 +55,7 @@ class BaseRepository:
         clauses = []
 
         if not include_deleted and hasattr(self.model, "is_active"):
-            clauses.append(self.model.is_active == True)  # noqa: E712
+            clauses.append(self.model.is_active.is_(True))
 
         if filters:
             for field, value in filters.items():
@@ -85,6 +85,13 @@ class BaseRepository:
             col = getattr(self.model, "created_at", None)
         if col is None:
             return None
+        if order_direction.lower() not in ("asc", "desc"):
+            logger.warning(
+                "BaseRepository._order_column: invalid order_direction '%s' — "
+                "defaulting to 'asc'.",
+                order_direction,
+            )
+            order_direction = "asc"
         return col.desc() if order_direction.lower() == "desc" else col.asc()
 
     # ------------------------------------------------------------------
@@ -155,6 +162,8 @@ class BaseRepository:
         defaults) on each instance via the RETURNING clause used internally by
         asyncpg — no per-row ``refresh()`` call is needed.
         """
+        if len(items) > 500:
+            raise ValueError(f"bulk_create limit is 500 rows, got {len(items)}")
         instances = [self.model(**item) for item in items]
         self.db.add_all(instances)
         await self.db.flush()
@@ -176,7 +185,7 @@ class BaseRepository:
         """
         clauses = [self.model.id == entity_id]
         if not include_deleted and hasattr(self.model, "is_active"):
-            clauses.append(self.model.is_active == True)  # noqa: E712
+            clauses.append(self.model.is_active.is_(True))
 
         stmt = select(self.model).where(and_(*clauses))
         result = await self.db.execute(stmt)
@@ -203,7 +212,7 @@ class BaseRepository:
             )
         clauses = [col == value]
         if not include_deleted and hasattr(self.model, "is_active"):
-            clauses.append(self.model.is_active == True)  # noqa: E712
+            clauses.append(self.model.is_active.is_(True))
 
         stmt = select(self.model).where(and_(*clauses)).limit(1)
         result = await self.db.execute(stmt)
@@ -262,6 +271,7 @@ class BaseRepository:
         -------
         (items, total_count, total_pages)
         """
+        page_size = min(page_size, 200)
         clauses = self._build_where_clauses(filters, include_deleted)
         where_expr = and_(*clauses) if clauses else None
 
@@ -310,7 +320,7 @@ class BaseRepository:
             )
         clauses = [col == value]
         if not include_deleted and hasattr(self.model, "is_active"):
-            clauses.append(self.model.is_active == True)  # noqa: E712
+            clauses.append(self.model.is_active.is_(True))
 
         stmt = (
             select(literal(1))

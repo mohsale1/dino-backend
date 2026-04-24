@@ -6,7 +6,7 @@ This module provides shared dict-conversion utilities used across the codebase.
 """
 
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Optional
 
@@ -37,6 +37,8 @@ def row_to_dict(row) -> dict:
         if isinstance(value, uuid.UUID):
             value = str(value)
         elif isinstance(value, datetime):
+            if value.tzinfo is None:
+                value = value.replace(tzinfo=timezone.utc)
             value = value.isoformat()
         elif isinstance(value, Decimal):
             value = float(value)

@@ -39,7 +39,7 @@ class Order(EntityMixin, Base):
     # Snapshot — no FK enforced
     item_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
     item_name: Mapped[str] = mapped_column(String(200), nullable=False)
-    quantity: Mapped[int] = mapped_column(Integer, nullable=False, server_default="1")
+    quantity: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("1"))
     unit_price: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False)
     line_total: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False)
 
@@ -58,7 +58,7 @@ class Order(EntityMixin, Base):
     persona: Mapped["Persona"] = relationship(  # noqa: F821
         "Persona",
         back_populates="orders",
-        foreign_keys=[persona_id],
+        foreign_keys="[Order.persona_id]",
         lazy="noload",
     )
 

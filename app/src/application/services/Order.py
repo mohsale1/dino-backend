@@ -55,7 +55,7 @@ class OrderService:
         if item_ids:
             stmt = select(Item).where(
                 Item.id.in_(item_ids),
-                Item.is_active == True,  # noqa: E712
+                Item.is_active.is_(True),  # noqa: E712
             )
             result = await self.db.execute(stmt)
             for row in result.scalars().all():
@@ -149,7 +149,7 @@ class OrderService:
         """Return paginated order_details with optional filters."""
         conditions = [
             OrderDetail.workspace_id == workspace_id,
-            OrderDetail.is_active == True,  # noqa: E712
+            OrderDetail.is_active.is_(True),  # noqa: E712
         ]
         if persona_id is not None:
             conditions.append(OrderDetail.persona_id == persona_id)
@@ -211,7 +211,7 @@ class OrderService:
 
         base_conditions = [
             OrderDetail.workspace_id == workspace_id,
-            OrderDetail.is_active == True,  # noqa: E712
+            OrderDetail.is_active.is_(True),  # noqa: E712
         ]
         if persona_id is not None:
             base_conditions.append(OrderDetail.persona_id == persona_id)
@@ -252,7 +252,7 @@ class OrderService:
         # Today's orders + revenue
         today_conditions = [
             OrderDetail.workspace_id == workspace_id,
-            OrderDetail.is_active == True,  # noqa: E712
+            OrderDetail.is_active.is_(True),  # noqa: E712
             func.date(OrderDetail.created_at) == today,
         ]
         if persona_id is not None:

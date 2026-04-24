@@ -3,6 +3,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import JSONResponse
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
@@ -89,8 +90,14 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins_list,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "Accept", "X-Requested-With"],
+)
+
+# TrustedHostMiddleware — restrict allowed_hosts in production
+app.add_middleware(
+    TrustedHostMiddleware,
+    allowed_hosts=["*"],  # TODO: restrict to actual hostnames in production
 )
 
 # Register all application routers
@@ -122,7 +129,7 @@ async def global_exception_handler(request: Request, exc: Exception):
         content={
             "success": False,
             "message": "Internal server error",
-            "error": str(exc) if settings.DEBUG else "An error occurred",
+            "error": "An error occurred",
         },
     )
 

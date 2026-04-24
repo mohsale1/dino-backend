@@ -31,7 +31,7 @@ class AreaRepository(BaseRepository):
         page_size: int = 20,
     ) -> Tuple[List[Dict[str, Any]], int, int]:
         """Return paginated areas for a workspace with optional filters."""
-        conditions = [Area.workspace_id == workspace_id, Area.is_active == True]  # noqa: E712
+        conditions = [Area.workspace_id == workspace_id, Area.is_active.is_(True)]  # noqa: E712
 
         if persona_id is not None:
             conditions.append(Area.persona_id == persona_id)

@@ -29,7 +29,7 @@ class UserRepository(BaseRepository):
             .join(user_personas, user_personas.c.user_id == User.id)
             .where(
                 user_personas.c.persona_id == persona_id,
-                User.is_active == True,  # noqa: E712
+                User.is_active.is_(True),  # noqa: E712
             )
         )
         result = await self.db.execute(stmt)
@@ -70,7 +70,7 @@ class UserRepository(BaseRepository):
         clauses = []
 
         if not include_deleted:
-            clauses.append(User.is_active == True)  # noqa: E712
+            clauses.append(User.is_active.is_(True))  # noqa: E712
 
         if workspace_id is not None:
             clauses.append(User.workspace_id == workspace_id)

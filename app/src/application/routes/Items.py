@@ -6,7 +6,7 @@ from decimal import Decimal
 from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.application.middleware.RoleCheck import ApplicationPermissionCheck
@@ -22,21 +22,20 @@ router = APIRouter(prefix="/items", tags=["Items"])
 # ---------------------------------------------------------------------------
 
 class CreateItemRequest(BaseModel):
-    name: str
-    description: Optional[str] = None
+    name: str = Field(..., min_length=1, max_length=200)
+    description: Optional[str] = Field(None, max_length=1000)
     image_url: Optional[str] = None
-    price: Decimal
+    price: Decimal = Field(..., ge=0)
     is_available: bool = True
     is_vegetarian: Optional[bool] = None
-    workspace_id: Optional[int] = None
     category_id: int
 
 
 class UpdateItemRequest(BaseModel):
-    name: Optional[str] = None
-    description: Optional[str] = None
+    name: Optional[str] = Field(None, min_length=1, max_length=200)
+    description: Optional[str] = Field(None, max_length=1000)
     image_url: Optional[str] = None
-    price: Optional[Decimal] = None
+    price: Optional[Decimal] = Field(None, ge=0)
     is_available: Optional[bool] = None
     is_vegetarian: Optional[bool] = None
     category_id: Optional[int] = None
@@ -98,7 +97,7 @@ async def create_item(
     db: AsyncSession = Depends(get_db),
 ):
     """Create a new menu item."""
-    wid = request.workspace_id or current_user.get("workspace_id")
+    wid = current_user.get("workspace_id")
     if not wid:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="workspace_id required")
     service = ItemService(db)
@@ -119,6 +118,8 @@ async def get_item(
     item = await service.get_by_id(item_id)
     if not item:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Item not found")
+    if item.get("workspace_id") != current_user.get("workspace_id"):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
     return {"success": True, "message": "Item retrieved successfully", "data": item}
 
 
@@ -134,6 +135,8 @@ async def update_item(
     existing = await service.get_by_id(item_id)
     if not existing:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Item not found")
+    if existing.get("workspace_id") != current_user.get("workspace_id"):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
     data = request.model_dump(exclude_unset=True)
     success = await service.update_item(item_id, data)
     if not success:
@@ -153,6 +156,8 @@ async def update_item_availability(
     existing = await service.get_by_id(item_id)
     if not existing:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Item not found")
+    if existing.get("workspace_id") != current_user.get("workspace_id"):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
     success = await service.update_availability(item_id, request.is_available)
     if not success:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Item not found")
@@ -170,6 +175,8 @@ async def delete_item(
     existing = await service.get_by_id(item_id)
     if not existing:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Item not found")
+    if existing.get("workspace_id") != current_user.get("workspace_id"):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
     success = await service.soft_delete_item(item_id)
     if not success:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Item not found")
@@ -187,6 +194,8 @@ async def restore_item(
     existing = await service.get_by_id(item_id, include_deleted=True)
     if not existing:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Item not found")
+    if existing.get("workspace_id") != current_user.get("workspace_id"):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
     if existing.get("is_active", False):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Item is not deleted")
     success = await service.restore_item(item_id)

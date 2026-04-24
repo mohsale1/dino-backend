@@ -5,7 +5,7 @@ Customers router — CRUD for customer records.
 from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.application.middleware.RoleCheck import ApplicationPermissionCheck
@@ -21,15 +21,14 @@ router = APIRouter(prefix="/customers", tags=["Customers"])
 # ---------------------------------------------------------------------------
 
 class CreateCustomerRequest(BaseModel):
-    name: str
-    mobile: str
-    workspace_id: Optional[int] = None
+    name: str = Field(..., min_length=1, max_length=200)
+    mobile: str = Field(..., min_length=7, max_length=30)
     persona_id: Optional[int] = None
 
 
 class UpdateCustomerRequest(BaseModel):
-    name: Optional[str] = None
-    mobile: Optional[str] = None
+    name: Optional[str] = Field(None, min_length=1, max_length=200)
+    mobile: Optional[str] = Field(None, min_length=7, max_length=30)
     persona_id: Optional[int] = None
 
 
@@ -81,7 +80,7 @@ async def create_customer(
     db: AsyncSession = Depends(get_db),
 ):
     """Create or retrieve a customer by mobile + workspace."""
-    wid = request.workspace_id or current_user.get("workspace_id")
+    wid = current_user.get("workspace_id")
     if not wid:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="workspace_id required")
     service = CustomerService(db)
@@ -105,6 +104,8 @@ async def get_customer(
     customer = await service.get_by_id(customer_id)
     if not customer:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Customer not found")
+    if customer.get("workspace_id") != current_user.get("workspace_id"):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
     return {"success": True, "message": "Customer retrieved successfully", "data": customer}
 
 
@@ -120,6 +121,8 @@ async def update_customer(
     existing = await service.get_by_id(customer_id)
     if not existing:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Customer not found")
+    if existing.get("workspace_id") != current_user.get("workspace_id"):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
     data = request.model_dump(exclude_unset=True)
     success = await service.update_customer(customer_id, data)
     if not success:
@@ -138,6 +141,8 @@ async def delete_customer(
     existing = await service.get_by_id(customer_id)
     if not existing:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Customer not found")
+    if existing.get("workspace_id") != current_user.get("workspace_id"):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
     success = await service.soft_delete_customer(customer_id)
     if not success:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Customer not found")
@@ -157,6 +162,8 @@ async def get_customer_orders(
     existing = await service.get_by_id(customer_id)
     if not existing:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Customer not found")
+    if existing.get("workspace_id") != current_user.get("workspace_id"):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
     items, total, total_pages = await service.get_customer_orders(
         customer_id=customer_id,
         page=page,

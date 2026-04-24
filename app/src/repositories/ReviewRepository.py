@@ -39,8 +39,8 @@ class ReviewRepository(BaseRepository):
         """
         conditions = [
             Review.workspace_id == workspace_id,
-            Review.is_approved == True,   # noqa: E712
-            Review.is_active == True,     # noqa: E712
+            Review.is_approved.is_(True),
+            Review.is_active.is_(True),
         ]
         if persona_id is not None:
             conditions.append(Review.persona_id == persona_id)
@@ -79,7 +79,7 @@ class ReviewRepository(BaseRepository):
         # Always show only active reviews unless caller explicitly requests inactive
         conditions = [
             Review.workspace_id == workspace_id,
-            Review.is_active == (is_active if is_active is not None else True),  # noqa: E712
+            Review.is_active.is_(is_active if is_active is not None else True),
         ]
 
         if persona_id is not None:
@@ -122,8 +122,8 @@ class ReviewRepository(BaseRepository):
         platform-wide (no workspace filter). Used for homepage stats.
         """
         stmt = select(func.avg(Review.rating)).where(
-            Review.is_approved == True,  # noqa: E712
-            Review.is_active == True,    # noqa: E712
+            Review.is_approved.is_(True),
+            Review.is_active.is_(True),
         )
         avg = (await self.db.execute(stmt)).scalar_one_or_none()
         return round(float(avg), 2) if avg is not None else 0.0
@@ -154,8 +154,8 @@ class ReviewRepository(BaseRepository):
         """
         conditions = [
             Review.workspace_id == workspace_id,
-            Review.is_approved == True,   # noqa: E712
-            Review.is_active == True,     # noqa: E712
+            Review.is_approved.is_(True),
+            Review.is_active.is_(True),
         ]
         if persona_id is not None:
             conditions.append(Review.persona_id == persona_id)
@@ -167,7 +167,14 @@ class ReviewRepository(BaseRepository):
             func.avg(Review.rating).label("avg_rating"),
             func.count(Review.id).label("total"),
         ).where(where_expr)
-        agg_row = (await self.db.execute(agg_stmt)).one()
+        agg_row = (await self.db.execute(agg_stmt)).one_or_none()
+
+        if agg_row is None:
+            return {
+                "average_rating": 0.0,
+                "total_reviews": 0,
+                "rating_distribution": {star: 0 for star in range(1, 6)},
+            }
 
         total_reviews: int = agg_row.total or 0
         average_rating: float = round(float(agg_row.avg_rating), 2) if agg_row.avg_rating else 0.0

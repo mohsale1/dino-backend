@@ -34,10 +34,19 @@ workspace_personas = Table(
 )
 
 
+# ---------------------------------------------------------------------------
+# Workspace entity
+# ---------------------------------------------------------------------------
+
 class Workspace(BigIntPrimaryKeyMixin, EntityMixin, Base):
     """A tenant-level container."""
 
     __tablename__ = "workspaces"
+
+    # __table_args__ MUST be declared before any mapped_column definitions
+    __table_args__ = (
+        Index("ix_workspaces_referred_by", "referred_by"),
+    )
 
     name: Mapped[str] = mapped_column(String(200), nullable=False)
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
@@ -54,6 +63,18 @@ class Workspace(BigIntPrimaryKeyMixin, EntityMixin, Base):
     )
 
     # Relationships
+    # owner_id and referred_by both point to users — must use string foreign_keys
+    # to avoid ambiguity at class-construction time.
+    owner: Mapped[Optional["User"]] = relationship(  # noqa: F821
+        "User",
+        foreign_keys="[Workspace.owner_id]",
+        lazy="noload",
+    )
+    referrer: Mapped[Optional["User"]] = relationship(  # noqa: F821
+        "User",
+        foreign_keys="[Workspace.referred_by]",
+        lazy="noload",
+    )
     billing: Mapped[Optional["WorkspaceBilling"]] = relationship(  # noqa: F821
         "WorkspaceBilling",
         back_populates="workspace",
@@ -75,7 +96,7 @@ class Workspace(BigIntPrimaryKeyMixin, EntityMixin, Base):
     )
     users: Mapped[list["User"]] = relationship(  # noqa: F821
         "User",
-        foreign_keys="User.workspace_id",
+        foreign_keys="[User.workspace_id]",
         back_populates="workspace",
         lazy="noload",
     )

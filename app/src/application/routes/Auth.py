@@ -1,3 +1,4 @@
+import logging
 from typing import Any, Dict
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
@@ -9,10 +10,9 @@ from src.application.middleware.RoleCheck import ApplicationPermissionCheck
 from src.application.services.Auth import ApplicationAuthService
 from src.base.BaseSchema import BaseResponse
 from src.config.Database import get_db
-from src.core.Security import decode_token, get_password_hash, verify_password, verify_token_type
+from src.core.Security import decode_token, verify_token_type
 from src.repositories.UserRepository import UserRepository
 from src.repositories.WorkspaceRepository import WorkspaceRepository
-from src.repositories.PersonaRepository import PersonaRepository
 from src.schemas.Auth import (
     ChangePasswordRequest,
     LoginRequest,
@@ -22,6 +22,8 @@ from src.schemas.Auth import (
     SignupRequest,
     SignupResponse,
 )
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/auth", tags=["Application Auth"])
 
@@ -46,7 +48,7 @@ async def login(request: Request, body: LoginRequest, db: AsyncSession = Depends
     return result
 
 
-@router.post("/signup", response_model=SignupResponse)
+@router.post("/signup", response_model=SignupResponse, status_code=status.HTTP_201_CREATED)
 @limiter.limit("3/minute")
 async def signup(request: Request, body: SignupRequest, db: AsyncSession = Depends(get_db)):
     """Complete signup: create workspace, persona, and admin user."""
@@ -86,7 +88,11 @@ async def signup(request: Request, body: SignupRequest, db: AsyncSession = Depen
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
     except Exception as e:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+        logger.error("Unexpected error during signup: %s", e, exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="An unexpected error occurred. Please try again later.",
+        )
 
     return SignupResponse(
         workspace=result["workspace"],
@@ -97,19 +103,37 @@ async def signup(request: Request, body: SignupRequest, db: AsyncSession = Depen
 
 
 @router.post("/refresh", response_model=RefreshTokenResponse)
-async def refresh_token(request: RefreshTokenRequest, db: AsyncSession = Depends(get_db)):
+@limiter.limit("10/minute")
+async def refresh_token(request: Request, body: RefreshTokenRequest, db: AsyncSession = Depends(get_db)):
     """Refresh access token."""
-    if not verify_token_type(request.refresh_token, "refresh"):
+    if not verify_token_type(body.refresh_token, "refresh"):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid refresh token",
         )
-    payload = decode_token(request.refresh_token)
+    payload = decode_token(body.refresh_token)
     if not payload:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid refresh token",
         )
+
+    sub = payload.get("sub")
+    try:
+        user_id = int(sub)
+    except (ValueError, TypeError):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid refresh token",
+        )
+
+    user = await UserRepository(db).get_by_id(user_id)
+    if not user or not user.get("is_active"):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="User not found or inactive",
+        )
+
     auth_service = ApplicationAuthService(db)
     token_data = {
         "sub": payload.get("sub"),
@@ -126,19 +150,14 @@ async def get_current_user(
     db: AsyncSession = Depends(get_db),
 ):
     """Get current application user."""
-    user_repo = UserRepository(db)
     workspace_repo = WorkspaceRepository(db)
 
-    user_id = current_user.get("id")
-    user = await user_repo.get_by_id(user_id)
-    if not user:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
-
     workspace = None
-    if user.get("workspace_id"):
-        workspace = await workspace_repo.get_by_id(user["workspace_id"])
+    workspace_id = current_user.get("workspace_id")
+    if workspace_id:
+        workspace = await workspace_repo.get_by_id(workspace_id)
 
-    user.pop("password_hash", None)
+    user = {k: v for k, v in current_user.items() if k != "password_hash"}
     return {
         "success": True,
         "message": "User retrieved successfully",
@@ -153,26 +172,6 @@ async def change_password(
     db: AsyncSession = Depends(get_db),
 ):
     """Change password for the currently authenticated user."""
-    user_repo = UserRepository(db)
     user_id = current_user.get("id")
-    user = await user_repo.get_by_id(user_id)
-
-    if not user:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
-
-    if not verify_password(request.old_password, user.get("password_hash", "")):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Current password is incorrect",
-        )
-
-    new_hash = get_password_hash(request.new_password)
-    success = await user_repo.update(user_id, {"password_hash": new_hash})
-
-    if not success:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to update password",
-        )
-
+    await ApplicationAuthService(db).change_password(user_id, request.old_password, request.new_password)
     return {"success": True, "message": "Password changed successfully"}

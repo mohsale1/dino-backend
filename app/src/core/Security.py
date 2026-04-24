@@ -46,8 +46,12 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
     try:
         prehashed = _prehash_password(plain_password)
         return bcrypt.checkpw(prehashed, hashed_password.encode('utf-8'))
-    except Exception:
+    except ValueError:
         return False
+    except Exception:
+        logger.error("Unexpected error during password verification", exc_info=True)
+        return False
+
 
 def get_password_hash(password: str) -> str:
     """
@@ -96,9 +100,12 @@ def decode_token(token: str) -> Optional[dict]:
 async def get_current_user_token(
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(security),
 ) -> str:
-    """Extract token from Authorization header (or return empty if JWT disabled)"""
+    """Extract token from Authorization header. Raises 503 if JWT is disabled."""
     if not settings.ENABLE_JWT:
-        return ""  # Return empty token when JWT is disabled
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="JWT authentication is disabled",
+        )
 
     if credentials is None:
         raise HTTPException(
@@ -109,12 +116,19 @@ async def get_current_user_token(
 
     return credentials.credentials
 
+
 def verify_token_type(token: str, expected_type: str) -> bool:
-    """Verify token type (access or refresh)"""
+    """Verify token type (access or refresh) without raising HTTPException."""
     try:
-        payload = decode_token(token)
-        if not payload:
-            return False
+        payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
         return payload.get("type") == expected_type
-    except HTTPException:
+    except ExpiredSignatureError:
+        logger.warning("verify_token_type: token has expired")
         return False
+    except InvalidTokenError as exc:
+        logger.warning("verify_token_type: invalid token — %s", type(exc).__name__)
+        return False
+    except Exception:
+        logger.error("verify_token_type: unexpected error during token decode", exc_info=True)
+        return False
+

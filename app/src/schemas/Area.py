@@ -1,13 +1,12 @@
 from datetime import datetime
 from typing import Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class AreaBase(BaseModel):
     name: str = Field(..., min_length=1, max_length=200)
-    description: Optional[str] = None
-    workspace_id: int
+    description: Optional[str] = Field(None, max_length=500)
     is_available: bool = True
 
 
@@ -17,13 +16,14 @@ class AreaCreate(AreaBase):
 
 class AreaUpdate(BaseModel):
     name: Optional[str] = Field(None, min_length=1, max_length=200)
-    description: Optional[str] = None
+    description: Optional[str] = Field(None, max_length=500)
     is_available: Optional[bool] = None
     persona_id: Optional[int] = None
-    is_active: Optional[bool] = None
 
 
 class AreaResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     id: int
     name: str
     description: Optional[str] = None
@@ -33,6 +33,3 @@ class AreaResponse(BaseModel):
     is_active: bool
     created_at: datetime
     updated_at: datetime
-
-    class Config:
-        from_attributes = True

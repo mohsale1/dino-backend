@@ -5,7 +5,7 @@ Areas router — CRUD for dining areas.
 from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.application.middleware.RoleCheck import ApplicationPermissionCheck
@@ -21,16 +21,15 @@ router = APIRouter(prefix="/areas", tags=["Areas"])
 # ---------------------------------------------------------------------------
 
 class CreateAreaRequest(BaseModel):
-    name: str
-    description: Optional[str] = None
-    workspace_id: Optional[int] = None
+    name: str = Field(..., min_length=1, max_length=200)
+    description: Optional[str] = Field(None, max_length=500)
     persona_id: Optional[int] = None
     is_available: bool = True
 
 
 class UpdateAreaRequest(BaseModel):
-    name: Optional[str] = None
-    description: Optional[str] = None
+    name: Optional[str] = Field(None, min_length=1, max_length=200)
+    description: Optional[str] = Field(None, max_length=500)
     persona_id: Optional[int] = None
     is_available: Optional[bool] = None
 
@@ -83,7 +82,7 @@ async def create_area(
     db: AsyncSession = Depends(get_db),
 ):
     """Create a new area."""
-    wid = request.workspace_id or current_user.get("workspace_id")
+    wid = current_user.get("workspace_id")
     if not wid:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="workspace_id required")
     service = AreaService(db)
@@ -104,6 +103,8 @@ async def get_area(
     area = await service.get_by_id(area_id)
     if not area:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Area not found")
+    if area.get("workspace_id") != current_user.get("workspace_id"):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
     return {"success": True, "message": "Area retrieved successfully", "data": area}
 
 
@@ -119,6 +120,8 @@ async def update_area(
     existing = await service.get_by_id(area_id)
     if not existing:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Area not found")
+    if existing.get("workspace_id") != current_user.get("workspace_id"):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
     data = request.model_dump(exclude_unset=True)
     success = await service.update_area(area_id, data)
     if not success:
@@ -137,6 +140,8 @@ async def delete_area(
     existing = await service.get_by_id(area_id)
     if not existing:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Area not found")
+    if existing.get("workspace_id") != current_user.get("workspace_id"):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
     success = await service.soft_delete_area(area_id)
     if not success:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Area not found")
@@ -154,6 +159,8 @@ async def restore_area(
     existing = await service.get_by_id(area_id, include_deleted=True)
     if not existing:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Area not found")
+    if existing.get("workspace_id") != current_user.get("workspace_id"):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
     if existing.get("is_active", False):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Area is not deleted")
     success = await service.restore_area(area_id)

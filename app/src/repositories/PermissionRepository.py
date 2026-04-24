@@ -29,7 +29,7 @@ class PermissionRepository(BaseRepository):
             Permission.category == category,
             Permission.resource == resource,
             Permission.action == action,
-            Permission.is_active == True,
+            Permission.is_active.is_(True),
         ]
         if exclude_id is not None:
             clauses.append(Permission.id != exclude_id)
@@ -55,7 +55,7 @@ class PermissionRepository(BaseRepository):
         if is_active is not None:
             clauses = [Permission.is_active == is_active]
         else:
-            clauses = [Permission.is_active == True]
+            clauses = [Permission.is_active.is_(True)]
 
         if resource is not None:
             clauses.append(Permission.resource == resource)
@@ -105,7 +105,7 @@ class PermissionRepository(BaseRepository):
     async def get_resources(self) -> List[str]:
         stmt = (
             select(distinct(Permission.resource))
-            .where(Permission.is_active == True)
+            .where(Permission.is_active.is_(True))
             .where(Permission.resource.isnot(None))
             .order_by(Permission.resource)
         )
@@ -115,7 +115,7 @@ class PermissionRepository(BaseRepository):
     async def get_actions(self) -> List[str]:
         stmt = (
             select(distinct(Permission.action))
-            .where(Permission.is_active == True)
+            .where(Permission.is_active.is_(True))
             .where(Permission.action.isnot(None))
             .order_by(Permission.action)
         )
