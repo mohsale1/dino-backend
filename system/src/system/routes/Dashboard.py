@@ -1,5 +1,3 @@
-from typing import Optional
-
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -97,6 +95,21 @@ async def get_recent_activity(
     service = SystemDashboardService(db)
     data = await service.get_recent_activity(limit=limit)
     return {"success": True, "message": "Recent activity retrieved successfully", "data": data}
+
+
+@router.get(
+    "/referrals",
+    response_model=BaseResponse,
+    dependencies=[Depends(SystemPermissionCheck.require("dashboard:view"))],
+)
+async def get_referral_overview(
+    days: int = Query(30, ge=1, le=365),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get referral statistics — who referred which workspaces and their statuses."""
+    service = SystemDashboardService(db)
+    data = await service.get_referral_overview(days=days)
+    return {"success": True, "message": "Referral overview retrieved successfully", "data": data}
 
 
 @router.get(

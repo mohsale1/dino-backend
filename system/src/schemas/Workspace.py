@@ -1,4 +1,4 @@
-from datetime import datetime
+﻿from datetime import datetime
 from typing import List, Optional
 
 from pydantic import BaseModel, Field
@@ -13,7 +13,6 @@ class WorkspaceBase(BaseModel):
 class WorkspaceCreate(WorkspaceBase):
     """Create workspace schema"""
     owner_id: Optional[int] = None
-    referred_by: Optional[int] = None
     persona_ids: Optional[List[int]] = None
 
 
@@ -22,7 +21,6 @@ class WorkspaceUpdate(BaseModel):
     name: Optional[str] = Field(None, min_length=1, max_length=200)
     description: Optional[str] = None
     owner_id: Optional[int] = None
-    referred_by: Optional[int] = None
     is_active: Optional[bool] = None
     persona_ids: Optional[List[int]] = None
 
@@ -33,7 +31,8 @@ class WorkspaceResponse(BaseModel):
     name: str
     description: Optional[str] = None
     owner_id: Optional[int] = None
-    referred_by: Optional[int] = None
+    requested_by: Optional[int] = None
+    is_verified: bool = False
     is_active: bool
     created_at: datetime
     updated_at: datetime

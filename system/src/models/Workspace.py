@@ -1,21 +1,24 @@
-"""
+﻿"""
 Workspace ORM model and workspace_personas association table.
 
-owner_id   – references users.id (SET NULL on delete)
-referred_by – references users.id (SET NULL on delete)
-No billing columns — billing is in workspace_billing table.
+owner_id      â€“ references users.id (SET NULL on delete)
+requested_by  â€“ system user who submitted the verification request (SET NULL on delete)
+is_verified   â€“ set to True when an admin approves the workspace request
+No billing columns â€” billing is in workspace_billing table.
 """
 
 from typing import Optional
 
 from sqlalchemy import (
     BigInteger,
+    Boolean,
     Column,
     ForeignKey,
     Index,
     String,
     Table,
     Text,
+    text,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -56,7 +59,9 @@ class Workspace(BigIntPrimaryKeyMixin, EntityMixin, Base):
 
     __tablename__ = "workspaces"
 
-    __table_args__ = ()
+    __table_args__ = (
+        Index("ix_workspaces_requested_by", "requested_by"),
+    )
 
     name: Mapped[str] = mapped_column(String(200), nullable=False)
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
@@ -66,10 +71,18 @@ class Workspace(BigIntPrimaryKeyMixin, EntityMixin, Base):
         ForeignKey("users.id", ondelete="SET NULL"),
         nullable=True,
     )
-    referred_by: Mapped[Optional[int]] = mapped_column(
+    requested_by: Mapped[Optional[int]] = mapped_column(
         BigInteger,
         ForeignKey("users.id", ondelete="SET NULL"),
         nullable=True,
+        comment="System user who submitted the workspace verification request",
+    )
+    is_verified: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=False,
+        server_default=text("false"),
+        comment="Set to true when an admin approves the workspace request",
     )
 
     # Relationships
@@ -78,9 +91,9 @@ class Workspace(BigIntPrimaryKeyMixin, EntityMixin, Base):
         foreign_keys=[owner_id],
         lazy="noload",
     )
-    referred_by_user: Mapped[Optional["User"]] = relationship(  # noqa: F821
+    requested_by_user: Mapped[Optional["User"]] = relationship(  # noqa: F821
         "User",
-        foreign_keys=[referred_by],
+        foreign_keys=[requested_by],
         lazy="noload",
     )
     billing: Mapped[Optional["WorkspaceBilling"]] = relationship(  # noqa: F821
@@ -104,4 +117,4 @@ class Workspace(BigIntPrimaryKeyMixin, EntityMixin, Base):
     )
 
     def __repr__(self) -> str:
-        return f"<Workspace id={self.id} name={self.name!r}>"
+        return f"<Workspace id={self.id} name={self.name!r} verified={self.is_verified}>"

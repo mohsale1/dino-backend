@@ -1,3 +1,3 @@
-from . import Auth, Dashboard, Users, Roles, Permissions, Workspaces, Personas, Billing
+﻿from . import Auth, Dashboard, Users, Roles, Permissions, Workspaces, Personas, Billing, WorkspaceRequests
 
-__all__ = ["Auth", "Dashboard", "Users", "Roles", "Permissions", "Workspaces", "Personas", "Billing"]
+__all__ = ["Auth", "Dashboard", "Users", "Roles", "Permissions", "Workspaces", "Personas", "Billing", "WorkspaceRequests"]

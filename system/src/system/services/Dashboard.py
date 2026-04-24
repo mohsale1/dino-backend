@@ -131,7 +131,6 @@ class SystemDashboardService:
 
     async def get_billing_overview(self) -> Dict[str, Any]:
         """Return workspaces by plan and revenue summary from billing_transactions."""
-        from sqlalchemy import distinct
 
         plan_stmt = (
             select(WorkspaceBilling.plan, func.count().label("count"))
@@ -205,6 +204,32 @@ class SystemDashboardService:
 
         activities.sort(key=lambda x: x.get("timestamp", ""), reverse=True)
         return activities[:limit]
+
+    async def get_referral_overview(self, days: int = 30) -> Dict[str, Any]:
+        """Return full referral statistics sourced from workspace_requests."""
+        from src.repositories.WorkspaceRequestRepository import WorkspaceRequestRepository
+
+        repo = WorkspaceRequestRepository(self.db)
+        raw = await repo.get_referral_stats(days=days)
+
+        summary_row = raw["summary_row"]
+        top_referrers = raw["top_referrers"]
+
+        growth = _calculate_growth_percentage(summary_row.prev_n_days, summary_row.last_n_days)
+
+        return {
+            "summary": {
+                "total_referrals": summary_row.total,
+                "total_referrers": summary_row.total_referrers,
+                "pending": summary_row.pending,
+                "approved": summary_row.approved,
+                "rejected": summary_row.rejected,
+                f"referrals_last_{days}_days": summary_row.last_n_days,
+                "referral_growth": growth,
+                "period_days": days,
+            },
+            "top_referrers": top_referrers,
+        }
 
     async def get_top_workspaces(self, limit: int = 10) -> List[Dict[str, Any]]:
         """Return workspaces with most personas and users."""

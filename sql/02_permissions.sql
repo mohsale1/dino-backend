@@ -1,213 +1,437 @@
 -- =============================================================================
 -- Seed: permissions
--- Safe to re-run (idempotent) — ON CONFLICT DO NOTHING
--- Total: 79 permissions
+-- Safe to re-run (idempotent) — INSERT only if the row does not already exist.
+-- Uses NOT EXISTS check on the unique key (category, resource, action).
+-- Total: 85 permissions  |  SYSTEM=30, APPLICATION=55
 -- =============================================================================
 
 BEGIN;
 
 -- ---------------------------------------------------------------------------
--- SYSTEM module view (7)
+-- SYSTEM module views (9)
 -- ---------------------------------------------------------------------------
-INSERT INTO permissions (category, resource, action, is_active, created_at, updated_at) VALUES
-    ('SYSTEM', 'dashboard', 'view', true, (now() AT TIME ZONE 'Asia/Kolkata'), (now() AT TIME ZONE 'Asia/Kolkata')),
-    ('SYSTEM', 'workspaces', 'view', true, (now() AT TIME ZONE 'Asia/Kolkata'), (now() AT TIME ZONE 'Asia/Kolkata')),
-    ('SYSTEM', 'users',      'view', true, (now() AT TIME ZONE 'Asia/Kolkata'), (now() AT TIME ZONE 'Asia/Kolkata')),
-    ('SYSTEM', 'roles',      'view', true, (now() AT TIME ZONE 'Asia/Kolkata'), (now() AT TIME ZONE 'Asia/Kolkata')),
-    ('SYSTEM', 'billing',    'view', true, (now() AT TIME ZONE 'Asia/Kolkata'), (now() AT TIME ZONE 'Asia/Kolkata')),
-    ('SYSTEM', 'registration','view',true, (now() AT TIME ZONE 'Asia/Kolkata'), (now() AT TIME ZONE 'Asia/Kolkata')),
-    ('SYSTEM', 'settings',   'view', true, (now() AT TIME ZONE 'Asia/Kolkata'), (now() AT TIME ZONE 'Asia/Kolkata'))
-ON CONFLICT (category, resource, action) DO NOTHING;
+INSERT INTO permissions (category, resource, action, is_active, created_at, updated_at)
+SELECT v.category, v.resource, v.action, true,
+       (now() AT TIME ZONE 'Asia/Kolkata'),
+       (now() AT TIME ZONE 'Asia/Kolkata')
+FROM (VALUES
+    ('SYSTEM', 'dashboard',  'view'),
+    ('SYSTEM', 'workspaces', 'view'),
+    ('SYSTEM', 'approvals',  'view'),
+    ('SYSTEM', 'users',      'view'),
+    ('SYSTEM', 'billing',    'view'),
+    ('SYSTEM', 'referrals',  'view'),
+    ('SYSTEM', 'roles',      'view'),
+    ('SYSTEM', 'appearance', 'view'),
+    ('SYSTEM', 'settings',   'view')
+) AS v(category, resource, action)
+WHERE NOT EXISTS (
+    SELECT 1 FROM permissions p
+    WHERE p.category = v.category
+      AND p.resource  = v.resource
+      AND p.action    = v.action
+);
 
 -- ---------------------------------------------------------------------------
--- SYSTEM workspaces (4)
+-- SYSTEM workspaces (5)
 -- ---------------------------------------------------------------------------
-INSERT INTO permissions (category, resource, action, is_active, created_at, updated_at) VALUES
-    ('SYSTEM', 'workspaces', 'read',   true, (now() AT TIME ZONE 'Asia/Kolkata'), (now() AT TIME ZONE 'Asia/Kolkata')),
-    ('SYSTEM', 'workspaces', 'create', true, (now() AT TIME ZONE 'Asia/Kolkata'), (now() AT TIME ZONE 'Asia/Kolkata')),
-    ('SYSTEM', 'workspaces', 'update', true, (now() AT TIME ZONE 'Asia/Kolkata'), (now() AT TIME ZONE 'Asia/Kolkata')),
-    ('SYSTEM', 'workspaces', 'delete', true, (now() AT TIME ZONE 'Asia/Kolkata'), (now() AT TIME ZONE 'Asia/Kolkata'))
-ON CONFLICT (category, resource, action) DO NOTHING;
+INSERT INTO permissions (category, resource, action, is_active, created_at, updated_at)
+SELECT v.category, v.resource, v.action, true,
+       (now() AT TIME ZONE 'Asia/Kolkata'),
+       (now() AT TIME ZONE 'Asia/Kolkata')
+FROM (VALUES
+    ('SYSTEM', 'workspaces', 'read'),
+    ('SYSTEM', 'workspaces', 'create'),
+    ('SYSTEM', 'workspaces', 'update'),
+    ('SYSTEM', 'workspaces', 'delete'),
+    ('SYSTEM', 'workspaces', 'approve')
+) AS v(category, resource, action)
+WHERE NOT EXISTS (
+    SELECT 1 FROM permissions p
+    WHERE p.category = v.category
+      AND p.resource  = v.resource
+      AND p.action    = v.action
+);
 
 -- ---------------------------------------------------------------------------
 -- SYSTEM billing (3)
 -- ---------------------------------------------------------------------------
-INSERT INTO permissions (category, resource, action, is_active, created_at, updated_at) VALUES
-    ('SYSTEM', 'billing', 'read',         true, (now() AT TIME ZONE 'Asia/Kolkata'), (now() AT TIME ZONE 'Asia/Kolkata')),
-    ('SYSTEM', 'billing', 'update',       true, (now() AT TIME ZONE 'Asia/Kolkata'), (now() AT TIME ZONE 'Asia/Kolkata')),
-    ('SYSTEM', 'billing', 'subscription', true, (now() AT TIME ZONE 'Asia/Kolkata'), (now() AT TIME ZONE 'Asia/Kolkata'))
-ON CONFLICT (category, resource, action) DO NOTHING;
+INSERT INTO permissions (category, resource, action, is_active, created_at, updated_at)
+SELECT v.category, v.resource, v.action, true,
+       (now() AT TIME ZONE 'Asia/Kolkata'),
+       (now() AT TIME ZONE 'Asia/Kolkata')
+FROM (VALUES
+    ('SYSTEM', 'billing', 'read'),
+    ('SYSTEM', 'billing', 'update'),
+    ('SYSTEM', 'billing', 'subscription')
+) AS v(category, resource, action)
+WHERE NOT EXISTS (
+    SELECT 1 FROM permissions p
+    WHERE p.category = v.category
+      AND p.resource  = v.resource
+      AND p.action    = v.action
+);
 
 -- ---------------------------------------------------------------------------
--- SYSTEM registration (3)
+-- SYSTEM referrals (1)
 -- ---------------------------------------------------------------------------
-INSERT INTO permissions (category, resource, action, is_active, created_at, updated_at) VALUES
-    ('SYSTEM', 'registration', 'read',   true, (now() AT TIME ZONE 'Asia/Kolkata'), (now() AT TIME ZONE 'Asia/Kolkata')),
-    ('SYSTEM', 'registration', 'create', true, (now() AT TIME ZONE 'Asia/Kolkata'), (now() AT TIME ZONE 'Asia/Kolkata')),
-    ('SYSTEM', 'registration', 'delete', true, (now() AT TIME ZONE 'Asia/Kolkata'), (now() AT TIME ZONE 'Asia/Kolkata'))
-ON CONFLICT (category, resource, action) DO NOTHING;
+INSERT INTO permissions (category, resource, action, is_active, created_at, updated_at)
+SELECT v.category, v.resource, v.action, true,
+       (now() AT TIME ZONE 'Asia/Kolkata'),
+       (now() AT TIME ZONE 'Asia/Kolkata')
+FROM (VALUES
+    ('SYSTEM', 'referrals', 'read')
+) AS v(category, resource, action)
+WHERE NOT EXISTS (
+    SELECT 1 FROM permissions p
+    WHERE p.category = v.category
+      AND p.resource  = v.resource
+      AND p.action    = v.action
+);
 
 -- ---------------------------------------------------------------------------
 -- SYSTEM roles (4)
 -- ---------------------------------------------------------------------------
-INSERT INTO permissions (category, resource, action, is_active, created_at, updated_at) VALUES
-    ('SYSTEM', 'roles', 'read',   true, (now() AT TIME ZONE 'Asia/Kolkata'), (now() AT TIME ZONE 'Asia/Kolkata')),
-    ('SYSTEM', 'roles', 'create', true, (now() AT TIME ZONE 'Asia/Kolkata'), (now() AT TIME ZONE 'Asia/Kolkata')),
-    ('SYSTEM', 'roles', 'update', true, (now() AT TIME ZONE 'Asia/Kolkata'), (now() AT TIME ZONE 'Asia/Kolkata')),
-    ('SYSTEM', 'roles', 'delete', true, (now() AT TIME ZONE 'Asia/Kolkata'), (now() AT TIME ZONE 'Asia/Kolkata'))
-ON CONFLICT (category, resource, action) DO NOTHING;
+INSERT INTO permissions (category, resource, action, is_active, created_at, updated_at)
+SELECT v.category, v.resource, v.action, true,
+       (now() AT TIME ZONE 'Asia/Kolkata'),
+       (now() AT TIME ZONE 'Asia/Kolkata')
+FROM (VALUES
+    ('SYSTEM', 'roles', 'read'),
+    ('SYSTEM', 'roles', 'create'),
+    ('SYSTEM', 'roles', 'update'),
+    ('SYSTEM', 'roles', 'delete')
+) AS v(category, resource, action)
+WHERE NOT EXISTS (
+    SELECT 1 FROM permissions p
+    WHERE p.category = v.category
+      AND p.resource  = v.resource
+      AND p.action    = v.action
+);
 
 -- ---------------------------------------------------------------------------
 -- SYSTEM users (4)
 -- ---------------------------------------------------------------------------
-INSERT INTO permissions (category, resource, action, is_active, created_at, updated_at) VALUES
-    ('SYSTEM', 'users', 'read',   true, (now() AT TIME ZONE 'Asia/Kolkata'), (now() AT TIME ZONE 'Asia/Kolkata')),
-    ('SYSTEM', 'users', 'create', true, (now() AT TIME ZONE 'Asia/Kolkata'), (now() AT TIME ZONE 'Asia/Kolkata')),
-    ('SYSTEM', 'users', 'update', true, (now() AT TIME ZONE 'Asia/Kolkata'), (now() AT TIME ZONE 'Asia/Kolkata')),
-    ('SYSTEM', 'users', 'delete', true, (now() AT TIME ZONE 'Asia/Kolkata'), (now() AT TIME ZONE 'Asia/Kolkata'))
-ON CONFLICT (category, resource, action) DO NOTHING;
+INSERT INTO permissions (category, resource, action, is_active, created_at, updated_at)
+SELECT v.category, v.resource, v.action, true,
+       (now() AT TIME ZONE 'Asia/Kolkata'),
+       (now() AT TIME ZONE 'Asia/Kolkata')
+FROM (VALUES
+    ('SYSTEM', 'users', 'read'),
+    ('SYSTEM', 'users', 'create'),
+    ('SYSTEM', 'users', 'update'),
+    ('SYSTEM', 'users', 'delete')
+) AS v(category, resource, action)
+WHERE NOT EXISTS (
+    SELECT 1 FROM permissions p
+    WHERE p.category = v.category
+      AND p.resource  = v.resource
+      AND p.action    = v.action
+);
 
 -- ---------------------------------------------------------------------------
 -- SYSTEM permissions (4)
 -- ---------------------------------------------------------------------------
-INSERT INTO permissions (category, resource, action, is_active, created_at, updated_at) VALUES
-    ('SYSTEM', 'permissions', 'read',   true, (now() AT TIME ZONE 'Asia/Kolkata'), (now() AT TIME ZONE 'Asia/Kolkata')),
-    ('SYSTEM', 'permissions', 'create', true, (now() AT TIME ZONE 'Asia/Kolkata'), (now() AT TIME ZONE 'Asia/Kolkata')),
-    ('SYSTEM', 'permissions', 'update', true, (now() AT TIME ZONE 'Asia/Kolkata'), (now() AT TIME ZONE 'Asia/Kolkata')),
-    ('SYSTEM', 'permissions', 'delete', true, (now() AT TIME ZONE 'Asia/Kolkata'), (now() AT TIME ZONE 'Asia/Kolkata'))
-ON CONFLICT (category, resource, action) DO NOTHING;
+INSERT INTO permissions (category, resource, action, is_active, created_at, updated_at)
+SELECT v.category, v.resource, v.action, true,
+       (now() AT TIME ZONE 'Asia/Kolkata'),
+       (now() AT TIME ZONE 'Asia/Kolkata')
+FROM (VALUES
+    ('SYSTEM', 'permissions', 'read'),
+    ('SYSTEM', 'permissions', 'create'),
+    ('SYSTEM', 'permissions', 'update'),
+    ('SYSTEM', 'permissions', 'delete')
+) AS v(category, resource, action)
+WHERE NOT EXISTS (
+    SELECT 1 FROM permissions p
+    WHERE p.category = v.category
+      AND p.resource  = v.resource
+      AND p.action    = v.action
+);
 
 -- ---------------------------------------------------------------------------
--- APPLICATION module view (8)
+-- APPLICATION module views (9)
 -- ---------------------------------------------------------------------------
-INSERT INTO permissions (category, resource, action, is_active, created_at, updated_at) VALUES
-    ('APPLICATION', 'dashboard', 'view',  true, (now() AT TIME ZONE 'Asia/Kolkata'), (now() AT TIME ZONE 'Asia/Kolkata')),
-    ('APPLICATION', 'pos',       'view',  true, (now() AT TIME ZONE 'Asia/Kolkata'), (now() AT TIME ZONE 'Asia/Kolkata')),
-    ('APPLICATION', 'orders',    'view',  true, (now() AT TIME ZONE 'Asia/Kolkata'), (now() AT TIME ZONE 'Asia/Kolkata')),
-    ('APPLICATION', 'catalog',   'view',  true, (now() AT TIME ZONE 'Asia/Kolkata'), (now() AT TIME ZONE 'Asia/Kolkata')),
-    ('APPLICATION', 'locations', 'view',  true, (now() AT TIME ZONE 'Asia/Kolkata'), (now() AT TIME ZONE 'Asia/Kolkata')),
-    ('APPLICATION', 'coupons',   'view',  true, (now() AT TIME ZONE 'Asia/Kolkata'), (now() AT TIME ZONE 'Asia/Kolkata')),
-    ('APPLICATION', 'users',     'view',  true, (now() AT TIME ZONE 'Asia/Kolkata'), (now() AT TIME ZONE 'Asia/Kolkata')),
-    ('APPLICATION', 'settings',  'view',  true, (now() AT TIME ZONE 'Asia/Kolkata'), (now() AT TIME ZONE 'Asia/Kolkata'))
-ON CONFLICT (category, resource, action) DO NOTHING;
+INSERT INTO permissions (category, resource, action, is_active, created_at, updated_at)
+SELECT v.category, v.resource, v.action, true,
+       (now() AT TIME ZONE 'Asia/Kolkata'),
+       (now() AT TIME ZONE 'Asia/Kolkata')
+FROM (VALUES
+    ('APPLICATION', 'dashboard', 'view'),
+    ('APPLICATION', 'pos',       'view'),
+    ('APPLICATION', 'orders',    'view'),
+    ('APPLICATION', 'catalog',   'view'),
+    ('APPLICATION', 'locations', 'view'),
+    ('APPLICATION', 'coupons',   'view'),
+    ('APPLICATION', 'users',     'view'),
+    ('APPLICATION', 'settings',  'view'),
+    ('APPLICATION', 'persona',   'view')
+) AS v(category, resource, action)
+WHERE NOT EXISTS (
+    SELECT 1 FROM permissions p
+    WHERE p.category = v.category
+      AND p.resource  = v.resource
+      AND p.action    = v.action
+);
 
+-- ---------------------------------------------------------------------------
 -- APPLICATION workspace (3)
 -- ---------------------------------------------------------------------------
-INSERT INTO permissions (category, resource, action, is_active, created_at, updated_at) VALUES
-    ('APPLICATION', 'workspace', 'read',   true, (now() AT TIME ZONE 'Asia/Kolkata'), (now() AT TIME ZONE 'Asia/Kolkata')),
-    ('APPLICATION', 'workspace', 'update', true, (now() AT TIME ZONE 'Asia/Kolkata'), (now() AT TIME ZONE 'Asia/Kolkata')),
-    ('APPLICATION', 'workspace', 'manage', true, (now() AT TIME ZONE 'Asia/Kolkata'), (now() AT TIME ZONE 'Asia/Kolkata'))
-ON CONFLICT (category, resource, action) DO NOTHING;
+INSERT INTO permissions (category, resource, action, is_active, created_at, updated_at)
+SELECT v.category, v.resource, v.action, true,
+       (now() AT TIME ZONE 'Asia/Kolkata'),
+       (now() AT TIME ZONE 'Asia/Kolkata')
+FROM (VALUES
+    ('APPLICATION', 'workspace', 'read'),
+    ('APPLICATION', 'workspace', 'update'),
+    ('APPLICATION', 'workspace', 'manage')
+) AS v(category, resource, action)
+WHERE NOT EXISTS (
+    SELECT 1 FROM permissions p
+    WHERE p.category = v.category
+      AND p.resource  = v.resource
+      AND p.action    = v.action
+);
 
 -- ---------------------------------------------------------------------------
 -- APPLICATION organization (4)
 -- ---------------------------------------------------------------------------
-INSERT INTO permissions (category, resource, action, is_active, created_at, updated_at) VALUES
-    ('APPLICATION', 'organization', 'read',   true, (now() AT TIME ZONE 'Asia/Kolkata'), (now() AT TIME ZONE 'Asia/Kolkata')),
-    ('APPLICATION', 'organization', 'create', true, (now() AT TIME ZONE 'Asia/Kolkata'), (now() AT TIME ZONE 'Asia/Kolkata')),
-    ('APPLICATION', 'organization', 'update', true, (now() AT TIME ZONE 'Asia/Kolkata'), (now() AT TIME ZONE 'Asia/Kolkata')),
-    ('APPLICATION', 'organization', 'delete', true, (now() AT TIME ZONE 'Asia/Kolkata'), (now() AT TIME ZONE 'Asia/Kolkata'))
-ON CONFLICT (category, resource, action) DO NOTHING;
+INSERT INTO permissions (category, resource, action, is_active, created_at, updated_at)
+SELECT v.category, v.resource, v.action, true,
+       (now() AT TIME ZONE 'Asia/Kolkata'),
+       (now() AT TIME ZONE 'Asia/Kolkata')
+FROM (VALUES
+    ('APPLICATION', 'organization', 'read'),
+    ('APPLICATION', 'organization', 'create'),
+    ('APPLICATION', 'organization', 'update'),
+    ('APPLICATION', 'organization', 'delete')
+) AS v(category, resource, action)
+WHERE NOT EXISTS (
+    SELECT 1 FROM permissions p
+    WHERE p.category = v.category
+      AND p.resource  = v.resource
+      AND p.action    = v.action
+);
 
 -- ---------------------------------------------------------------------------
 -- APPLICATION items (4)
 -- ---------------------------------------------------------------------------
-INSERT INTO permissions (category, resource, action, is_active, created_at, updated_at) VALUES
-    ('APPLICATION', 'items', 'read',   true, (now() AT TIME ZONE 'Asia/Kolkata'), (now() AT TIME ZONE 'Asia/Kolkata')),
-    ('APPLICATION', 'items', 'create', true, (now() AT TIME ZONE 'Asia/Kolkata'), (now() AT TIME ZONE 'Asia/Kolkata')),
-    ('APPLICATION', 'items', 'update', true, (now() AT TIME ZONE 'Asia/Kolkata'), (now() AT TIME ZONE 'Asia/Kolkata')),
-    ('APPLICATION', 'items', 'delete', true, (now() AT TIME ZONE 'Asia/Kolkata'), (now() AT TIME ZONE 'Asia/Kolkata'))
-ON CONFLICT (category, resource, action) DO NOTHING;
+INSERT INTO permissions (category, resource, action, is_active, created_at, updated_at)
+SELECT v.category, v.resource, v.action, true,
+       (now() AT TIME ZONE 'Asia/Kolkata'),
+       (now() AT TIME ZONE 'Asia/Kolkata')
+FROM (VALUES
+    ('APPLICATION', 'items', 'read'),
+    ('APPLICATION', 'items', 'create'),
+    ('APPLICATION', 'items', 'update'),
+    ('APPLICATION', 'items', 'delete')
+) AS v(category, resource, action)
+WHERE NOT EXISTS (
+    SELECT 1 FROM permissions p
+    WHERE p.category = v.category
+      AND p.resource  = v.resource
+      AND p.action    = v.action
+);
 
 -- ---------------------------------------------------------------------------
 -- APPLICATION categories (4)
 -- ---------------------------------------------------------------------------
-INSERT INTO permissions (category, resource, action, is_active, created_at, updated_at) VALUES
-    ('APPLICATION', 'categories', 'read',   true, (now() AT TIME ZONE 'Asia/Kolkata'), (now() AT TIME ZONE 'Asia/Kolkata')),
-    ('APPLICATION', 'categories', 'create', true, (now() AT TIME ZONE 'Asia/Kolkata'), (now() AT TIME ZONE 'Asia/Kolkata')),
-    ('APPLICATION', 'categories', 'update', true, (now() AT TIME ZONE 'Asia/Kolkata'), (now() AT TIME ZONE 'Asia/Kolkata')),
-    ('APPLICATION', 'categories', 'delete', true, (now() AT TIME ZONE 'Asia/Kolkata'), (now() AT TIME ZONE 'Asia/Kolkata'))
-ON CONFLICT (category, resource, action) DO NOTHING;
+INSERT INTO permissions (category, resource, action, is_active, created_at, updated_at)
+SELECT v.category, v.resource, v.action, true,
+       (now() AT TIME ZONE 'Asia/Kolkata'),
+       (now() AT TIME ZONE 'Asia/Kolkata')
+FROM (VALUES
+    ('APPLICATION', 'categories', 'read'),
+    ('APPLICATION', 'categories', 'create'),
+    ('APPLICATION', 'categories', 'update'),
+    ('APPLICATION', 'categories', 'delete')
+) AS v(category, resource, action)
+WHERE NOT EXISTS (
+    SELECT 1 FROM permissions p
+    WHERE p.category = v.category
+      AND p.resource  = v.resource
+      AND p.action    = v.action
+);
 
 -- ---------------------------------------------------------------------------
 -- APPLICATION areas (4)
 -- ---------------------------------------------------------------------------
-INSERT INTO permissions (category, resource, action, is_active, created_at, updated_at) VALUES
-    ('APPLICATION', 'areas', 'read',   true, (now() AT TIME ZONE 'Asia/Kolkata'), (now() AT TIME ZONE 'Asia/Kolkata')),
-    ('APPLICATION', 'areas', 'create', true, (now() AT TIME ZONE 'Asia/Kolkata'), (now() AT TIME ZONE 'Asia/Kolkata')),
-    ('APPLICATION', 'areas', 'update', true, (now() AT TIME ZONE 'Asia/Kolkata'), (now() AT TIME ZONE 'Asia/Kolkata')),
-    ('APPLICATION', 'areas', 'delete', true, (now() AT TIME ZONE 'Asia/Kolkata'), (now() AT TIME ZONE 'Asia/Kolkata'))
-ON CONFLICT (category, resource, action) DO NOTHING;
+INSERT INTO permissions (category, resource, action, is_active, created_at, updated_at)
+SELECT v.category, v.resource, v.action, true,
+       (now() AT TIME ZONE 'Asia/Kolkata'),
+       (now() AT TIME ZONE 'Asia/Kolkata')
+FROM (VALUES
+    ('APPLICATION', 'areas', 'read'),
+    ('APPLICATION', 'areas', 'create'),
+    ('APPLICATION', 'areas', 'update'),
+    ('APPLICATION', 'areas', 'delete')
+) AS v(category, resource, action)
+WHERE NOT EXISTS (
+    SELECT 1 FROM permissions p
+    WHERE p.category = v.category
+      AND p.resource  = v.resource
+      AND p.action    = v.action
+);
 
 -- ---------------------------------------------------------------------------
 -- APPLICATION tables (4)
 -- ---------------------------------------------------------------------------
-INSERT INTO permissions (category, resource, action, is_active, created_at, updated_at) VALUES
-    ('APPLICATION', 'tables', 'read',   true, (now() AT TIME ZONE 'Asia/Kolkata'), (now() AT TIME ZONE 'Asia/Kolkata')),
-    ('APPLICATION', 'tables', 'create', true, (now() AT TIME ZONE 'Asia/Kolkata'), (now() AT TIME ZONE 'Asia/Kolkata')),
-    ('APPLICATION', 'tables', 'update', true, (now() AT TIME ZONE 'Asia/Kolkata'), (now() AT TIME ZONE 'Asia/Kolkata')),
-    ('APPLICATION', 'tables', 'delete', true, (now() AT TIME ZONE 'Asia/Kolkata'), (now() AT TIME ZONE 'Asia/Kolkata'))
-ON CONFLICT (category, resource, action) DO NOTHING;
+INSERT INTO permissions (category, resource, action, is_active, created_at, updated_at)
+SELECT v.category, v.resource, v.action, true,
+       (now() AT TIME ZONE 'Asia/Kolkata'),
+       (now() AT TIME ZONE 'Asia/Kolkata')
+FROM (VALUES
+    ('APPLICATION', 'tables', 'read'),
+    ('APPLICATION', 'tables', 'create'),
+    ('APPLICATION', 'tables', 'update'),
+    ('APPLICATION', 'tables', 'delete')
+) AS v(category, resource, action)
+WHERE NOT EXISTS (
+    SELECT 1 FROM permissions p
+    WHERE p.category = v.category
+      AND p.resource  = v.resource
+      AND p.action    = v.action
+);
 
 -- ---------------------------------------------------------------------------
 -- APPLICATION reviews (5)
 -- ---------------------------------------------------------------------------
-INSERT INTO permissions (category, resource, action, is_active, created_at, updated_at) VALUES
-    ('APPLICATION', 'reviews', 'read',     true, (now() AT TIME ZONE 'Asia/Kolkata'), (now() AT TIME ZONE 'Asia/Kolkata')),
-    ('APPLICATION', 'reviews', 'create',   true, (now() AT TIME ZONE 'Asia/Kolkata'), (now() AT TIME ZONE 'Asia/Kolkata')),
-    ('APPLICATION', 'reviews', 'update',   true, (now() AT TIME ZONE 'Asia/Kolkata'), (now() AT TIME ZONE 'Asia/Kolkata')),
-    ('APPLICATION', 'reviews', 'delete',   true, (now() AT TIME ZONE 'Asia/Kolkata'), (now() AT TIME ZONE 'Asia/Kolkata')),
-    ('APPLICATION', 'reviews', 'moderate', true, (now() AT TIME ZONE 'Asia/Kolkata'), (now() AT TIME ZONE 'Asia/Kolkata'))
-ON CONFLICT (category, resource, action) DO NOTHING;
+INSERT INTO permissions (category, resource, action, is_active, created_at, updated_at)
+SELECT v.category, v.resource, v.action, true,
+       (now() AT TIME ZONE 'Asia/Kolkata'),
+       (now() AT TIME ZONE 'Asia/Kolkata')
+FROM (VALUES
+    ('APPLICATION', 'reviews', 'read'),
+    ('APPLICATION', 'reviews', 'create'),
+    ('APPLICATION', 'reviews', 'update'),
+    ('APPLICATION', 'reviews', 'delete'),
+    ('APPLICATION', 'reviews', 'moderate')
+) AS v(category, resource, action)
+WHERE NOT EXISTS (
+    SELECT 1 FROM permissions p
+    WHERE p.category = v.category
+      AND p.resource  = v.resource
+      AND p.action    = v.action
+);
 
 -- ---------------------------------------------------------------------------
 -- APPLICATION orders (6)
 -- ---------------------------------------------------------------------------
-INSERT INTO permissions (category, resource, action, is_active, created_at, updated_at) VALUES
-    ('APPLICATION', 'orders', 'read',    true, (now() AT TIME ZONE 'Asia/Kolkata'), (now() AT TIME ZONE 'Asia/Kolkata')),
-    ('APPLICATION', 'orders', 'create',  true, (now() AT TIME ZONE 'Asia/Kolkata'), (now() AT TIME ZONE 'Asia/Kolkata')),
-    ('APPLICATION', 'orders', 'update',  true, (now() AT TIME ZONE 'Asia/Kolkata'), (now() AT TIME ZONE 'Asia/Kolkata')),
-    ('APPLICATION', 'orders', 'delete',  true, (now() AT TIME ZONE 'Asia/Kolkata'), (now() AT TIME ZONE 'Asia/Kolkata')),
-    ('APPLICATION', 'orders', 'status',  true, (now() AT TIME ZONE 'Asia/Kolkata'), (now() AT TIME ZONE 'Asia/Kolkata')),
-    ('APPLICATION', 'orders', 'payment', true, (now() AT TIME ZONE 'Asia/Kolkata'), (now() AT TIME ZONE 'Asia/Kolkata'))
-ON CONFLICT (category, resource, action) DO NOTHING;
+INSERT INTO permissions (category, resource, action, is_active, created_at, updated_at)
+SELECT v.category, v.resource, v.action, true,
+       (now() AT TIME ZONE 'Asia/Kolkata'),
+       (now() AT TIME ZONE 'Asia/Kolkata')
+FROM (VALUES
+    ('APPLICATION', 'orders', 'read'),
+    ('APPLICATION', 'orders', 'create'),
+    ('APPLICATION', 'orders', 'update'),
+    ('APPLICATION', 'orders', 'delete'),
+    ('APPLICATION', 'orders', 'status'),
+    ('APPLICATION', 'orders', 'payment')
+) AS v(category, resource, action)
+WHERE NOT EXISTS (
+    SELECT 1 FROM permissions p
+    WHERE p.category = v.category
+      AND p.resource  = v.resource
+      AND p.action    = v.action
+);
 
 -- ---------------------------------------------------------------------------
 -- APPLICATION status (1)
 -- ---------------------------------------------------------------------------
-INSERT INTO permissions (category, resource, action, is_active, created_at, updated_at) VALUES
-    ('APPLICATION', 'status', 'update', true, (now() AT TIME ZONE 'Asia/Kolkata'), (now() AT TIME ZONE 'Asia/Kolkata'))
-ON CONFLICT (category, resource, action) DO NOTHING;
+INSERT INTO permissions (category, resource, action, is_active, created_at, updated_at)
+SELECT v.category, v.resource, v.action, true,
+       (now() AT TIME ZONE 'Asia/Kolkata'),
+       (now() AT TIME ZONE 'Asia/Kolkata')
+FROM (VALUES
+    ('APPLICATION', 'status', 'update')
+) AS v(category, resource, action)
+WHERE NOT EXISTS (
+    SELECT 1 FROM permissions p
+    WHERE p.category = v.category
+      AND p.resource  = v.resource
+      AND p.action    = v.action
+);
 
 -- ---------------------------------------------------------------------------
 -- APPLICATION users (4)
 -- ---------------------------------------------------------------------------
-INSERT INTO permissions (category, resource, action, is_active, created_at, updated_at) VALUES
-    ('APPLICATION', 'users', 'read',   true, (now() AT TIME ZONE 'Asia/Kolkata'), (now() AT TIME ZONE 'Asia/Kolkata')),
-    ('APPLICATION', 'users', 'create', true, (now() AT TIME ZONE 'Asia/Kolkata'), (now() AT TIME ZONE 'Asia/Kolkata')),
-    ('APPLICATION', 'users', 'update', true, (now() AT TIME ZONE 'Asia/Kolkata'), (now() AT TIME ZONE 'Asia/Kolkata')),
-    ('APPLICATION', 'users', 'delete', true, (now() AT TIME ZONE 'Asia/Kolkata'), (now() AT TIME ZONE 'Asia/Kolkata'))
-ON CONFLICT (category, resource, action) DO NOTHING;
+INSERT INTO permissions (category, resource, action, is_active, created_at, updated_at)
+SELECT v.category, v.resource, v.action, true,
+       (now() AT TIME ZONE 'Asia/Kolkata'),
+       (now() AT TIME ZONE 'Asia/Kolkata')
+FROM (VALUES
+    ('APPLICATION', 'users', 'read'),
+    ('APPLICATION', 'users', 'create'),
+    ('APPLICATION', 'users', 'update'),
+    ('APPLICATION', 'users', 'delete')
+) AS v(category, resource, action)
+WHERE NOT EXISTS (
+    SELECT 1 FROM permissions p
+    WHERE p.category = v.category
+      AND p.resource  = v.resource
+      AND p.action    = v.action
+);
 
 -- ---------------------------------------------------------------------------
 -- APPLICATION dashboard (1)
 -- ---------------------------------------------------------------------------
-INSERT INTO permissions (category, resource, action, is_active, created_at, updated_at) VALUES
-    ('APPLICATION', 'dashboard', 'read', true, (now() AT TIME ZONE 'Asia/Kolkata'), (now() AT TIME ZONE 'Asia/Kolkata'))
-ON CONFLICT (category, resource, action) DO NOTHING;
+INSERT INTO permissions (category, resource, action, is_active, created_at, updated_at)
+SELECT v.category, v.resource, v.action, true,
+       (now() AT TIME ZONE 'Asia/Kolkata'),
+       (now() AT TIME ZONE 'Asia/Kolkata')
+FROM (VALUES
+    ('APPLICATION', 'dashboard', 'read')
+) AS v(category, resource, action)
+WHERE NOT EXISTS (
+    SELECT 1 FROM permissions p
+    WHERE p.category = v.category
+      AND p.resource  = v.resource
+      AND p.action    = v.action
+);
 
 -- ---------------------------------------------------------------------------
 -- APPLICATION coupons (4)
 -- ---------------------------------------------------------------------------
-INSERT INTO permissions (category, resource, action, is_active, created_at, updated_at) VALUES
-    ('APPLICATION', 'coupons', 'read',   true, (now() AT TIME ZONE 'Asia/Kolkata'), (now() AT TIME ZONE 'Asia/Kolkata')),
-    ('APPLICATION', 'coupons', 'create', true, (now() AT TIME ZONE 'Asia/Kolkata'), (now() AT TIME ZONE 'Asia/Kolkata')),
-    ('APPLICATION', 'coupons', 'update', true, (now() AT TIME ZONE 'Asia/Kolkata'), (now() AT TIME ZONE 'Asia/Kolkata')),
-    ('APPLICATION', 'coupons', 'delete', true, (now() AT TIME ZONE 'Asia/Kolkata'), (now() AT TIME ZONE 'Asia/Kolkata'))
-ON CONFLICT (category, resource, action) DO NOTHING;
+INSERT INTO permissions (category, resource, action, is_active, created_at, updated_at)
+SELECT v.category, v.resource, v.action, true,
+       (now() AT TIME ZONE 'Asia/Kolkata'),
+       (now() AT TIME ZONE 'Asia/Kolkata')
+FROM (VALUES
+    ('APPLICATION', 'coupons', 'read'),
+    ('APPLICATION', 'coupons', 'create'),
+    ('APPLICATION', 'coupons', 'update'),
+    ('APPLICATION', 'coupons', 'delete')
+) AS v(category, resource, action)
+WHERE NOT EXISTS (
+    SELECT 1 FROM permissions p
+    WHERE p.category = v.category
+      AND p.resource  = v.resource
+      AND p.action    = v.action
+);
 
 -- ---------------------------------------------------------------------------
--- Verification: count per category (expected: SYSTEM=29, APPLICATION=50, total=79)
+-- APPLICATION persona (4)
+-- ---------------------------------------------------------------------------
+INSERT INTO permissions (category, resource, action, is_active, created_at, updated_at)
+SELECT v.category, v.resource, v.action, true,
+       (now() AT TIME ZONE 'Asia/Kolkata'),
+       (now() AT TIME ZONE 'Asia/Kolkata')
+FROM (VALUES
+    ('APPLICATION', 'persona', 'read'),
+    ('APPLICATION', 'persona', 'create'),
+    ('APPLICATION', 'persona', 'update'),
+    ('APPLICATION', 'persona', 'delete')
+) AS v(category, resource, action)
+WHERE NOT EXISTS (
+    SELECT 1 FROM permissions p
+    WHERE p.category = v.category
+      AND p.resource  = v.resource
+      AND p.action    = v.action
+);
+
+-- ---------------------------------------------------------------------------
+-- Verification: count per category (expected: SYSTEM=30, APPLICATION=55, total=85)
 -- ---------------------------------------------------------------------------
 SELECT
     category,

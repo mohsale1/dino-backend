@@ -1,5 +1,5 @@
-"""
-dino-system ORM models package.
+﻿"""
+system ORM models package.
 
 Importing this package registers all mapped classes against Base.metadata,
 which is required for Alembic autogenerate to discover every table.
@@ -27,6 +27,7 @@ from src.models.WorkspaceBilling import WorkspaceBilling  # noqa: F401
 from src.models.BillingTransaction import BillingTransaction  # noqa: F401
 from src.models.Persona import Persona  # noqa: F401
 from src.models.User import User  # noqa: F401
+from src.models.WorkspaceRequest import WorkspaceRequest  # noqa: F401
 
 __all__ = [
     # Base
@@ -41,6 +42,7 @@ __all__ = [
     "WorkspaceBilling",
     "BillingTransaction",
     "Persona",
+    "WorkspaceRequest",
     # Association tables
     "role_permissions",
     "workspace_personas",

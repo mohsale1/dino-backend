@@ -35,6 +35,7 @@ import src.models.Workspace         # noqa: F401
 import src.models.WorkspaceBilling    # noqa: F401
 import src.models.BillingTransaction  # noqa: F401
 import src.models.Persona             # noqa: F401
+import src.model.WorkspaceRequests
 
 # ---------------------------------------------------------------------------
 # Alembic Config object

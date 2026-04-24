@@ -1,6 +1,7 @@
 -- =============================================================================
 -- Seed: roles
--- Safe to re-run (idempotent) — ON CONFLICT (name) DO NOTHING
+-- Safe to re-run (idempotent) — INSERT only if the role name does not exist.
+-- Uses NOT EXISTS check on the unique key (name).
 -- Total: 6 roles  |  role_type: 0 = System, 1 = Application
 -- =============================================================================
 
@@ -9,61 +10,63 @@ BEGIN;
 -- ---------------------------------------------------------------------------
 -- APPLICATION roles (role_type = 1)
 -- ---------------------------------------------------------------------------
-
-INSERT INTO roles (name, description, role_type, is_active, created_at, updated_at) VALUES
-
+INSERT INTO roles (name, description, role_type, is_active, created_at, updated_at)
+SELECT v.name, v.description, v.role_type, true,
+       (now() AT TIME ZONE 'Asia/Kolkata'),
+       (now() AT TIME ZONE 'Asia/Kolkata')
+FROM (VALUES
     (
         'Owner',
         'Full access to all application modules including workspace management, '
         'organization switching, user administration, catalog, locations, orders, '
-        'POS, and analytics.',
-        1, true, (now() AT TIME ZONE 'Asia/Kolkata'), (now() AT TIME ZONE 'Asia/Kolkata')
+        'POS, personas and analytics.',
+        1
     ),
-
     (
         'Manager',
-        'Broad access to all operational modules. Cannot manage workspace settings, '
-        'delete users, or delete catalog and coupon records.',
-        1, true, (now() AT TIME ZONE 'Asia/Kolkata'), (now() AT TIME ZONE 'Asia/Kolkata')
+        'Full application access except persona module management. Can only read '
+        'their own persona, cannot view or manage the personas module.',
+        1
     ),
-
     (
         'User',
-        'Restricted to the orders module only. Can create, view, update order status, '
-        'and process payments.',
-        1, true, (now() AT TIME ZONE 'Asia/Kolkata'), (now() AT TIME ZONE 'Asia/Kolkata')
+        'Restricted to the orders module only. Can view orders and update order status.',
+        1
     )
-
-ON CONFLICT (name) DO NOTHING;
+) AS v(name, description, role_type)
+WHERE NOT EXISTS (
+    SELECT 1 FROM roles r WHERE r.name = v.name
+);
 
 -- ---------------------------------------------------------------------------
 -- SYSTEM roles (role_type = 0)
 -- ---------------------------------------------------------------------------
-
-INSERT INTO roles (name, description, role_type, is_active, created_at, updated_at) VALUES
-
+INSERT INTO roles (name, description, role_type, is_active, created_at, updated_at)
+SELECT v.name, v.description, v.role_type, true,
+       (now() AT TIME ZONE 'Asia/Kolkata'),
+       (now() AT TIME ZONE 'Asia/Kolkata')
+FROM (VALUES
     (
         'SuperAdmin',
         'Unrestricted access to the entire system including user management, billing, '
-        'registration codes, and role and permission management.',
-        0, true, (now() AT TIME ZONE 'Asia/Kolkata'), (now() AT TIME ZONE 'Asia/Kolkata')
+        'workspace management, and role and permission management.',
+        0
     ),
-
     (
         'Admin',
-        'Access to most system modules. Cannot delete workspaces, manage roles, '
-        'or manage permissions.',
-        0, true, (now() AT TIME ZONE 'Asia/Kolkata'), (now() AT TIME ZONE 'Asia/Kolkata')
+        'Read-only access across all system modules. Can approve workspace requests. '
+        'Cannot create, update or delete any resource.',
+        0
     ),
-
     (
         'Operator',
-        'Read-only access across all system resources. Cannot create, update, '
-        'or delete any entity.',
-        0, true, (now() AT TIME ZONE 'Asia/Kolkata'), (now() AT TIME ZONE 'Asia/Kolkata')
+        'Read-only access to workspaces and billing modules only.',
+        0
     )
-
-ON CONFLICT (name) DO NOTHING;
+) AS v(name, description, role_type)
+WHERE NOT EXISTS (
+    SELECT 1 FROM roles r WHERE r.name = v.name
+);
 
 -- ---------------------------------------------------------------------------
 -- Verification: all 6 roles grouped by type

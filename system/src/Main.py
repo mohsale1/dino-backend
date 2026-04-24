@@ -1,4 +1,4 @@
-import logging
+﻿import logging
 import os
 from contextlib import asynccontextmanager
 
@@ -21,6 +21,7 @@ from src.system.routes import Personas as SystemPersonas
 from src.system.routes import Roles as SystemRoles
 from src.system.routes import Users as SystemUsers
 from src.system.routes import Workspaces as SystemWorkspaces
+from src.system.routes import WorkspaceRequests as SystemWorkspaceRequests
 
 logging.basicConfig(
     level=getattr(logging, settings.LOG_LEVEL, logging.INFO),
@@ -40,7 +41,7 @@ async def _run_migrations() -> None:
       2. Load the ScriptDirectory to find the head revision.
       3. If already at head, skip.
       4. Otherwise run upgrade using EnvironmentContext.configure() on a
-         live synchronous connection — no subprocess, no env.py file
+         live synchronous connection â€” no subprocess, no env.py file
          loading, no double-connection conflicts.
          EnvironmentContext.__enter__ installs the 'op' proxy that
          migration scripts depend on (from alembic import op).
@@ -63,7 +64,7 @@ async def _run_migrations() -> None:
     ssl_ctx = connect_args.get("ssl")
 
     # ------------------------------------------------------------------
-    # Step 1 — check current revision via asyncpg
+    # Step 1 â€” check current revision via asyncpg
     # ------------------------------------------------------------------
     current_revision = None
     try:
@@ -83,11 +84,11 @@ async def _run_migrations() -> None:
             await conn.close()
     except Exception as exc:
         logger.warning(
-            f"Could not check alembic_version: {exc} — will attempt migration anyway."
+            f"Could not check alembic_version: {exc} â€” will attempt migration anyway."
         )
 
     # ------------------------------------------------------------------
-    # Step 2 — resolve head revision from the script directory
+    # Step 2 â€” resolve head revision from the script directory
     # ------------------------------------------------------------------
     alembic_cfg = Config()
     alembic_cfg.set_main_option("script_location", "src/alembic")
@@ -97,25 +98,25 @@ async def _run_migrations() -> None:
     head_revision = script.get_current_head()
 
     if current_revision is None:
-        logger.info("Fresh database — running full migration from base...")
+        logger.info("Fresh database â€” running full migration from base...")
     elif current_revision == head_revision:
         logger.info(
-            f"Database already at head ({head_revision}) — no migrations needed."
+            f"Database already at head ({head_revision}) â€” no migrations needed."
         )
         return
     else:
         logger.info(
-            f"Database at {current_revision}, head is {head_revision} — upgrading..."
+            f"Database at {current_revision}, head is {head_revision} â€” upgrading..."
         )
 
     # ------------------------------------------------------------------
-    # Step 3 — run upgrade in-process via EnvironmentContext
+    # Step 3 â€” run upgrade in-process via EnvironmentContext
     #
     # EnvironmentContext.__enter__ installs the 'op' proxy (and the
     # 'context' proxy) that migration scripts import at module level.
     # We call env_ctx.configure(connection=sync_conn) to bind the live
     # connection, then env_ctx.run_migrations() to execute the steps.
-    # env.py is never loaded — we replicate exactly what it does.
+    # env.py is never loaded â€” we replicate exactly what it does.
     # ------------------------------------------------------------------
     def _do_upgrade(sync_conn):
         with EnvironmentContext(
@@ -148,16 +149,12 @@ async def _run_migrations() -> None:
     logger.info("Alembic upgrade head completed successfully.")
 
 
-
-
-
-
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan events."""
     _banner = "=" * 60
     logger.info(_banner)
-    logger.info("  DINO SYSTEM — STARTING UP")
+    logger.info("  DINO SYSTEM â€” STARTING UP")
     logger.info(_banner)
     logger.info(f"  App Version  : {settings.APP_VERSION}")
     logger.info(f"  Build ID     : {settings.BUILD_ID}")
@@ -189,13 +186,13 @@ async def lifespan(app: FastAPI):
         raise
 
     logger.info(_banner)
-    logger.info(f"  DINO SYSTEM — READY  (build: {settings.BUILD_ID})")
+    logger.info(f"  DINO SYSTEM â€” READY  (build: {settings.BUILD_ID})")
     logger.info(_banner)
 
     yield
 
     logger.info(_banner)
-    logger.info("  DINO SYSTEM — SHUTTING DOWN")
+    logger.info("  DINO SYSTEM â€” SHUTTING DOWN")
     logger.info(_banner)
     try:
         await close_db()
@@ -210,7 +207,7 @@ _redoc_url = None if settings.ENVIRONMENT == "production" else "/redoc"
 app = FastAPI(
     title=settings.APP_NAME,
     version=settings.APP_VERSION,
-    description="Dino System Service — system-level administration and management",
+    description="Dino System Service â€” system-level administration and management",
     lifespan=lifespan,
     docs_url=_docs_url,
     redoc_url=_redoc_url,
@@ -258,14 +255,14 @@ async def root():
 
 @app.get("/health")
 async def health_check():
-    """Health check endpoint — probes live PostgreSQL connectivity."""
+    """Health check endpoint â€” probes live PostgreSQL connectivity."""
     if async_session_factory is None:
         return {"status": "starting"}
     try:
         async with async_session_factory() as db:
             await db.execute(text("SELECT 1"))
     except Exception as e:
-        logger.error(f"Health check failed — PostgreSQL unreachable: {e}")
+        logger.error(f"Health check failed â€” PostgreSQL unreachable: {e}")
         return JSONResponse(
             status_code=503,
             content={
@@ -292,6 +289,7 @@ app.include_router(SystemUsers.router, prefix=_PREFIX, tags=["System"])
 app.include_router(SystemWorkspaces.router, prefix=_PREFIX, tags=["System"])
 app.include_router(SystemBilling.router, prefix=_PREFIX, tags=["System"])
 app.include_router(SystemPersonas.router, prefix=_PREFIX, tags=["System"])
+app.include_router(SystemWorkspaceRequests.router, prefix=_PREFIX, tags=["System"])
 
 if __name__ == "__main__":
     import uvicorn

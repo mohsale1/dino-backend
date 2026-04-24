@@ -1,3 +1,4 @@
-from .Dashboard import SystemDashboardService
+﻿from .Dashboard import SystemDashboardService
+from .WorkspaceRequest import WorkspaceRequestService
 
-__all__ = ['SystemDashboardService']
+__all__ = ['SystemDashboardService', 'WorkspaceRequestService']
