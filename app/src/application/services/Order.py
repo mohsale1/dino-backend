@@ -47,14 +47,18 @@ class OrderService:
             tax_amount (opt), service_charge (opt), discount_amount (opt),
             items: list of {item_id, quantity}
         """
+        if not data.get("items", []):
+            raise ValueError("Order must contain at least one item")
+
         order_id = generate_order_id(data["workspace_id"])
 
         # Fetch item prices from DB
-        item_ids = [i["item_id"] for i in data.get("items", [])]
+        item_ids = [i["item_id"] for i in data["items"]]
         price_map: Dict[int, Dict[str, Any]] = {}
         if item_ids:
             stmt = select(Item).where(
                 Item.id.in_(item_ids),
+                Item.workspace_id == data["workspace_id"],
                 Item.is_active.is_(True),  # noqa: E712
             )
             result = await self.db.execute(stmt)
@@ -64,7 +68,7 @@ class OrderService:
         # Build line items
         line_items: List[Dict[str, Any]] = []
         subtotal = Decimal("0.00")
-        for entry in data.get("items", []):
+        for entry in data["items"]:
             item_id = entry["item_id"]
             quantity = int(entry.get("quantity", 1))
             item_info = price_map.get(item_id)
@@ -90,7 +94,6 @@ class OrderService:
         discount_amount = Decimal(str(data.get("discount_amount", "0.00")))
         total_amount = subtotal + tax_amount + service_charge - discount_amount
 
-        # Create order_details
         detail_payload = {
             "order_id": order_id,
             "order_type": data.get("order_type", "dine_in"),
@@ -111,15 +114,15 @@ class OrderService:
             "created_by": data.get("created_by"),
             "is_active": True,
         }
-        order_detail = await self.detail_repo.create(detail_payload)
 
-        # Bulk-create line items
-        created_items: List[Dict[str, Any]] = []
-        if line_items:
-            created_items = await self.order_repo.bulk_create(line_items)
+        # Atomically create order_details + line items under a savepoint
+        async with self.db.begin_nested():
+            order_detail = await self.detail_repo.create(detail_payload)
+            created_items: List[Dict[str, Any]] = await self.order_repo.bulk_create(line_items)
 
         order_detail["items"] = created_items
         return order_detail
+
 
     # ------------------------------------------------------------------
     # Read

@@ -30,13 +30,13 @@ class OrderItemIn(BaseModel):
 
 class CreateOrderRequest(BaseModel):
     persona_id: int
-    order_type: str = "dine_in"
+    order_type: Literal["dine_in", "takeaway", "delivery"] = "dine_in"
     customer_id: Optional[int] = None
-    customer_name: str = "Guest"
+    customer_name: str = Field("Guest", max_length=200)
     table_id: Optional[int] = None
     area_id: Optional[int] = None
-    currency: str = "INR"
-    special_instructions: Optional[str] = None
+    currency: str = Field("INR", max_length=3)
+    special_instructions: Optional[str] = Field(None, max_length=1000)
     tax_amount: Optional[float] = 0.0
     service_charge: Optional[float] = 0.0
     discount_amount: Optional[float] = 0.0
@@ -48,24 +48,23 @@ class UpdateStatusRequest(BaseModel):
 
 
 class CreateTransactionRequest(BaseModel):
-    persona_id: int
     customer_id: Optional[int] = None
     paid_amount: float = 0.0
     total_amount: float
-    currency: str = "INR"
-    payment_method: Optional[str] = None
-    payment_status: str = "unpaid"
-    payment_ref: Optional[str] = None
-    notes: Optional[str] = None
+    currency: str = Field("INR", max_length=3)
+    payment_method: Optional[str] = Field(None, max_length=50)
+    payment_status: Literal["unpaid", "partial", "paid", "refunded"] = "unpaid"
+    payment_ref: Optional[str] = Field(None, max_length=200)
+    notes: Optional[str] = Field(None, max_length=500)
 
 
 class UpdateTransactionRequest(BaseModel):
     paid_amount: Optional[float] = None
     total_amount: Optional[float] = None
-    payment_method: Optional[str] = None
-    payment_status: Optional[str] = None
-    payment_ref: Optional[str] = None
-    notes: Optional[str] = None
+    payment_method: Optional[str] = Field(None, max_length=50)
+    payment_status: Optional[Literal["unpaid", "partial", "paid", "refunded"]] = None
+    payment_ref: Optional[str] = Field(None, max_length=200)
+    notes: Optional[str] = Field(None, max_length=500)
 
 
 # ---------------------------------------------------------------------------
@@ -92,7 +91,6 @@ async def create_order(
     service = OrderService(db)
     data = request.model_dump()
     data["workspace_id"] = workspace_id
-    data["items"] = [i.model_dump() for i in request.items]
     data["created_by"] = current_user.get("id")
     try:
         order = await service.create_order(data)
@@ -126,7 +124,7 @@ async def get_order_statistics(
 @router.get("/transactions", response_model=BaseResponse)
 async def get_transactions(
     persona_id: Optional[int] = Query(None),
-    payment_status: Optional[str] = Query(None),
+    payment_status: Optional[Literal["unpaid", "partial", "paid", "refunded"]] = Query(None),
     start_date: Optional[datetime] = Query(None),
     end_date: Optional[datetime] = Query(None),
     page: int = Query(1, ge=1),
@@ -186,9 +184,8 @@ async def update_transaction(
 
 @router.get("", response_model=BaseResponse)
 async def get_orders(
-    workspace_id: Optional[int] = Query(None),
     persona_id: Optional[int] = Query(None),
-    order_status: Optional[str] = Query(None, alias="status"),
+    order_status: Optional[Literal["pending", "confirmed", "preparing", "ready", "completed", "cancelled"]] = Query(None, alias="status"),
     start_date: Optional[datetime] = Query(None),
     end_date: Optional[datetime] = Query(None),
     page: int = Query(1, ge=1),
@@ -197,7 +194,7 @@ async def get_orders(
     db: AsyncSession = Depends(get_db),
 ):
     """Get paginated order list."""
-    wid = workspace_id or current_user.get("workspace_id")
+    wid = current_user.get("workspace_id")
     if not wid:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="workspace_id required")
     service = OrderService(db)
@@ -274,6 +271,12 @@ async def cancel_order(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Order not found")
     if order.get("workspace_id") != current_user.get("workspace_id"):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
+    terminal_status = order.get("status")
+    if terminal_status in ("cancelled", "served", "completed"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Cannot cancel an order that is already {terminal_status}",
+        )
     success = await service.cancel_order(order_id)
     if not success:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Order not found")
@@ -319,6 +322,7 @@ async def create_transaction(
     data = request.model_dump()
     data["workspace_id"] = workspace_id
     data["order_id"] = order_id
+    data["persona_id"] = order.get("persona_id")
     transaction = await tx_service.create_transaction(data)
     return {"success": True, "message": "Transaction created successfully", "data": transaction}
 

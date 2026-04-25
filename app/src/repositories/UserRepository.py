@@ -19,8 +19,18 @@ class UserRepository(BaseRepository):
         super().__init__(User, db)
 
     async def get_by_workspace(self, workspace_id: int) -> List[Dict[str, Any]]:
-        """Return all active users belonging to a workspace."""
-        return await self.get_all(filters={"workspace_id": workspace_id})
+        """Return all active application users (user_type=1) belonging to a workspace."""
+        stmt = (
+            select(User)
+            .where(
+                User.workspace_id == workspace_id,
+                User.user_type == 1,
+                User.is_active.is_(True),
+            )
+            .order_by(User.created_at.desc())
+        )
+        result = await self.db.execute(stmt)
+        return [row_to_dict(r) for r in result.scalars().all()]
 
     async def get_by_persona(self, persona_id: int) -> List[Dict[str, Any]]:
         """Return all active users linked to a persona via user_personas."""
@@ -36,8 +46,18 @@ class UserRepository(BaseRepository):
         return [row_to_dict(r) for r in result.scalars().all()]
 
     async def get_by_role(self, role_id: int) -> List[Dict[str, Any]]:
-        """Return all active users assigned to a role."""
-        return await self.get_all(filters={"role_id": role_id})
+        """Return all active application users (user_type=1) assigned to a role."""
+        stmt = (
+            select(User)
+            .where(
+                User.role_id == role_id,
+                User.user_type == 1,
+                User.is_active.is_(True),
+            )
+            .order_by(User.created_at.desc())
+        )
+        result = await self.db.execute(stmt)
+        return [row_to_dict(r) for r in result.scalars().all()]
 
     async def email_exists(
         self,
@@ -71,6 +91,8 @@ class UserRepository(BaseRepository):
 
         if not include_deleted:
             clauses.append(User.is_active.is_(True))  # noqa: E712
+
+        clauses.append(User.user_type == 1)
 
         if workspace_id is not None:
             clauses.append(User.workspace_id == workspace_id)

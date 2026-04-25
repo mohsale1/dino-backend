@@ -109,7 +109,6 @@ async def _get_testimonials(db: AsyncSession, limit: int = 6) -> List[Dict[str, 
             Review.created_at,
             User.first_name,
             User.last_name,
-            User.email.label("user_email"),
             Persona.name.label("restaurant"),
         )
         .outerjoin(User, Review.user_id == User.id)
@@ -128,7 +127,7 @@ async def _get_testimonials(db: AsyncSession, limit: int = 6) -> List[Dict[str, 
     for row in rows:
         first = row.first_name or ""
         last = row.last_name or ""
-        name = f"{first} {last}".strip() or row.user_email or "Anonymous"
+        name = f"{first} {last}".strip() or "Anonymous"
         testimonials.append({
             "name": name,
             "role": "Customer",

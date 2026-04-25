@@ -8,8 +8,8 @@ from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import JSONResponse
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
-from slowapi.util import get_remote_address
 from sqlalchemy import text
+from sqlalchemy.exc import SQLAlchemyError
 
 from src.config.Database import async_session_factory, close_db, initialize_db
 from src.config.Settings import settings
@@ -39,7 +39,14 @@ logging.basicConfig(
 
 logger = logging.getLogger(__name__)
 
-limiter = Limiter(key_func=get_remote_address)
+def _get_real_ip(request: Request) -> str:
+    forwarded_for = request.headers.get("X-Forwarded-For")
+    if forwarded_for:
+        return forwarded_for.split(",")[0].strip()
+    return request.client.host if request.client else "unknown"
+
+
+limiter = Limiter(key_func=_get_real_ip)
 
 
 @asynccontextmanager
@@ -135,6 +142,15 @@ app.include_router(Reviews.router, prefix=PREFIX)
 app.include_router(HomePage.router, prefix=PREFIX)
 
 
+@app.exception_handler(SQLAlchemyError)
+async def db_exception_handler(request: Request, exc: SQLAlchemyError):
+    logger.error("Database error on %s %s", request.method, request.url.path, exc_info=exc)
+    return JSONResponse(
+        status_code=503,
+        content={"success": False, "message": "Service temporarily unavailable", "error": "Database error"},
+    )
+
+
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
     """Global exception handler"""
@@ -147,6 +163,18 @@ async def global_exception_handler(request: Request, exc: Exception):
             "error": "An error occurred",
         },
     )
+
+
+@app.middleware("http")
+async def security_headers_middleware(request: Request, call_next):
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "no-referrer"
+    response.headers["X-XSS-Protection"] = "0"
+    if request.url.scheme == "https":
+        response.headers["Strict-Transport-Security"] = "max-age=63072000; includeSubDomains"
+    return response
 
 
 @app.get("/")
@@ -178,12 +206,10 @@ async def health():
             content={
                 "success": False,
                 "status": "unhealthy",
-                "version": settings.APP_VERSION,
                 "detail": "PostgreSQL connectivity check failed",
             },
         )
     return {
         "success": True,
         "status": "healthy",
-        "version": settings.APP_VERSION,
     }

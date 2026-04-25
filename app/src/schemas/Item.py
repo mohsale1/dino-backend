@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Optional
 
-from pydantic import AnyHttpUrl, BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class ItemBase(BaseModel):
@@ -14,7 +14,7 @@ class ItemBase(BaseModel):
 
 
 class ItemCreate(ItemBase):
-    image_url: Optional[AnyHttpUrl] = None
+    image_url: Optional[str] = None
 
 
 class ItemUpdate(BaseModel):
@@ -24,7 +24,7 @@ class ItemUpdate(BaseModel):
     price: Optional[float] = Field(None, ge=0)
     is_available: Optional[bool] = None
     is_vegetarian: Optional[bool] = None
-    image_url: Optional[AnyHttpUrl] = None
+    image_url: Optional[str] = None
 
 
 class ItemResponse(BaseModel):

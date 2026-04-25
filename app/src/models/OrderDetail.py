@@ -5,7 +5,7 @@ OrderDetail ORM model — the order header/summary record.
 from decimal import Decimal
 from typing import Optional
 
-from sqlalchemy import BigInteger, Boolean, ForeignKey, Index, Numeric, String, Text, text
+from sqlalchemy import BigInteger, ForeignKey, Index, Numeric, String, Text, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from src.models.Base import Base, BigIntPrimaryKeyMixin, EntityMixin

@@ -2,7 +2,6 @@
 ApplicationDashboardService — aggregated metrics for the application dashboard.
 """
 
-import asyncio
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
@@ -231,6 +230,7 @@ class ApplicationDashboardService:
         persona_id: Optional[int] = None,
     ) -> Dict[str, Any]:
         """Return payment breakdown by status and method from order_transactions."""
+        # OrderTransaction has no is_active column — all records are included
         conditions = [OrderTransaction.workspace_id == workspace_id]
         if persona_id is not None:
             conditions.append(OrderTransaction.persona_id == persona_id)
@@ -272,6 +272,7 @@ class ApplicationDashboardService:
             ],
         }
 
+
     async def get_hourly_orders(
         self,
         workspace_id: int,
@@ -307,16 +308,9 @@ class ApplicationDashboardService:
         workspace_id: int,
         persona_id: Optional[int] = None,
     ) -> Dict[str, Any]:
-        """Aggregate all dashboard data in one call."""
-        (
-            stats,
-            orders_by_status,
-            orders_by_type,
-            top_items,
-            payment_summary,
-            hourly_orders,
-            revenue_trend,
-        ) = await asyncio.gather(
+        """Aggregate all dashboard data in one call (parallelised via asyncio.gather)."""
+        import asyncio
+        results = await asyncio.gather(
             self.get_dashboard_stats(workspace_id, persona_id),
             self.get_orders_by_status(workspace_id, persona_id),
             self.get_orders_by_type(workspace_id, persona_id),
@@ -325,6 +319,7 @@ class ApplicationDashboardService:
             self.get_hourly_orders(workspace_id, persona_id),
             self.get_revenue_trend(workspace_id, persona_id, days=30),
         )
+        stats, orders_by_status, orders_by_type, top_items, payment_summary, hourly_orders, revenue_trend = results
 
         return {
             "stats": stats,
@@ -335,3 +330,4 @@ class ApplicationDashboardService:
             "hourly_orders": hourly_orders,
             "revenue_trend": revenue_trend,
         }
+

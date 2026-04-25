@@ -48,20 +48,26 @@ class BillingService:
         update_values = {k: v for k, v in data.items() if k != "workspace_id"}
         update_values["updated_at"] = now
 
-        stmt = (
+        upsert_stmt = (
             pg_insert(BillingDetail)
             .values(**insert_values)
             .on_conflict_do_update(
                 index_elements=["workspace_id"],
                 set_=update_values,
             )
-            .returning(BillingDetail)
         )
-        result = await self.db.execute(stmt)
-        row = result.scalars().first()
+        await self.db.execute(upsert_stmt)
+
+        fetch_stmt = (
+            select(BillingDetail)
+            .where(BillingDetail.workspace_id == workspace_id)
+            .limit(1)
+        )
+        row = (await self.db.execute(fetch_stmt)).scalars().first()
         if row is None:
             raise RuntimeError("Billing detail upsert returned no row")
         return row_to_dict(row)
+
 
 
     # ------------------------------------------------------------------

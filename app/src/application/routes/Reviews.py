@@ -11,7 +11,7 @@ from src.application.middleware.RoleCheck import ApplicationPermissionCheck
 from src.application.services.Review import ReviewService
 from src.base.BaseSchema import BaseResponse, PaginatedResponse, PaginationMeta
 from src.config.Database import get_db
-from src.schemas.Review import ReviewCreate, ReviewResponse, ReviewUpdate
+from src.schemas.Review import ReviewCreate, ReviewUpdate
 
 router = APIRouter(prefix="/reviews", tags=["Reviews"])
 
@@ -28,8 +28,7 @@ async def create_review(
 ):
     """Create a new review. workspace_id resolved from current_user if not provided."""
     data = body.model_dump()
-    if not data.get("workspace_id"):
-        data["workspace_id"] = current_user.get("workspace_id")
+    data["workspace_id"] = current_user.get("workspace_id")
     if not data.get("workspace_id"):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -124,6 +123,11 @@ async def get_rating_summary(
 ):
     """Return average_rating, total_reviews, and rating_distribution."""
     wid = workspace_id or current_user.get("workspace_id")
+    if not wid:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="workspace_id is required",
+        )
     service = ReviewService(db)
     summary = await service.get_rating_summary(workspace_id=wid, persona_id=persona_id)
     return {"success": True, "message": "Rating summary retrieved successfully", "data": summary}
@@ -268,7 +272,7 @@ async def restore_review(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Review not found")
     if existing.get("workspace_id") != current_user.get("workspace_id"):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
-    if existing.get("is_active", True):
+    if existing.get("is_active", False):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Review is not deleted",

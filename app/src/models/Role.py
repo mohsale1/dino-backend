@@ -58,7 +58,7 @@ class Role(BigIntPrimaryKeyMixin, EntityMixin, Base):
         "Permission",
         secondary="role_permissions",
         back_populates="roles",
-        lazy="select",
+        lazy="noload",
     )
     users: Mapped[list["User"]] = relationship(  # noqa: F821
         "User",

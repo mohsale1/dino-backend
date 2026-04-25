@@ -6,6 +6,7 @@ from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, EmailStr, Field
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.application.middleware.RoleCheck import ApplicationPermissionCheck
@@ -206,5 +207,67 @@ async def get_billing_transactions(
             "total_pages": total_pages,
             "has_next": page < total_pages,
             "has_prev": page > 1,
+        },
+    }
+
+
+@router.get("/{workspace_id}/approval-status", response_model=BaseResponse)
+async def get_workspace_approval_status(
+    workspace_id: int,
+    current_user: Dict[str, Any] = Depends(ApplicationPermissionCheck.require_authenticated),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Check the approval status of a workspace request.
+
+    Returns:
+      - request_exists: false  → no workspace_request row found
+      - request_exists: true, approved: true  → status = 'approved'
+      - request_exists: true, approved: false → status = 'pending' or 'rejected'
+    """
+    # Scope to caller's own workspace only
+    if workspace_id != current_user.get("workspace_id"):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
+
+    # Lazy import to avoid circular deps — model lives in dino-system
+    from sqlalchemy import text as sa_text
+
+    result = await db.execute(
+        sa_text(
+            "SELECT id, status, reviewed_at, rejection_reason "
+            "FROM workspace_requests "
+            "WHERE workspace_id = :wid AND is_active = true "
+            "ORDER BY created_at DESC "
+            "LIMIT 1"
+        ),
+        {"wid": workspace_id},
+    )
+    row = result.mappings().first()
+
+    if row is None:
+        return {
+            "success": True,
+            "message": "No workspace request found",
+            "data": {
+                "workspace_id": workspace_id,
+                "request_exists": False,
+                "approved": False,
+                "status": None,
+                "reviewed_at": None,
+                "rejection_reason": None,
+            },
+        }
+
+    req_status = row["status"]
+    return {
+        "success": True,
+        "message": "Workspace request status retrieved successfully",
+        "data": {
+            "workspace_id": workspace_id,
+            "request_exists": True,
+            "approved": req_status == "approved",
+            "status": req_status,           # pending / approved / rejected
+            "reviewed_at": str(row["reviewed_at"]) if row["reviewed_at"] else None,
+            "rejection_reason": row["rejection_reason"],
         },
     }

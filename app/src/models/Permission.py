@@ -36,7 +36,7 @@ class Permission(BigIntPrimaryKeyMixin, EntityMixin, Base):
         "Role",
         secondary="role_permissions",
         back_populates="permissions",
-        lazy="selectin",
+        lazy="noload",
     )
 
     def __repr__(self) -> str:

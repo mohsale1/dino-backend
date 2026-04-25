@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Optional
 
-from pydantic import AnyHttpUrl, BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class CategoryBase(BaseModel):
@@ -12,7 +12,7 @@ class CategoryBase(BaseModel):
 
 class CategoryCreate(CategoryBase):
     persona_id: Optional[int] = None
-    image_url: Optional[AnyHttpUrl] = None
+    image_url: Optional[str] = None
 
 
 class CategoryUpdate(BaseModel):
@@ -20,7 +20,7 @@ class CategoryUpdate(BaseModel):
     description: Optional[str] = Field(None, max_length=500)
     is_available: Optional[bool] = None
     persona_id: Optional[int] = None
-    image_url: Optional[AnyHttpUrl] = None
+    image_url: Optional[str] = None
 
 
 class CategoryResponse(BaseModel):

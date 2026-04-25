@@ -1,16 +1,15 @@
 import logging
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from slowapi import Limiter
-from slowapi.util import get_remote_address
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.application.middleware.RoleCheck import ApplicationPermissionCheck
 from src.application.services.Auth import ApplicationAuthService
 from src.base.BaseSchema import BaseResponse
 from src.config.Database import get_db
-from src.core.Security import decode_token, verify_token_type
+from src.core.Security import decode_token
 from src.repositories.UserRepository import UserRepository
 from src.repositories.WorkspaceRepository import WorkspaceRepository
 from src.schemas.Auth import (
@@ -27,7 +26,16 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/auth", tags=["Application Auth"])
 
-limiter = Limiter(key_func=get_remote_address)
+
+def _get_real_ip(request: Request) -> str:
+    """Extract the real client IP from X-Forwarded-For (set by GCP load balancer)."""
+    forwarded_for = request.headers.get("X-Forwarded-For")
+    if forwarded_for:
+        return forwarded_for.split(",")[0].strip()
+    return request.client.host if request.client else "unknown"
+
+
+limiter = Limiter(key_func=_get_real_ip)
 
 
 @router.post("/login", response_model=LoginResponse)
@@ -86,6 +94,7 @@ async def signup(request: Request, body: SignupRequest, db: AsyncSession = Depen
             referral_email=body.referral_email,
         )
     except ValueError as e:
+        # Pass the exact error message from the service — do NOT override it
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
     except Exception as e:
         logger.error("Unexpected error during signup: %s", e, exc_info=True)
@@ -103,7 +112,7 @@ async def signup(request: Request, body: SignupRequest, db: AsyncSession = Depen
 
 
 @router.get("/validate-referral", response_model=BaseResponse)
-@limiter.limit("10/minute")
+@limiter.limit("3/minute")
 async def validate_referral(
     request: Request,
     email: str = Query(..., description="Agent email address to validate"),
@@ -119,29 +128,24 @@ async def validate_referral(
             detail="No active agent found with this email",
         )
 
-    return BaseResponse(
-        success=True,
-        message="Agent found",
-        data={
-            "id": user["id"],
-            "first_name": user["first_name"],
-            "last_name": user["last_name"],
-            "email": user["email"],
-        },
-    )
+    first = user.get("first_name", "")
+    last = user.get("last_name", "")
+    return BaseResponse(success=True, message="Agent found", data={"valid": True, "name": f"{first} {last}".strip()})
 
 
 @router.post("/refresh", response_model=RefreshTokenResponse)
 @limiter.limit("10/minute")
 async def refresh_token(request: Request, body: RefreshTokenRequest, db: AsyncSession = Depends(get_db)):
     """Refresh access token."""
-    if not verify_token_type(body.refresh_token, "refresh"):
+    payload = decode_token(body.refresh_token)
+
+    if payload.get("type") != "refresh":
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid refresh token",
         )
-    payload = decode_token(body.refresh_token)
-    if not payload:
+
+    if payload.get("user_type") != 1:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid refresh token",
@@ -165,7 +169,6 @@ async def refresh_token(request: Request, body: RefreshTokenRequest, db: AsyncSe
 
     workspace_id = user.get("workspace_id")
     if workspace_id:
-        from src.repositories.WorkspaceRepository import WorkspaceRepository
         workspace = await WorkspaceRepository(db).get_by_id(workspace_id)
         if not workspace or not workspace.get("is_active"):
             raise HTTPException(
@@ -184,7 +187,9 @@ async def refresh_token(request: Request, body: RefreshTokenRequest, db: AsyncSe
 
 
 @router.get("/me", response_model=BaseResponse)
+@limiter.limit("30/minute")
 async def get_current_user(
+    request: Request,
     current_user: Dict[str, Any] = Depends(ApplicationPermissionCheck.require_authenticated),
     db: AsyncSession = Depends(get_db),
 ):
@@ -205,12 +210,14 @@ async def get_current_user(
 
 
 @router.post("/change-password", response_model=BaseResponse)
+@limiter.limit("5/minute")
 async def change_password(
-    request: ChangePasswordRequest,
+    request: Request,
+    body: ChangePasswordRequest,
     current_user: Dict[str, Any] = Depends(ApplicationPermissionCheck.require_authenticated),
     db: AsyncSession = Depends(get_db),
 ):
     """Change password for the currently authenticated user."""
     user_id = current_user.get("id")
-    await ApplicationAuthService(db).change_password(user_id, request.old_password, request.new_password)
+    await ApplicationAuthService(db).change_password(user_id, body.old_password, body.new_password)
     return {"success": True, "message": "Password changed successfully"}

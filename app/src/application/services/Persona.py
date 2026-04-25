@@ -28,18 +28,21 @@ class PersonaService(BaseService):
         data.setdefault("is_active", True)
         workspace_id = data.get("workspace_id")
 
-        created = await self.persona_repo.create(data)
-        persona_id = created["id"]
+        # Atomically create persona + workspace link under a savepoint
+        async with self.db.begin_nested():
+            created = await self.persona_repo.create(data)
+            persona_id = created["id"]
 
-        if workspace_id:
-            stmt = (
-                pg_insert(workspace_personas)
-                .values(workspace_id=workspace_id, persona_id=persona_id)
-                .on_conflict_do_nothing()
-            )
-            await self.db.execute(stmt)
+            if workspace_id:
+                stmt = (
+                    pg_insert(workspace_personas)
+                    .values(workspace_id=workspace_id, persona_id=persona_id)
+                    .on_conflict_do_nothing()
+                )
+                await self.db.execute(stmt)
 
         return created
+
 
     async def get_paginated_personas(
         self,

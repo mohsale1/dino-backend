@@ -4,7 +4,7 @@ Workspace ORM model and workspace_personas association table (shared).
 
 from typing import Optional
 
-from sqlalchemy import BigInteger, Column, ForeignKey, String, Table, Text
+from sqlalchemy import BigInteger, Boolean, Column, ForeignKey, String, Table, Text, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from src.models.Base import Base, BigIntPrimaryKeyMixin, EntityMixin
@@ -51,6 +51,16 @@ class Workspace(BigIntPrimaryKeyMixin, EntityMixin, Base):
         ForeignKey("users.id", ondelete="SET NULL"),
         nullable=True,
     )
+    requested_by: Mapped[Optional[int]] = mapped_column(
+        BigInteger,
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    is_verified: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        server_default=text("false"),
+    )
 
     # Relationships
     owner: Mapped[Optional["User"]] = relationship(  # noqa: F821
@@ -66,7 +76,6 @@ class Workspace(BigIntPrimaryKeyMixin, EntityMixin, Base):
     )
     billing_details: Mapped[Optional["BillingDetail"]] = relationship(  # noqa: F821
         "BillingDetail",
-        back_populates="workspace",
         uselist=False,
         lazy="noload",
     )

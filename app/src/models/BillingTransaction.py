@@ -6,7 +6,7 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Optional
 
-from sqlalchemy import BigInteger, DateTime, ForeignKey, Index, Numeric, String, Text, UniqueConstraint
+from sqlalchemy import BigInteger, DateTime, ForeignKey, Index, Numeric, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.sql import func, text
 
@@ -19,7 +19,6 @@ class BillingTransaction(BigIntPrimaryKeyMixin, Base):
     __tablename__ = "billing_transactions"
 
     __table_args__ = (
-        UniqueConstraint("invoice_number", name="uq_billing_transactions_invoice_number"),
         Index("ix_billing_transactions_workspace_id", "workspace_id"),
         Index("ix_billing_transactions_payment_status", "payment_status"),
     )

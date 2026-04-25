@@ -1,6 +1,6 @@
 from typing import Any, Dict, Optional
 
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field, field_validator
 
 
 class LoginRequest(BaseModel):
@@ -56,6 +56,14 @@ class SignupRequest(BaseModel):
     admin_last_name: str = Field(..., min_length=1, max_length=100)
     admin_phone: Optional[str] = Field(None, max_length=30, pattern=r'^\+?[0-9\s\-\(\)]{7,30}$')
 
+    @field_validator('admin_password')
+    @classmethod
+    def password_complexity(cls, v: str) -> str:
+        if not any(c.isupper() for c in v):
+            raise ValueError('Password must contain at least one uppercase letter')
+        if not any(c.isdigit() for c in v):
+            raise ValueError('Password must contain at least one digit')
+        return v
 
 
 class SignupResponse(BaseModel):

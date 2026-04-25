@@ -8,7 +8,7 @@ item_id has no FK — intentional snapshot of item at time of order.
 
 from decimal import Decimal
 
-from sqlalchemy import BigInteger, Boolean, ForeignKey, Index, Integer, Numeric, String, text
+from sqlalchemy import BigInteger, ForeignKey, Index, Integer, Numeric, String, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from src.models.Base import Base, EntityMixin

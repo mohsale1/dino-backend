@@ -17,6 +17,57 @@ class UpdateRoleRequest(BaseModel):
     role_id: int
 
 
+# ── /users/me  &  /users/me/data ────────────────────────────────────────────
+
+@router.get("/me", response_model=BaseResponse)
+async def get_me(
+    current_user: Dict[str, Any] = Depends(ApplicationPermissionCheck.require_authenticated),
+    db: AsyncSession = Depends(get_db),
+):
+    """Return the currently authenticated user with role and workspace."""
+    service = ApplicationUserService(db)
+    user = await service.get_user_with_role(current_user["id"])
+    if not user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+    return {"success": True, "message": "User retrieved successfully", "data": user}
+
+
+@router.get("/me/data", response_model=BaseResponse)
+async def get_me_data(
+    current_user: Dict[str, Any] = Depends(ApplicationPermissionCheck.require_authenticated),
+    db: AsyncSession = Depends(get_db),
+):
+    """Return the currently authenticated user with full workspace and persona data."""
+    from src.repositories.WorkspaceRepository import WorkspaceRepository
+    from src.repositories.PersonaRepository import PersonaRepository
+
+    service = ApplicationUserService(db)
+    user = await service.get_user_with_role(current_user["id"])
+    if not user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+
+    workspace = None
+    personas = []
+    workspace_id = user.get("workspace_id")
+    if workspace_id:
+        workspace = await WorkspaceRepository(db).get_by_id(workspace_id)
+        personas = await PersonaRepository(db).get_paginated_by_workspace(
+            workspace_id=workspace_id, page=1, page_size=100
+        )
+        if isinstance(personas, tuple):
+            personas = personas[0]  # (items, total, total_pages)
+
+    return {
+        "success": True,
+        "message": "User data retrieved successfully",
+        "data": {
+            "user": user,
+            "workspace": workspace,
+            "personas": personas,
+        },
+    }
+
+
 def _assert_same_workspace(current_user: Dict[str, Any], target_user: Dict[str, Any]) -> None:
     """Raise 404 if caller attempts to access a user outside their workspace."""
     caller_workspace_id = current_user.get("workspace_id")

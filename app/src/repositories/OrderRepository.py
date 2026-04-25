@@ -2,9 +2,10 @@
 OrderRepository — async SQLAlchemy 2.x repository for Order (line items) and OrderDetail.
 """
 
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
-from sqlalchemy import and_, func, select
+from sqlalchemy import and_, delete as sa_delete, func, select, update as sa_update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.base.BaseModel import row_to_dict
@@ -71,6 +72,45 @@ class OrderRepository(BaseRepository):
 
     def __init__(self, db: AsyncSession) -> None:
         super().__init__(Order, db)
+
+    # ------------------------------------------------------------------
+    # PK overrides — Order uses `sino` as PK, not `id`.
+    # BaseRepository.update/soft_delete/restore/delete all filter on
+    # `self.model.id == entity_id` which silently matches zero rows here.
+    # ------------------------------------------------------------------
+
+    async def update(self, entity_id: Any, data: Dict[str, Any]) -> bool:
+        """Update an Order row by sino (PK)."""
+        if hasattr(self.model, "updated_at"):
+            data = {**data, "updated_at": datetime.now(timezone.utc)}
+        stmt = (
+            sa_update(self.model)
+            .where(self.model.sino == entity_id)
+            .values(**data)
+            .execution_options(synchronize_session=False)
+        )
+        result = await self.db.execute(stmt)
+        return result.rowcount > 0
+
+    async def soft_delete(self, entity_id: Any) -> bool:
+        """Soft-delete an Order row by sino (PK)."""
+        return await self.update(entity_id, {"is_active": False})
+
+    async def restore(self, entity_id: Any) -> bool:
+        """Restore a soft-deleted Order row by sino (PK)."""
+        return await self.update(entity_id, {"is_active": True})
+
+    async def delete(self, entity_id: Any) -> bool:
+        """Hard-delete an Order row by sino (PK)."""
+        stmt = (
+            sa_delete(self.model)
+            .where(self.model.sino == entity_id)
+            .execution_options(synchronize_session=False)
+        )
+        result = await self.db.execute(stmt)
+        return result.rowcount > 0
+
+    # ------------------------------------------------------------------
 
     async def get_by_order_id(self, order_id: str) -> List[Dict[str, Any]]:
         """Return all line items for an order_id."""

@@ -72,13 +72,13 @@ class ApplicationUserService:
     ) -> List[Dict[str, Any]]:
         """Resolve role_id -> role object and strip sensitive fields."""
         sanitized: List[Dict[str, Any]] = []
-        role_ids: List[int] = []
+        role_ids: set = set()
         for user in users:
             user = {k: v for k, v in user.items() if k != "password_hash"}
             sanitized.append(user)
             role_id = user.get("role_id")
-            if role_id and role_id not in role_ids:
-                role_ids.append(role_id)
+            if role_id is not None and role_id not in role_ids:
+                role_ids.add(role_id)
 
         role_cache: Dict[int, Dict[str, Any]] = {}
         if role_ids:
@@ -91,7 +91,7 @@ class ApplicationUserService:
         result_list = []
         for user in sanitized:
             role_id = user.get("role_id")
-            if role_id:
+            if role_id is not None:
                 role = role_cache.get(role_id)
                 if role:
                     user["role"] = {
@@ -103,6 +103,7 @@ class ApplicationUserService:
 
         return result_list
 
+
     async def update_user(
         self,
         user_id: int,
@@ -110,13 +111,14 @@ class ApplicationUserService:
         workspace_id: Optional[int] = None,
     ) -> bool:
         """Update user, hashing password if present. Optionally scope to workspace."""
-        if workspace_id:
+        if workspace_id is not None:
             existing = await self.user_repo.get_by_id(user_id)
             if not existing or existing.get("workspace_id") != workspace_id:
                 return False
         if "password" in data:
             data["password_hash"] = get_password_hash(data.pop("password"))
         return await self.user_repo.update(user_id, data)
+
 
     async def soft_delete_user(self, user_id: int) -> bool:
         return await self.user_repo.soft_delete(user_id)

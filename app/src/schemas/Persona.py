@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Optional
 
-from pydantic import AnyHttpUrl, BaseModel, ConfigDict, EmailStr, Field
+from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
 
 class PersonaBase(BaseModel):
@@ -12,7 +12,7 @@ class PersonaBase(BaseModel):
 
 
 class PersonaCreate(PersonaBase):
-    logo_url: Optional[AnyHttpUrl] = None
+    logo_url: Optional[str] = None
     address: Optional[str] = Field(None, max_length=500)
     city: Optional[str] = Field(None, max_length=100)
     state: Optional[str] = Field(None, max_length=100)
@@ -27,7 +27,7 @@ class PersonaUpdate(BaseModel):
     description: Optional[str] = None
     persona_type: Optional[int] = Field(None, ge=0, le=1)
     order_type: Optional[int] = Field(None, ge=0, le=1)
-    logo_url: Optional[AnyHttpUrl] = None
+    logo_url: Optional[str] = None
     address: Optional[str] = Field(None, max_length=500)
     city: Optional[str] = Field(None, max_length=100)
     state: Optional[str] = Field(None, max_length=100)

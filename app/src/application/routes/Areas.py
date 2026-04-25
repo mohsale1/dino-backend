@@ -40,7 +40,6 @@ class UpdateAreaRequest(BaseModel):
 
 @router.get("", response_model=BaseResponse)
 async def get_areas(
-    workspace_id: Optional[int] = Query(None),
     persona_id: Optional[int] = Query(None),
     is_available: Optional[bool] = Query(None),
     page: int = Query(1, ge=1),
@@ -49,7 +48,7 @@ async def get_areas(
     db: AsyncSession = Depends(get_db),
 ):
     """Get paginated areas."""
-    wid = workspace_id or current_user.get("workspace_id")
+    wid = current_user.get("workspace_id")
     if not wid:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="workspace_id required")
     service = AreaService(db)

@@ -78,7 +78,7 @@ class User(BigIntPrimaryKeyMixin, EntityMixin, Base):
     role: Mapped["Role"] = relationship(  # noqa: F821
         "Role",
         back_populates="users",
-        lazy="selectin",
+        lazy="noload",
     )
     workspace: Mapped[Optional["Workspace"]] = relationship(  # noqa: F821
         "Workspace",
@@ -90,7 +90,7 @@ class User(BigIntPrimaryKeyMixin, EntityMixin, Base):
         "Persona",
         secondary="user_personas",
         back_populates="users",
-        lazy="select",
+        lazy="noload",
     )
     reviews: Mapped[list["Review"]] = relationship(  # noqa: F821
         "Review",

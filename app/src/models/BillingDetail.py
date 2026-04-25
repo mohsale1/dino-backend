@@ -49,7 +49,6 @@ class BillingDetail(BigIntPrimaryKeyMixin, Base):
 
     workspace: Mapped["Workspace"] = relationship(  # noqa: F821
         "Workspace",
-        back_populates="billing_details",
         lazy="noload",
     )
 

@@ -15,7 +15,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
 from src.base.BaseRepository import BaseRepository
-from src.base.BaseModel import SENSITIVE_FIELDS
+from src.base.BaseModel import row_to_dict, SENSITIVE_FIELDS
 from src.config.Settings import settings
 from src.core.Security import get_password_hash, verify_password
 from src.models.Role import Role
@@ -68,7 +68,10 @@ class BaseAuth:
 
         # Stamp last_login — best-effort; do not let a failed update block login.
         now = datetime.now(timezone.utc)
-        await self.user_repository.update(user["id"], {"last_login": now})
+        try:
+            await self.user_repository.update(user["id"], {"last_login": now})
+        except Exception:
+            pass  # best-effort — do not block login on a failed timestamp update
         user["last_login"] = now.isoformat()
 
         return user
@@ -165,10 +168,17 @@ class BaseAuth:
         """
         Verify *old_password* then replace it with *new_password*.
 
+        The user row is locked with ``SELECT ... FOR UPDATE`` before the
+        password is verified, eliminating the TOCTOU race condition that
+        existed when a plain ``get_by_id`` read was followed by a separate
+        ``update`` write.  The lock is held for the duration of the
+        enclosing transaction, so no concurrent request can modify the
+        password_hash between the verify and the update.
+
         Raises
         ------
         HTTPException 404
-            If the user is not found.
+            If the user is not found (or is soft-deleted).
         HTTPException 400
             If the new password is too short, matches the current password,
             or the old password is incorrect.
@@ -185,12 +195,29 @@ class BaseAuth:
                 detail="New password must differ from current password",
             )
 
-        user = await self.user_repository.get_by_id(user_id)
-        if not user:
+        # Lock the row for the duration of this transaction so that no
+        # concurrent writer can change password_hash between our verify and
+        # our update (eliminates the TOCTOU window).
+        stmt = (
+            select(self.user_repository.model)
+            .where(self.user_repository.model.id == user_id)
+            .with_for_update()
+        )
+        # Mirror the is_active guard applied by get_by_id so that
+        # soft-deleted users are treated as not found.
+        if hasattr(self.user_repository.model, "is_active"):
+            stmt = stmt.where(self.user_repository.model.is_active.is_(True))
+
+        result = await self.user_repository.db.execute(stmt)
+        row = result.scalars().first()
+
+        if row is None:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="User not found",
             )
+
+        user = row_to_dict(row)
 
         if not verify_password(old_password, user.get("password_hash", "")):
             raise HTTPException(
@@ -202,4 +229,5 @@ class BaseAuth:
             "password_hash": get_password_hash(new_password),
             "updated_at": datetime.now(timezone.utc),
         })
+
 

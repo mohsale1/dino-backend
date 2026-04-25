@@ -14,7 +14,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from src.config.Database import get_db
-from src.config.Settings import settings
 from src.core.Security import decode_token, get_current_user_token
 from src.models.Permission import Permission
 from src.models.Role import Role
@@ -95,18 +94,7 @@ async def get_current_application_user(
     db: AsyncSession = Depends(get_db),
 ) -> Dict[str, Any]:
     """Resolve the authenticated application user (user_type=1) from a JWT token."""
-    if not settings.ENABLE_JWT:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="JWT authentication is not enabled",
-        )
-
     payload = decode_token(token)
-    if payload is None:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid authentication credentials",
-        )
 
     user_type = payload.get("user_type")
     if user_type != 1:
@@ -131,6 +119,7 @@ async def get_current_application_user(
         )
 
     return await _fetch_application_user(uid, db)
+
 
 
 async def get_current_user(

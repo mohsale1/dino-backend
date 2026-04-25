@@ -59,7 +59,6 @@ class ToggleOpenRequest(BaseModel):
 
 @router.get("", response_model=BaseResponse)
 async def get_personas(
-    workspace_id: Optional[int] = Query(None),
     include_deleted: bool = Query(False),
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
@@ -67,7 +66,7 @@ async def get_personas(
     db: AsyncSession = Depends(get_db),
 ):
     """Get paginated personas."""
-    wid = workspace_id or current_user.get("workspace_id")
+    wid = current_user.get("workspace_id")
     if not wid:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="workspace_id required")
     service = PersonaService(db)

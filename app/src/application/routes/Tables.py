@@ -46,12 +46,11 @@ class UpdateTableStatusRequest(BaseModel):
 
 @router.get("/summary", response_model=BaseResponse)
 async def get_table_summary(
-    workspace_id: Optional[int] = Query(None),
     current_user: Dict[str, Any] = Depends(ApplicationPermissionCheck.require("tables:read")),
     db: AsyncSession = Depends(get_db),
 ):
     """Get table status counts summary."""
-    wid = workspace_id or current_user.get("workspace_id")
+    wid = current_user.get("workspace_id")
     if not wid:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="workspace_id required")
     service = TableService(db)
@@ -61,7 +60,6 @@ async def get_table_summary(
 
 @router.get("", response_model=BaseResponse)
 async def get_tables(
-    workspace_id: Optional[int] = Query(None),
     area_id: Optional[int] = Query(None),
     table_status: Optional[str] = Query(None, alias="status"),
     page: int = Query(1, ge=1),
@@ -70,7 +68,7 @@ async def get_tables(
     db: AsyncSession = Depends(get_db),
 ):
     """Get paginated tables."""
-    wid = workspace_id or current_user.get("workspace_id")
+    wid = current_user.get("workspace_id")
     if not wid:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="workspace_id required")
     service = TableService(db)

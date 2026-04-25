@@ -51,7 +51,6 @@ class UpdateAvailabilityRequest(BaseModel):
 
 @router.get("", response_model=BaseResponse)
 async def get_items(
-    workspace_id: Optional[int] = Query(None),
     category_id: Optional[int] = Query(None),
     is_available: Optional[bool] = Query(None),
     is_vegetarian: Optional[bool] = Query(None),
@@ -62,7 +61,7 @@ async def get_items(
     db: AsyncSession = Depends(get_db),
 ):
     """Get paginated items with optional filters."""
-    wid = workspace_id or current_user.get("workspace_id")
+    wid = current_user.get("workspace_id")
     if not wid:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="workspace_id required")
     service = ItemService(db)
