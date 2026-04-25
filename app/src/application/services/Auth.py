@@ -5,6 +5,7 @@ ApplicationAuthService — authentication for application users (user_type=1).
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
+from sqlalchemy import text as sa_text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -84,13 +85,23 @@ class ApplicationAuthService(BaseAuth):
         workspace_data: Dict[str, Any],
         persona_data: Dict[str, Any],
         admin_data: Dict[str, Any],
-        referred_by: Optional[int] = None,
+        referral_email: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Complete signup: create workspace, workspace_billing, persona, and admin user.
         All writes are in a single atomic transaction.
+
+        If referral_email is provided, looks up the matching system user (user_type=0)
+        and inserts a workspace_request row linking them to the new workspace.
         """
         try:
+            # 0. Resolve referrer (system user) from referral_email if supplied
+            referrer_user_id: Optional[int] = None
+            if referral_email:
+                referrer = await self.user_repo.get_by_field("email", referral_email)
+                if referrer and referrer.get("user_type") == 0 and referrer.get("is_active"):
+                    referrer_user_id = referrer["id"]
+
             # 1. Get or create Owner role (role_type=1)
             owner_role = await self.role_repo.get_by_name_and_type("Owner", 1)
             if not owner_role:
@@ -101,12 +112,11 @@ class ApplicationAuthService(BaseAuth):
                     "is_active": True,
                 })
 
-            # 2. Create workspace
+            # 2. Create workspace (referred_by column was dropped in migration 002)
             workspace_payload: Dict[str, Any] = {
                 "name": workspace_data["name"],
                 "description": workspace_data.get("description"),
                 "owner_id": None,  # Back-filled after user creation
-                "referred_by": referred_by,
                 "is_active": True,
             }
             created_workspace = await self.workspace_repo.create(workspace_payload)
@@ -164,6 +174,21 @@ class ApplicationAuthService(BaseAuth):
             # 7. Back-fill workspace.owner_id
             await self.workspace_repo.update(workspace_id, {"owner_id": created_owner["id"]})
             created_workspace["owner_id"] = created_owner["id"]
+
+            # 8. Insert workspace_request referral row if a valid referrer was found
+            if referrer_user_id is not None:
+                await self.db.execute(
+                    sa_text(
+                        "INSERT INTO workspace_requests"
+                        " (email, user_id, workspace_id, status, is_active, created_at, updated_at)"
+                        " VALUES (:email, :user_id, :workspace_id, 'pending', true, now(), now())"
+                    ),
+                    {
+                        "email": referral_email,
+                        "user_id": referrer_user_id,
+                        "workspace_id": workspace_id,
+                    },
+                )
 
         except IntegrityError as exc:
             raise ValueError(

@@ -4,7 +4,7 @@ Workspace ORM model and workspace_personas association table (shared).
 
 from typing import Optional
 
-from sqlalchemy import BigInteger, Column, ForeignKey, Index, String, Table, Text
+from sqlalchemy import BigInteger, Column, ForeignKey, String, Table, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from src.models.Base import Base, BigIntPrimaryKeyMixin, EntityMixin
@@ -43,11 +43,6 @@ class Workspace(BigIntPrimaryKeyMixin, EntityMixin, Base):
 
     __tablename__ = "workspaces"
 
-    # __table_args__ MUST be declared before any mapped_column definitions
-    __table_args__ = (
-        Index("ix_workspaces_referred_by", "referred_by"),
-    )
-
     name: Mapped[str] = mapped_column(String(200), nullable=False)
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
@@ -56,23 +51,11 @@ class Workspace(BigIntPrimaryKeyMixin, EntityMixin, Base):
         ForeignKey("users.id", ondelete="SET NULL"),
         nullable=True,
     )
-    referred_by: Mapped[Optional[int]] = mapped_column(
-        BigInteger,
-        ForeignKey("users.id", ondelete="SET NULL"),
-        nullable=True,
-    )
 
     # Relationships
-    # owner_id and referred_by both point to users — must use string foreign_keys
-    # to avoid ambiguity at class-construction time.
     owner: Mapped[Optional["User"]] = relationship(  # noqa: F821
         "User",
         foreign_keys="[Workspace.owner_id]",
-        lazy="noload",
-    )
-    referrer: Mapped[Optional["User"]] = relationship(  # noqa: F821
-        "User",
-        foreign_keys="[Workspace.referred_by]",
         lazy="noload",
     )
     billing: Mapped[Optional["WorkspaceBilling"]] = relationship(  # noqa: F821

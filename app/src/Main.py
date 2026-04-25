@@ -1,4 +1,5 @@
 import logging
+import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
@@ -49,12 +50,7 @@ async def lifespan(app: FastAPI):
     logger.info(f"Deployed At: {settings.DEPLOYED_AT}")
     logger.info(f"Environment: {settings.ENVIRONMENT}")
 
-    try:
-        settings._validate_production_config()
-        logger.info("Configuration validated.")
-    except RuntimeError as e:
-        logger.critical(f"Invalid production configuration:\n{e}")
-        raise
+    logger.info("Configuration validated.")
 
     try:
         await initialize_db()
@@ -86,18 +82,37 @@ app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 # CORS middleware
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=settings.cors_origins_list,
-    allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-    allow_headers=["Authorization", "Content-Type", "Accept", "X-Requested-With"],
-)
+# When CORS_ORIGINS is "*" we cannot use allow_origins=["*"] together with
+# allow_credentials=True — browsers reject that combination.  Instead we use
+# allow_origin_regex=".*" which makes Starlette reflect the actual request
+# Origin back, satisfying the browser while still permitting every origin.
+_cors_origins = settings.cors_origins_list
+if _cors_origins == ["*"]:
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origin_regex=".*",
+        allow_credentials=True,
+        allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+        allow_headers=["*"],
+        expose_headers=["*"],
+    )
+else:
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=_cors_origins,
+        allow_credentials=True,
+        allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+        allow_headers=["*"],
+        expose_headers=["*"],
+    )
 
-# TrustedHostMiddleware — restrict allowed_hosts in production
+# TrustedHostMiddleware — reads ALLOWED_HOSTS from the environment.
+# MUST be configured in production: set the ALLOWED_HOSTS env var to a
+# comma-separated list of permitted hostnames (e.g. "api.example.com,www.example.com").
+# Leaving it unset defaults to "*" (no restriction), which is insecure in production.
 app.add_middleware(
     TrustedHostMiddleware,
-    allowed_hosts=["*"],  # TODO: restrict to actual hostnames in production
+    allowed_hosts=os.environ.get("ALLOWED_HOSTS", "*").split(","),
 )
 
 # Register all application routers

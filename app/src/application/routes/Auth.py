@@ -1,7 +1,7 @@
 import logging
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from slowapi import Limiter
 from slowapi.util import get_remote_address
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -83,7 +83,7 @@ async def signup(request: Request, body: SignupRequest, db: AsyncSession = Depen
             workspace_data=workspace_data,
             persona_data=persona_data,
             admin_data=admin_data,
-            referred_by=body.owner_referred_by,
+            referral_email=body.referral_email,
         )
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
@@ -99,6 +99,35 @@ async def signup(request: Request, body: SignupRequest, db: AsyncSession = Depen
         persona=result["persona"],
         user=result["user"],
         message="Signup successful. You can now login with your credentials.",
+    )
+
+
+@router.get("/validate-referral", response_model=BaseResponse)
+@limiter.limit("10/minute")
+async def validate_referral(
+    request: Request,
+    email: str = Query(..., description="Agent email address to validate"),
+    db: AsyncSession = Depends(get_db),
+):
+    """Validate that a referral email belongs to an active system user (agent)."""
+    user_repo = UserRepository(db)
+    user = await user_repo.get_by_field("email", email)
+
+    if not user or user.get("user_type") != 0 or not user.get("is_active"):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No active agent found with this email",
+        )
+
+    return BaseResponse(
+        success=True,
+        message="Agent found",
+        data={
+            "id": user["id"],
+            "first_name": user["first_name"],
+            "last_name": user["last_name"],
+            "email": user["email"],
+        },
     )
 
 
@@ -133,6 +162,16 @@ async def refresh_token(request: Request, body: RefreshTokenRequest, db: AsyncSe
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="User not found or inactive",
         )
+
+    workspace_id = user.get("workspace_id")
+    if workspace_id:
+        from src.repositories.WorkspaceRepository import WorkspaceRepository
+        workspace = await WorkspaceRepository(db).get_by_id(workspace_id)
+        if not workspace or not workspace.get("is_active"):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Workspace is inactive",
+            )
 
     auth_service = ApplicationAuthService(db)
     token_data = {

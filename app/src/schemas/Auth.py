@@ -35,7 +35,7 @@ class SignupRequest(BaseModel):
     # Workspace
     workspace_name: str = Field(..., min_length=1, max_length=200)
     workspace_description: Optional[str] = Field(None, max_length=500)
-    owner_referred_by: Optional[int] = None
+    referral_email: Optional[EmailStr] = None
 
     # Persona
     persona_name: str = Field(..., min_length=1, max_length=200)
@@ -55,6 +55,7 @@ class SignupRequest(BaseModel):
     admin_first_name: str = Field(..., min_length=1, max_length=100)
     admin_last_name: str = Field(..., min_length=1, max_length=100)
     admin_phone: Optional[str] = Field(None, max_length=30, pattern=r'^\+?[0-9\s\-\(\)]{7,30}$')
+
 
 
 class SignupResponse(BaseModel):
