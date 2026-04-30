@@ -99,7 +99,11 @@ class BaseRepository:
     # ------------------------------------------------------------------
 
     async def create(self, data: Dict[str, Any]) -> dict:
-        """INSERT a new row and return it as a dict."""
+        """INSERT a new row, flush to obtain server-generated values, and return as a dict.
+
+        flush() sends the INSERT within the current transaction without committing.
+        The caller's session (get_db) is responsible for the final commit.
+        """
         instance = self.model(**data)
         self.db.add(instance)
         await self.db.flush()
@@ -129,10 +133,7 @@ class BaseRepository:
         Sets ``is_active = False`` and ``updated_at`` to now.
         There is no ``deleted_at`` or ``is_deleted`` column — do not set them.
         """
-        payload: Dict[str, Any] = {
-            "is_active": False,
-        }
-        return await self.update(entity_id, payload)
+        return await self.update(entity_id, {"is_active": False})
 
     async def restore(self, entity_id: Union[str, int]) -> bool:
         """Undo a soft-delete.
@@ -140,10 +141,7 @@ class BaseRepository:
         Sets ``is_active = True`` and ``updated_at`` to now.
         There is no ``restored_at`` or ``is_deleted`` column — do not set them.
         """
-        payload: Dict[str, Any] = {
-            "is_active": True,
-        }
-        return await self.update(entity_id, payload)
+        return await self.update(entity_id, {"is_active": True})
 
     async def delete(self, entity_id: Union[str, int]) -> bool:
         """Hard-DELETE a row by primary key."""
@@ -158,15 +156,17 @@ class BaseRepository:
     async def bulk_create(self, items: List[Dict[str, Any]]) -> List[dict]:
         """INSERT multiple rows in a single round-trip.
 
-        After ``flush()`` SQLAlchemy populates server-generated values (PKs,
-        defaults) on each instance via the RETURNING clause used internally by
-        asyncpg — no per-row ``refresh()`` call is needed.
+        After ``flush()``, each instance is explicitly refreshed so that
+        server-generated values (PKs, defaults, server_default columns) are
+        fully populated before the dicts are returned.
         """
         if len(items) > 500:
             raise ValueError(f"bulk_create limit is 500 rows, got {len(items)}")
         instances = [self.model(**item) for item in items]
         self.db.add_all(instances)
         await self.db.flush()
+        for inst in instances:
+            await self.db.refresh(inst)
         return [row_to_dict(inst) for inst in instances]
 
     # ------------------------------------------------------------------
@@ -263,10 +263,6 @@ class BaseRepository:
         """
         Two-query paginated SELECT.
 
-        Both the COUNT and the data query run in the same session transaction,
-        which guarantees a consistent snapshot without requiring an explicit
-        REPEATABLE READ isolation level.
-
         Returns
         -------
         (items, total_count, total_pages)
@@ -275,7 +271,6 @@ class BaseRepository:
         clauses = self._build_where_clauses(filters, include_deleted)
         where_expr = and_(*clauses) if clauses else None
 
-        # --- COUNT query ---
         count_stmt = select(func.count()).select_from(self.model)
         if where_expr is not None:
             count_stmt = count_stmt.where(where_expr)
@@ -283,7 +278,6 @@ class BaseRepository:
 
         total_pages = max(1, (total_count + page_size - 1) // page_size)
 
-        # --- DATA query ---
         data_stmt = select(self.model)
         if where_expr is not None:
             data_stmt = data_stmt.where(where_expr)

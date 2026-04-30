@@ -20,18 +20,17 @@ class CategoryService(BaseService):
 
     async def create_category(self, data: Dict[str, Any]) -> Dict[str, Any]:
         """Create a new category."""
-        data.setdefault("is_active", True)
         return await self.category_repo.create(data)
 
     async def get_paginated_categories(
         self,
         workspace_id: int,
-        persona_id: Optional[int] = None,
+        persona_id: int,
         is_available: Optional[bool] = None,
         page: int = 1,
         page_size: int = 20,
     ) -> Tuple[List[Dict[str, Any]], int, int]:
-        """Return paginated categories with optional filters."""
+        """Return paginated categories filtered by workspace and persona."""
         return await self.category_repo.get_paginated_by_workspace(
             workspace_id=workspace_id,
             persona_id=persona_id,
@@ -40,14 +39,47 @@ class CategoryService(BaseService):
             page_size=page_size,
         )
 
-    async def update_category(self, category_id: int, data: Dict[str, Any]) -> bool:
-        """Update a category by ID."""
-        return await self.category_repo.update(category_id, data)
+    async def get_category_for_persona(
+        self,
+        category_id: int,
+        workspace_id: int,
+        persona_id: int,
+    ) -> Optional[Dict[str, Any]]:
+        """Fetch a single category scoped to the given workspace and persona."""
+        return await self.category_repo.get_by_id_for_persona(
+            category_id, workspace_id, persona_id
+        )
 
-    async def soft_delete_category(self, category_id: int) -> bool:
-        """Soft-delete a category."""
-        return await self.category_repo.soft_delete(category_id)
+    async def update_category(
+        self,
+        category_id: int,
+        workspace_id: int,
+        persona_id: int,
+        data: Dict[str, Any],
+    ) -> bool:
+        """Update a category, scoped to the given workspace and persona. Single DB round-trip."""
+        return await self.category_repo.update_for_workspace(
+            category_id, workspace_id, persona_id, data
+        )
 
-    async def restore_category(self, category_id: int) -> bool:
-        """Restore a soft-deleted category."""
-        return await self.category_repo.restore(category_id)
+    async def soft_delete_category(
+        self,
+        category_id: int,
+        workspace_id: int,
+        persona_id: int,
+    ) -> bool:
+        """Soft-delete a category, scoped to the given workspace and persona. Single DB round-trip."""
+        return await self.category_repo.soft_delete_for_workspace(
+            category_id, workspace_id, persona_id
+        )
+
+    async def restore_category(
+        self,
+        category_id: int,
+        workspace_id: int,
+        persona_id: int,
+    ) -> bool:
+        """Restore a soft-deleted category, scoped to the given workspace and persona. Single DB round-trip."""
+        return await self.category_repo.restore_for_workspace(
+            category_id, workspace_id, persona_id
+        )

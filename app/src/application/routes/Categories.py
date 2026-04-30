@@ -1,5 +1,6 @@
 """
 Categories router — CRUD for menu categories.
+All endpoints are scoped by both workspace_id (from JWT) and persona_id (required query/body param).
 """
 
 from typing import Any, Dict, Optional
@@ -23,19 +24,33 @@ router = APIRouter(prefix="/categories", tags=["Categories"])
 class CreateCategoryRequest(BaseModel):
     name: str = Field(..., min_length=1, max_length=200)
     description: Optional[str] = Field(None, max_length=500)
-    persona_id: Optional[int] = None
-    image_url: Optional[str] = None
+    persona_id: int = Field(..., ge=1)
+    image_url: Optional[str] = Field(None, max_length=500)
     is_available: bool = True
-    display_order: Optional[int] = None
 
 
 class UpdateCategoryRequest(BaseModel):
     name: Optional[str] = Field(None, min_length=1, max_length=200)
     description: Optional[str] = Field(None, max_length=500)
-    persona_id: Optional[int] = None
-    image_url: Optional[str] = None
+    image_url: Optional[str] = Field(None, max_length=500)
     is_available: Optional[bool] = None
-    display_order: Optional[int] = None
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _require_workspace(current_user: Dict[str, Any]) -> int:
+    wid = current_user.get("workspace_id")
+    if not wid:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="workspace_id required")
+    return wid
+
+
+def _require_persona(persona_id: Optional[int]) -> int:
+    if persona_id is None:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="persona_id required")
+    return persona_id
 
 
 # ---------------------------------------------------------------------------
@@ -44,17 +59,16 @@ class UpdateCategoryRequest(BaseModel):
 
 @router.get("", response_model=BaseResponse)
 async def get_categories(
-    persona_id: Optional[int] = Query(None),
+    persona_id: int = Query(..., ge=1),
     is_available: Optional[bool] = Query(None),
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     current_user: Dict[str, Any] = Depends(ApplicationPermissionCheck.require("categories:read")),
     db: AsyncSession = Depends(get_db),
 ):
-    """Get paginated categories."""
-    wid = current_user.get("workspace_id")
-    if not wid:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="workspace_id required")
+    """Get paginated categories scoped to the user's workspace and persona."""
+    wid = _require_workspace(current_user)
+    _require_persona(persona_id)
     service = CategoryService(db)
     items, total, total_pages = await service.get_paginated_categories(
         workspace_id=wid,
@@ -78,16 +92,15 @@ async def get_categories(
     }
 
 
-@router.post("", response_model=BaseResponse)
+@router.post("", response_model=BaseResponse, status_code=status.HTTP_201_CREATED)
 async def create_category(
     request: CreateCategoryRequest,
     current_user: Dict[str, Any] = Depends(ApplicationPermissionCheck.require("categories:create")),
     db: AsyncSession = Depends(get_db),
 ):
-    """Create a new category."""
-    wid = current_user.get("workspace_id")
-    if not wid:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="workspace_id required")
+    """Create a new category in the authenticated user's workspace, bound to a persona."""
+    wid = _require_workspace(current_user)
+    _require_persona(request.persona_id)
     service = CategoryService(db)
     data = request.model_dump()
     data["workspace_id"] = wid
@@ -98,16 +111,17 @@ async def create_category(
 @router.get("/{category_id}", response_model=BaseResponse)
 async def get_category(
     category_id: int,
+    persona_id: int = Query(..., ge=1),
     current_user: Dict[str, Any] = Depends(ApplicationPermissionCheck.require("categories:read")),
     db: AsyncSession = Depends(get_db),
 ):
-    """Get a category by ID."""
+    """Get a single category scoped to the user's workspace and persona."""
+    wid = _require_workspace(current_user)
+    _require_persona(persona_id)
     service = CategoryService(db)
-    category = await service.get_by_id(category_id)
+    category = await service.get_category_for_persona(category_id, wid, persona_id)
     if not category:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Category not found")
-    if category.get("workspace_id") != current_user.get("workspace_id"):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
     return {"success": True, "message": "Category retrieved successfully", "data": category}
 
 
@@ -115,19 +129,20 @@ async def get_category(
 async def update_category(
     category_id: int,
     request: UpdateCategoryRequest,
+    persona_id: int = Query(..., ge=1),
     current_user: Dict[str, Any] = Depends(ApplicationPermissionCheck.require("categories:update")),
     db: AsyncSession = Depends(get_db),
 ):
-    """Update a category."""
-    service = CategoryService(db)
-    existing = await service.get_by_id(category_id)
-    if not existing:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Category not found")
-    if existing.get("workspace_id") != current_user.get("workspace_id"):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
+    """Update a category. Ownership enforced via workspace_id + persona_id in a single DB query."""
+    wid = _require_workspace(current_user)
+    _require_persona(persona_id)
     data = request.model_dump(exclude_unset=True)
-    success = await service.update_category(category_id, data)
-    if not success:
+    if not data:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No fields provided to update")
+
+    service = CategoryService(db)
+    updated = await service.update_category(category_id, wid, persona_id, data)
+    if not updated:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Category not found")
     return {"success": True, "message": "Category updated successfully"}
 
@@ -135,18 +150,16 @@ async def update_category(
 @router.delete("/{category_id}", response_model=BaseResponse)
 async def delete_category(
     category_id: int,
+    persona_id: int = Query(..., ge=1),
     current_user: Dict[str, Any] = Depends(ApplicationPermissionCheck.require("categories:delete")),
     db: AsyncSession = Depends(get_db),
 ):
-    """Soft-delete a category."""
+    """Soft-delete a category. Ownership enforced via workspace_id + persona_id in a single DB query."""
+    wid = _require_workspace(current_user)
+    _require_persona(persona_id)
     service = CategoryService(db)
-    existing = await service.get_by_id(category_id)
-    if not existing:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Category not found")
-    if existing.get("workspace_id") != current_user.get("workspace_id"):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
-    success = await service.soft_delete_category(category_id)
-    if not success:
+    deleted = await service.soft_delete_category(category_id, wid, persona_id)
+    if not deleted:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Category not found")
     return {"success": True, "message": "Category deleted successfully"}
 
@@ -154,19 +167,18 @@ async def delete_category(
 @router.post("/{category_id}/restore", response_model=BaseResponse)
 async def restore_category(
     category_id: int,
+    persona_id: int = Query(..., ge=1),
     current_user: Dict[str, Any] = Depends(ApplicationPermissionCheck.require("categories:update")),
     db: AsyncSession = Depends(get_db),
 ):
-    """Restore a soft-deleted category."""
+    """Restore a soft-deleted category. Ownership and state enforced via workspace_id + persona_id in a single DB query."""
+    wid = _require_workspace(current_user)
+    _require_persona(persona_id)
     service = CategoryService(db)
-    existing = await service.get_by_id(category_id, include_deleted=True)
-    if not existing:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Category not found")
-    if existing.get("workspace_id") != current_user.get("workspace_id"):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
-    if existing.get("is_active", False):
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Category is not deleted")
-    success = await service.restore_category(category_id)
-    if not success:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Category not found")
+    restored = await service.restore_category(category_id, wid, persona_id)
+    if not restored:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Category not found or is not deleted",
+        )
     return {"success": True, "message": "Category restored successfully"}

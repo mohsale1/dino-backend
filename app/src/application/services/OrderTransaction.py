@@ -37,25 +37,32 @@ class OrderTransactionService:
         return await self.repo.get_by_id(transaction_id)
 
     async def update_transaction(
-        self, transaction_id: int, data: Dict[str, Any]
+        self,
+        transaction_id: int,
+        workspace_id: int,
+        persona_id: int,
+        data: Dict[str, Any],
     ) -> bool:
-        """Update payment fields on a transaction."""
-        return await self.repo.update(transaction_id, data)
+        """Single-query UPDATE of payment fields scoped to workspace and persona."""
+        return await self.repo.update_for_workspace(
+            transaction_id, workspace_id, persona_id, data
+        )
 
     async def get_paginated_transactions(
         self,
         workspace_id: int,
-        persona_id: Optional[int] = None,
+        persona_id: int,
         payment_status: Optional[str] = None,
         start_date: Optional[datetime] = None,
         end_date: Optional[datetime] = None,
         page: int = 1,
         page_size: int = 20,
     ) -> Tuple[List[Dict[str, Any]], int, int]:
-        """Return paginated transactions with optional filters."""
-        conditions = [OrderTransaction.workspace_id == workspace_id]
-        if persona_id is not None:
-            conditions.append(OrderTransaction.persona_id == persona_id)
+        """Return paginated transactions, always scoped to persona."""
+        conditions = [
+            OrderTransaction.workspace_id == workspace_id,
+            OrderTransaction.persona_id == persona_id,
+        ]
         if payment_status is not None:
             conditions.append(OrderTransaction.payment_status == payment_status)
         if start_date is not None:

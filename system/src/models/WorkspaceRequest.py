@@ -13,13 +13,13 @@ class WorkspaceRequest(BigIntPrimaryKeyMixin, EntityMixin, Base):
     __tablename__ = "workspace_requests"
 
     __table_args__ = (
-        Index("ix_workspace_requests_user_id", "user_id"),
+        Index("ix_workspace_requests_referred_by", "referred_by"),
         Index("ix_workspace_requests_workspace_id", "workspace_id"),
         Index("ix_workspace_requests_status", "status"),
     )
 
     email: Mapped[str] = mapped_column(String(320), nullable=False)
-    user_id: Mapped[Optional[int]] = mapped_column(
+    referred_by: Mapped[Optional[int]] = mapped_column(
         BigInteger,
         ForeignKey("users.id", ondelete="SET NULL"),
         nullable=True,
@@ -48,9 +48,9 @@ class WorkspaceRequest(BigIntPrimaryKeyMixin, EntityMixin, Base):
     rejection_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
     # Relationships
-    user: Mapped[Optional["User"]] = relationship(  # noqa: F821
+    referred_by_user: Mapped[Optional["User"]] = relationship(  # noqa: F821
         "User",
-        foreign_keys=[user_id],
+        foreign_keys=[referred_by],
         lazy="noload",
     )
     workspace: Mapped["Workspace"] = relationship(  # noqa: F821

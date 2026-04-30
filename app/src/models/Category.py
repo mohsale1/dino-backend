@@ -1,4 +1,4 @@
-"""
+﻿"""
 Category ORM model. No sort_order, no parent_id.
 """
 
@@ -22,7 +22,6 @@ class Category(BigIntPrimaryKeyMixin, EntityMixin, Base):
 
     name: Mapped[str] = mapped_column(String(200), nullable=False)
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    image_url: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
     is_available: Mapped[bool] = mapped_column(
         Boolean, nullable=False, server_default=text("true")
     )

@@ -1,9 +1,8 @@
 ﻿"""
 Workspace ORM model and workspace_personas association table.
 
-owner_id      â€“ references users.id (SET NULL on delete)
-requested_by  â€“ system user who submitted the verification request (SET NULL on delete)
-is_verified   â€“ set to True when an admin approves the workspace request
+owner_id    â€“ references users.id (SET NULL on delete)
+is_verified â€“ set to True when an admin approves the workspace request
 No billing columns â€” billing is in workspace_billing table.
 """
 
@@ -59,10 +58,6 @@ class Workspace(BigIntPrimaryKeyMixin, EntityMixin, Base):
 
     __tablename__ = "workspaces"
 
-    __table_args__ = (
-        Index("ix_workspaces_requested_by", "requested_by"),
-    )
-
     name: Mapped[str] = mapped_column(String(200), nullable=False)
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
@@ -70,12 +65,6 @@ class Workspace(BigIntPrimaryKeyMixin, EntityMixin, Base):
         BigInteger,
         ForeignKey("users.id", ondelete="SET NULL"),
         nullable=True,
-    )
-    requested_by: Mapped[Optional[int]] = mapped_column(
-        BigInteger,
-        ForeignKey("users.id", ondelete="SET NULL"),
-        nullable=True,
-        comment="System user who submitted the workspace verification request",
     )
     is_verified: Mapped[bool] = mapped_column(
         Boolean,
@@ -89,11 +78,6 @@ class Workspace(BigIntPrimaryKeyMixin, EntityMixin, Base):
     owner: Mapped[Optional["User"]] = relationship(  # noqa: F821
         "User",
         foreign_keys=[owner_id],
-        lazy="noload",
-    )
-    requested_by_user: Mapped[Optional["User"]] = relationship(  # noqa: F821
-        "User",
-        foreign_keys=[requested_by],
         lazy="noload",
     )
     billing: Mapped[Optional["WorkspaceBilling"]] = relationship(  # noqa: F821
@@ -111,10 +95,11 @@ class Workspace(BigIntPrimaryKeyMixin, EntityMixin, Base):
     )
     users: Mapped[list["User"]] = relationship(  # noqa: F821
         "User",
-        foreign_keys="User.workspace_id",
+        foreign_keys="[User.workspace_id]",
         back_populates="workspace",
         lazy="noload",
     )
 
     def __repr__(self) -> str:
         return f"<Workspace id={self.id} name={self.name!r} verified={self.is_verified}>"
+

@@ -32,21 +32,65 @@ class OrderDetailRepository(BaseRepository):
         row = result.scalars().first()
         return row_to_dict(row) if row else None
 
+    async def get_by_order_id_for_persona(
+        self,
+        order_id: str,
+        workspace_id: int,
+        persona_id: int,
+    ) -> Optional[Dict[str, Any]]:
+        """Return the order detail scoped to workspace and persona."""
+        stmt = (
+            select(OrderDetail)
+            .where(
+                OrderDetail.order_id == order_id,
+                OrderDetail.workspace_id == workspace_id,
+                OrderDetail.persona_id == persona_id,
+                OrderDetail.is_active.is_(True),
+            )
+            .limit(1)
+        )
+        result = await self.db.execute(stmt)
+        row = result.scalars().first()
+        return row_to_dict(row) if row else None
+
+    async def update_status_for_persona(
+        self,
+        order_id: str,
+        workspace_id: int,
+        persona_id: int,
+        new_status: str,
+    ) -> bool:
+        """Single-query UPDATE scoped to workspace and persona."""
+        stmt = (
+            sa_update(OrderDetail)
+            .where(
+                OrderDetail.order_id == order_id,
+                OrderDetail.workspace_id == workspace_id,
+                OrderDetail.persona_id == persona_id,
+                OrderDetail.is_active.is_(True),
+            )
+            .values(status=new_status, updated_at=datetime.now(timezone.utc))
+            .execution_options(synchronize_session=False)
+        )
+        result = await self.db.execute(stmt)
+        return result.rowcount > 0
+
     async def get_paginated_by_workspace(
         self,
         workspace_id: int,
-        persona_id: Optional[int] = None,
+        persona_id: int,
         status: Optional[str] = None,
         page: int = 1,
         page_size: int = 20,
         include_deleted: bool = False,
     ) -> Tuple[List[Dict[str, Any]], int, int]:
-        """Return paginated order details for a workspace."""
-        conditions = [OrderDetail.workspace_id == workspace_id]
+        """Return paginated order details for a workspace, always scoped to persona."""
+        conditions = [
+            OrderDetail.workspace_id == workspace_id,
+            OrderDetail.persona_id == persona_id,
+        ]
         if not include_deleted:
             conditions.append(OrderDetail.is_active.is_(True))
-        if persona_id is not None:
-            conditions.append(OrderDetail.persona_id == persona_id)
         if status is not None:
             conditions.append(OrderDetail.status == status)
 
@@ -175,12 +219,15 @@ class OrderTransactionRepository(BaseRepository):
     async def get_paginated_by_workspace(
         self,
         workspace_id: int,
+        persona_id: int,
         page: int = 1,
         page_size: int = 20,
     ) -> Tuple[List[Dict[str, Any]], int, int]:
-        """Return paginated transactions for a workspace."""
-        conditions = [OrderTransaction.workspace_id == workspace_id]
-        where_expr = and_(*conditions)
+        """Return paginated transactions for a workspace, always scoped to persona."""
+        where_expr = and_(
+            OrderTransaction.workspace_id == workspace_id,
+            OrderTransaction.persona_id == persona_id,
+        )
 
         count_stmt = select(func.count()).select_from(OrderTransaction).where(where_expr)
         total = (await self.db.execute(count_stmt)).scalar_one() or 0
@@ -196,3 +243,25 @@ class OrderTransactionRepository(BaseRepository):
         )
         rows = (await self.db.execute(data_stmt)).scalars().all()
         return [row_to_dict(r) for r in rows], total, total_pages
+
+    async def update_for_workspace(
+        self,
+        transaction_id: int,
+        workspace_id: int,
+        persona_id: int,
+        data: Dict[str, Any],
+    ) -> bool:
+        """Single-query UPDATE scoped to workspace and persona."""
+        payload = {**data, "updated_at": datetime.now(timezone.utc)}
+        stmt = (
+            sa_update(OrderTransaction)
+            .where(
+                OrderTransaction.id == transaction_id,
+                OrderTransaction.workspace_id == workspace_id,
+                OrderTransaction.persona_id == persona_id,
+            )
+            .values(**payload)
+            .execution_options(synchronize_session=False)
+        )
+        result = await self.db.execute(stmt)
+        return result.rowcount > 0

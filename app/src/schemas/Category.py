@@ -1,4 +1,4 @@
-from datetime import datetime
+﻿from datetime import datetime
 from typing import Optional
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -12,7 +12,6 @@ class CategoryBase(BaseModel):
 
 class CategoryCreate(CategoryBase):
     persona_id: Optional[int] = None
-    image_url: Optional[str] = None
 
 
 class CategoryUpdate(BaseModel):
@@ -20,7 +19,6 @@ class CategoryUpdate(BaseModel):
     description: Optional[str] = Field(None, max_length=500)
     is_available: Optional[bool] = None
     persona_id: Optional[int] = None
-    image_url: Optional[str] = None
 
 
 class CategoryResponse(BaseModel):
@@ -31,7 +29,6 @@ class CategoryResponse(BaseModel):
     description: Optional[str] = None
     workspace_id: int
     persona_id: Optional[int] = None
-    image_url: Optional[str] = None
     is_available: bool
     is_active: bool
     created_at: datetime

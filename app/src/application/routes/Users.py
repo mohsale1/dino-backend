@@ -121,7 +121,7 @@ async def get_all_users(
     }
 
 
-@router.post("", response_model=BaseResponse)
+@router.post("", response_model=BaseResponse, status_code=status.HTTP_201_CREATED)
 async def create_user(
     user: UserCreate,
     current_user: Dict[str, Any] = Depends(ApplicationPermissionCheck.require("users:create")),

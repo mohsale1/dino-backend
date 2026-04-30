@@ -8,6 +8,9 @@ class WorkspaceRequestCreate(BaseModel):
     """Create workspace request schema"""
     email: EmailStr
     workspace_id: int
+    referral_email: Optional[str] = None  # email of the system user who referred this workspace; null = no referral
+
+
 
 
 class WorkspaceRequestReject(BaseModel):
@@ -19,7 +22,7 @@ class WorkspaceRequestResponse(BaseModel):
     """Workspace request response schema"""
     id: int
     email: str
-    user_id: Optional[int] = None
+    referred_by: Optional[int] = None
     workspace_id: int
     status: str
     reviewed_by: Optional[int] = None

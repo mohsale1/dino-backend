@@ -20,16 +20,17 @@ class WorkspaceRequestService(BaseService):
         super().__init__(self.workspace_request_repo)
 
     async def submit_request(self, data: dict) -> dict:
-        """Submit a new workspace join request."""
+        """
+        Submit a new workspace join request.
+
+        referred_by is resolved from referral_email when provided:
+          - If referral_email is a non-empty string and matches an active system user,
+            referred_by is set to that user''s id.
+          - If referral_email is empty/None or no matching user is found, referred_by is null.
+        """
         email: str = data["email"]
         workspace_id: int = data["workspace_id"]
-
-        user: Optional[Dict] = await self.user_repo.get_by_field("email", email)
-        if not user or user.get("user_type") != 0 or not user.get("is_active"):
-            raise HTTPException(
-                status_code=422,
-                detail="Email does not belong to an active system user",
-            )
+        referral_email: Optional[str] = (data.get("referral_email") or "").strip() or None
 
         has_pending: bool = await self.workspace_request_repo.has_pending_request(workspace_id)
         if has_pending:
@@ -38,15 +39,22 @@ class WorkspaceRequestService(BaseService):
                 detail="A pending request already exists for this workspace",
             )
 
+        referred_by: Optional[int] = None
+        if referral_email:
+            referrer: Optional[Dict] = await self.user_repo.get_by_field("email", referral_email)
+            if referrer and referrer.get("user_type") == 0 and referrer.get("is_active"):
+                referred_by = referrer["id"]
+
         record = await self.create(
             {
                 "email": email,
-                "user_id": user["id"],
+                "referred_by": referred_by,
                 "workspace_id": workspace_id,
                 "status": "pending",
             }
         )
         return record
+
 
     async def get_paginated_requests(
         self,
@@ -81,10 +89,7 @@ class WorkspaceRequestService(BaseService):
 
         await self.workspace_repo.update(
             request["workspace_id"],
-            {
-                "is_verified": True,
-                "requested_by": request["user_id"],
-            },
+            {"is_verified": True},
         )
 
         return await self.get_by_id(request_id)

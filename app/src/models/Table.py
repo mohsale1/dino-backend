@@ -1,7 +1,9 @@
-"""
+﻿"""
 Table ORM model. No qr_code_url, no qr_menu_url.
 Unique: (area_id, table_number).
 """
+
+from typing import Optional
 
 from sqlalchemy import BigInteger, ForeignKey, Index, Integer, String, UniqueConstraint, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -18,15 +20,15 @@ class Table(BigIntPrimaryKeyMixin, EntityMixin, Base):
         UniqueConstraint("area_id", "table_number", name="uq_tables_area_table_number"),
         Index("ix_tables_workspace_id", "workspace_id"),
         Index("ix_tables_area_id", "area_id"),
+        Index("ix_tables_persona_id", "persona_id"),
     )
 
     table_number: Mapped[str] = mapped_column(String(50), nullable=False)
     capacity: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("4"))
     status: Mapped[str] = mapped_column(
-        String(30), nullable=False, server_default=text("'available'"),
-        comment="available | occupied | reserved | inactive",
+        String(30), nullable=False, server_default=text("''available''"),
+        comment="available | occupied | reserved | out_of_service",
     )
-    display_order: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
     workspace_id: Mapped[int] = mapped_column(
         BigInteger,
         ForeignKey("workspaces.id", ondelete="CASCADE"),
@@ -36,6 +38,12 @@ class Table(BigIntPrimaryKeyMixin, EntityMixin, Base):
         BigInteger,
         ForeignKey("areas.id", ondelete="RESTRICT"),
         nullable=False,
+    )
+    persona_id: Mapped[Optional[int]] = mapped_column(
+        BigInteger,
+        ForeignKey("personas.id", ondelete="SET NULL"),
+        nullable=True,
+        comment="Denormalised from areas.persona_id for direct query scoping",
     )
 
     # Relationships

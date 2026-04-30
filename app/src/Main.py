@@ -144,7 +144,7 @@ app.include_router(HomePage.router, prefix=PREFIX)
 
 @app.exception_handler(SQLAlchemyError)
 async def db_exception_handler(request: Request, exc: SQLAlchemyError):
-    logger.error("Database error on %s %s", request.method, request.url.path, exc_info=exc)
+    logger.error("Database error on %s %s: %s", request.method, request.url.path, exc, exc_info=exc)
     return JSONResponse(
         status_code=503,
         content={"success": False, "message": "Service temporarily unavailable", "error": "Database error"},
@@ -153,14 +153,13 @@ async def db_exception_handler(request: Request, exc: SQLAlchemyError):
 
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
-    """Global exception handler"""
-    logger.error(f"Unhandled exception: {str(exc)}", exc_info=True)
+    logger.error("Unhandled exception on %s %s: %s", request.method, request.url.path, exc, exc_info=True)
     return JSONResponse(
         status_code=500,
         content={
             "success": False,
             "message": "Internal server error",
-            "error": "An error occurred",
+            "error": str(type(exc).__name__),
         },
     )
 

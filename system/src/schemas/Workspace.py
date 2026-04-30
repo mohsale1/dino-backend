@@ -31,7 +31,6 @@ class WorkspaceResponse(BaseModel):
     name: str
     description: Optional[str] = None
     owner_id: Optional[int] = None
-    requested_by: Optional[int] = None
     is_verified: bool = False
     is_active: bool
     created_at: datetime

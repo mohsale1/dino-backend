@@ -19,8 +19,8 @@ router = APIRouter(prefix="/workspace-requests", tags=["System Workspace Request
 )
 async def submit_workspace_request(
     body: WorkspaceRequestCreate,
-    current_user: dict = Depends(get_current_system_user),
     db: AsyncSession = Depends(get_db),
+    _: dict = Depends(get_current_system_user),
 ):
     """Submit a new workspace request."""
     service = WorkspaceRequestService(db)

@@ -1,5 +1,5 @@
 ﻿"""
-WorkspaceRequestRepository — async SQLAlchemy 2.x repository for the WorkspaceRequest model.
+WorkspaceRequestRepository â€” async SQLAlchemy 2.x repository for the WorkspaceRequest model.
 """
 
 from typing import Dict, List, Optional, Tuple
@@ -84,7 +84,7 @@ class WorkspaceRequestRepository(BaseRepository):
 
     async def has_pending_request(self, workspace_id: int) -> bool:
         """
-        Return True if any active WorkspaceRequest with status='pending'
+        Return True if any active WorkspaceRequest with status=''pending''
         exists for the given workspace_id.
         """
         stmt = (
@@ -104,11 +104,11 @@ class WorkspaceRequestRepository(BaseRepository):
 
     async def get_referral_stats(self, days: int = 30) -> Dict:
         """
-        Return referral statistics derived from workspace_requests.
+        Return submission statistics derived from workspace_requests.
 
         Computes:
         - Summary counts: total, by status, last N days vs previous N days
-        - Per-referrer breakdown: name, email, counts by status, workspaces list
+        - Per-submitter breakdown: name, email, counts by status, workspaces list
         """
         from datetime import datetime, timedelta, timezone
 
@@ -122,7 +122,7 @@ class WorkspaceRequestRepository(BaseRepository):
         prev_period_start = now - timedelta(days=days * 2)
 
         # ------------------------------------------------------------------
-        # 1. Summary counts — total referrals and breakdown by status
+        # 1. Summary counts â€” total submissions and breakdown by status
         # ------------------------------------------------------------------
         summary_stmt = select(
             func.count().label("total"),
@@ -136,17 +136,17 @@ class WorkspaceRequestRepository(BaseRepository):
                     WorkspaceRequest.created_at < period_start,
                 ), 1,
             ))).label("prev_n_days"),
-            func.count(distinct(WorkspaceRequest.user_id)).label("total_referrers"),
+            func.count(distinct(WorkspaceRequest.referred_by)).label("total_referrers"),
         ).where(WorkspaceRequest.is_active == True)  # noqa: E712
 
         summary_row = (await self.db.execute(summary_stmt)).one()
 
         # ------------------------------------------------------------------
-        # 2. Per-referrer aggregates — grouped by user_id
+        # 2. Per-submitter aggregates â€” grouped by user_id
         # ------------------------------------------------------------------
         referrer_agg_stmt = (
             select(
-                WorkspaceRequest.user_id,
+                WorkspaceRequest.referred_by,
                 WorkspaceRequest.email,
                 func.count().label("total"),
                 func.count(case((WorkspaceRequest.status == "pending", 1))).label("pending"),
@@ -154,18 +154,18 @@ class WorkspaceRequestRepository(BaseRepository):
                 func.count(case((WorkspaceRequest.status == "rejected", 1))).label("rejected"),
             )
             .where(WorkspaceRequest.is_active == True)  # noqa: E712
-            .group_by(WorkspaceRequest.user_id, WorkspaceRequest.email)
+            .group_by(WorkspaceRequest.referred_by, WorkspaceRequest.email)
             .order_by(func.count().desc())
         )
         referrer_rows = (await self.db.execute(referrer_agg_stmt)).all()
 
         # ------------------------------------------------------------------
-        # 3. All referral records joined with workspace name for detail list
+        # 3. All request records joined with workspace name for detail list
         # ------------------------------------------------------------------
         detail_stmt = (
             select(
                 WorkspaceRequest.id,
-                WorkspaceRequest.user_id,
+                WorkspaceRequest.referred_by,
                 WorkspaceRequest.email,
                 WorkspaceRequest.workspace_id,
                 WorkspaceRequest.status,
@@ -178,16 +178,16 @@ class WorkspaceRequestRepository(BaseRepository):
                 (User.first_name + " " + User.last_name).label("referrer_name"),
             )
             .outerjoin(Workspace, Workspace.id == WorkspaceRequest.workspace_id)
-            .outerjoin(User, User.id == WorkspaceRequest.user_id)
+            .outerjoin(User, User.id == WorkspaceRequest.referred_by)
             .where(WorkspaceRequest.is_active == True)  # noqa: E712
             .order_by(WorkspaceRequest.created_at.desc())
         )
         detail_rows = (await self.db.execute(detail_stmt)).all()
 
         # ------------------------------------------------------------------
-        # 4. Fetch referrer full names for the aggregated list
+        # 4. Fetch submitter full names for the aggregated list
         # ------------------------------------------------------------------
-        user_ids = [r.user_id for r in referrer_rows if r.user_id is not None]
+        user_ids = [r.referred_by for r in referrer_rows if r.referred_by is not None]
         user_map: Dict[int, Dict] = {}
         if user_ids:
             user_stmt = select(
@@ -204,11 +204,11 @@ class WorkspaceRequestRepository(BaseRepository):
                 }
 
         # ------------------------------------------------------------------
-        # 5. Build workspace detail list per referrer
+        # 5. Build workspace detail list per submitter
         # ------------------------------------------------------------------
         workspaces_by_referrer: Dict[Optional[int], list] = {}
         for row in detail_rows:
-            key = row.user_id
+            key = row.referred_by
             if key not in workspaces_by_referrer:
                 workspaces_by_referrer[key] = []
             workspaces_by_referrer[key].append({
@@ -228,12 +228,12 @@ class WorkspaceRequestRepository(BaseRepository):
         # ------------------------------------------------------------------
         top_referrers = []
         for row in referrer_rows:
-            uid = row.user_id
+            uid = row.referred_by
             user_info = user_map.get(uid, {})
             first = user_info.get("first_name", "")
             last = user_info.get("last_name", "")
             top_referrers.append({
-                "user_id": uid,
+                "referred_by": uid,
                 "name": f"{first} {last}".strip() or row.email,
                 "email": user_info.get("email", row.email),
                 "total": row.total,
@@ -247,3 +247,5 @@ class WorkspaceRequestRepository(BaseRepository):
             "summary_row": summary_row,
             "top_referrers": top_referrers,
         }
+
+

@@ -1,4 +1,4 @@
-"""
+﻿"""
 Workspace ORM model and workspace_personas association table (shared).
 """
 
@@ -47,11 +47,6 @@ class Workspace(BigIntPrimaryKeyMixin, EntityMixin, Base):
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
     owner_id: Mapped[Optional[int]] = mapped_column(
-        BigInteger,
-        ForeignKey("users.id", ondelete="SET NULL"),
-        nullable=True,
-    )
-    requested_by: Mapped[Optional[int]] = mapped_column(
         BigInteger,
         ForeignKey("users.id", ondelete="SET NULL"),
         nullable=True,

@@ -18,17 +18,32 @@ router = APIRouter(prefix="/items", tags=["Items"])
 
 
 # ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _require_workspace(current_user: Dict[str, Any]) -> int:
+    wid = current_user.get("workspace_id")
+    if not wid:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="workspace_id required",
+        )
+    return wid
+
+
+# ---------------------------------------------------------------------------
 # Request schemas
 # ---------------------------------------------------------------------------
 
 class CreateItemRequest(BaseModel):
+    persona_id: int = Field(..., ge=1)
     name: str = Field(..., min_length=1, max_length=200)
     description: Optional[str] = Field(None, max_length=1000)
     image_url: Optional[str] = None
     price: Decimal = Field(..., ge=0)
     is_available: bool = True
     is_vegetarian: Optional[bool] = None
-    category_id: int
+    category_id: int = Field(..., ge=1)
 
 
 class UpdateItemRequest(BaseModel):
@@ -38,7 +53,7 @@ class UpdateItemRequest(BaseModel):
     price: Optional[Decimal] = Field(None, ge=0)
     is_available: Optional[bool] = None
     is_vegetarian: Optional[bool] = None
-    category_id: Optional[int] = None
+    category_id: Optional[int] = Field(None, ge=1)
 
 
 class UpdateAvailabilityRequest(BaseModel):
@@ -51,6 +66,7 @@ class UpdateAvailabilityRequest(BaseModel):
 
 @router.get("", response_model=BaseResponse)
 async def get_items(
+    persona_id: int = Query(..., ge=1),
     category_id: Optional[int] = Query(None),
     is_available: Optional[bool] = Query(None),
     is_vegetarian: Optional[bool] = Query(None),
@@ -60,13 +76,12 @@ async def get_items(
     current_user: Dict[str, Any] = Depends(ApplicationPermissionCheck.require("items:read")),
     db: AsyncSession = Depends(get_db),
 ):
-    """Get paginated items with optional filters."""
-    wid = current_user.get("workspace_id")
-    if not wid:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="workspace_id required")
+    """Get paginated items scoped to a persona."""
+    wid = _require_workspace(current_user)
     service = ItemService(db)
     items, total, total_pages = await service.get_paginated_items(
         workspace_id=wid,
+        persona_id=persona_id,
         category_id=category_id,
         is_available=is_available,
         is_vegetarian=is_vegetarian,
@@ -89,18 +104,16 @@ async def get_items(
     }
 
 
-@router.post("", response_model=BaseResponse)
+@router.post("", response_model=BaseResponse, status_code=status.HTTP_201_CREATED)
 async def create_item(
     request: CreateItemRequest,
     current_user: Dict[str, Any] = Depends(ApplicationPermissionCheck.require("items:create")),
     db: AsyncSession = Depends(get_db),
 ):
     """Create a new menu item."""
-    wid = current_user.get("workspace_id")
-    if not wid:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="workspace_id required")
+    wid = _require_workspace(current_user)
     service = ItemService(db)
-    data = request.model_dump()
+    data = request.model_dump(exclude_none=True)
     data["workspace_id"] = wid
     item = await service.create_item(data)
     return {"success": True, "message": "Item created successfully", "data": item}
@@ -109,16 +122,16 @@ async def create_item(
 @router.get("/{item_id}", response_model=BaseResponse)
 async def get_item(
     item_id: int,
+    persona_id: int = Query(..., ge=1),
     current_user: Dict[str, Any] = Depends(ApplicationPermissionCheck.require("items:read")),
     db: AsyncSession = Depends(get_db),
 ):
-    """Get a menu item by ID."""
+    """Get a menu item by ID scoped to persona."""
+    wid = _require_workspace(current_user)
     service = ItemService(db)
-    item = await service.get_by_id(item_id)
+    item = await service.get_item_for_persona(item_id, wid, persona_id)
     if not item:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Item not found")
-    if item.get("workspace_id") != current_user.get("workspace_id"):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
     return {"success": True, "message": "Item retrieved successfully", "data": item}
 
 
@@ -126,19 +139,21 @@ async def get_item(
 async def update_item(
     item_id: int,
     request: UpdateItemRequest,
+    persona_id: int = Query(..., ge=1),
     current_user: Dict[str, Any] = Depends(ApplicationPermissionCheck.require("items:update")),
     db: AsyncSession = Depends(get_db),
 ):
     """Update a menu item."""
-    service = ItemService(db)
-    existing = await service.get_by_id(item_id)
-    if not existing:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Item not found")
-    if existing.get("workspace_id") != current_user.get("workspace_id"):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
+    wid = _require_workspace(current_user)
     data = request.model_dump(exclude_unset=True)
-    success = await service.update_item(item_id, data)
-    if not success:
+    if not data:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No fields provided for update",
+        )
+    service = ItemService(db)
+    updated = await service.update_item(item_id, wid, persona_id, data)
+    if not updated:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Item not found")
     return {"success": True, "message": "Item updated successfully"}
 
@@ -147,18 +162,15 @@ async def update_item(
 async def update_item_availability(
     item_id: int,
     request: UpdateAvailabilityRequest,
+    persona_id: int = Query(..., ge=1),
     current_user: Dict[str, Any] = Depends(ApplicationPermissionCheck.require("items:update")),
     db: AsyncSession = Depends(get_db),
 ):
     """Toggle item availability."""
+    wid = _require_workspace(current_user)
     service = ItemService(db)
-    existing = await service.get_by_id(item_id)
-    if not existing:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Item not found")
-    if existing.get("workspace_id") != current_user.get("workspace_id"):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
-    success = await service.update_availability(item_id, request.is_available)
-    if not success:
+    updated = await service.update_availability(item_id, wid, persona_id, request.is_available)
+    if not updated:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Item not found")
     return {"success": True, "message": "Item availability updated successfully"}
 
@@ -166,18 +178,15 @@ async def update_item_availability(
 @router.delete("/{item_id}", response_model=BaseResponse)
 async def delete_item(
     item_id: int,
+    persona_id: int = Query(..., ge=1),
     current_user: Dict[str, Any] = Depends(ApplicationPermissionCheck.require("items:delete")),
     db: AsyncSession = Depends(get_db),
 ):
     """Soft-delete a menu item."""
+    wid = _require_workspace(current_user)
     service = ItemService(db)
-    existing = await service.get_by_id(item_id)
-    if not existing:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Item not found")
-    if existing.get("workspace_id") != current_user.get("workspace_id"):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
-    success = await service.soft_delete_item(item_id)
-    if not success:
+    deleted = await service.soft_delete_item(item_id, wid, persona_id)
+    if not deleted:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Item not found")
     return {"success": True, "message": "Item deleted successfully"}
 
@@ -185,19 +194,17 @@ async def delete_item(
 @router.post("/{item_id}/restore", response_model=BaseResponse)
 async def restore_item(
     item_id: int,
+    persona_id: int = Query(..., ge=1),
     current_user: Dict[str, Any] = Depends(ApplicationPermissionCheck.require("items:update")),
     db: AsyncSession = Depends(get_db),
 ):
     """Restore a soft-deleted menu item."""
+    wid = _require_workspace(current_user)
     service = ItemService(db)
-    existing = await service.get_by_id(item_id, include_deleted=True)
-    if not existing:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Item not found")
-    if existing.get("workspace_id") != current_user.get("workspace_id"):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
-    if existing.get("is_active", False):
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Item is not deleted")
-    success = await service.restore_item(item_id)
-    if not success:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Item not found")
+    restored = await service.restore_item(item_id, wid, persona_id)
+    if not restored:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Item not found or is not deleted",
+        )
     return {"success": True, "message": "Item restored successfully"}

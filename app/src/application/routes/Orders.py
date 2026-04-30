@@ -20,6 +20,20 @@ router = APIRouter(prefix="/orders", tags=["Orders"])
 
 
 # ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _require_workspace(current_user: Dict[str, Any]) -> int:
+    wid = current_user.get("workspace_id")
+    if not wid:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="workspace_id required",
+        )
+    return wid
+
+
+# ---------------------------------------------------------------------------
 # Request schemas
 # ---------------------------------------------------------------------------
 
@@ -71,14 +85,14 @@ class UpdateTransactionRequest(BaseModel):
 # Routes
 # ---------------------------------------------------------------------------
 
-@router.post("", response_model=BaseResponse)
+@router.post("", response_model=BaseResponse, status_code=201)
 async def create_order(
     request: CreateOrderRequest,
     current_user: Dict[str, Any] = Depends(ApplicationPermissionCheck.require("orders:create")),
     db: AsyncSession = Depends(get_db),
 ):
     """Create a new order with line items atomically."""
-    workspace_id = current_user.get("workspace_id")
+    workspace_id = _require_workspace(current_user)
 
     # Validate persona belongs to the caller's workspace
     persona_service = PersonaService(db)
@@ -101,16 +115,14 @@ async def create_order(
 
 @router.get("/statistics", response_model=BaseResponse)
 async def get_order_statistics(
-    persona_id: Optional[int] = Query(None),
+    persona_id: int = Query(..., ge=1),
     start_date: Optional[datetime] = Query(None),
     end_date: Optional[datetime] = Query(None),
     current_user: Dict[str, Any] = Depends(ApplicationPermissionCheck.require("orders:read")),
     db: AsyncSession = Depends(get_db),
 ):
     """Get aggregated order statistics."""
-    wid = current_user.get("workspace_id")
-    if not wid:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="workspace_id required")
+    wid = _require_workspace(current_user)
     service = OrderService(db)
     stats = await service.get_order_statistics(
         workspace_id=wid,
@@ -123,7 +135,7 @@ async def get_order_statistics(
 
 @router.get("/transactions", response_model=BaseResponse)
 async def get_transactions(
-    persona_id: Optional[int] = Query(None),
+    persona_id: int = Query(..., ge=1),
     payment_status: Optional[Literal["unpaid", "partial", "paid", "refunded"]] = Query(None),
     start_date: Optional[datetime] = Query(None),
     end_date: Optional[datetime] = Query(None),
@@ -133,9 +145,7 @@ async def get_transactions(
     db: AsyncSession = Depends(get_db),
 ):
     """Get paginated order transactions."""
-    wid = current_user.get("workspace_id")
-    if not wid:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="workspace_id required")
+    wid = _require_workspace(current_user)
     service = OrderTransactionService(db)
     items, total, total_pages = await service.get_paginated_transactions(
         workspace_id=wid,
@@ -165,18 +175,15 @@ async def get_transactions(
 async def update_transaction(
     transaction_id: int,
     request: UpdateTransactionRequest,
+    persona_id: int = Query(..., ge=1),
     current_user: Dict[str, Any] = Depends(ApplicationPermissionCheck.require("orders:payment")),
     db: AsyncSession = Depends(get_db),
 ):
     """Update a payment transaction."""
-    service = OrderTransactionService(db)
-    existing = await service.get_by_id(transaction_id)
-    if not existing:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Transaction not found")
-    if existing.get("workspace_id") != current_user.get("workspace_id"):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
+    wid = _require_workspace(current_user)
     data = request.model_dump(exclude_unset=True)
-    success = await service.update_transaction(transaction_id, data)
+    service = OrderTransactionService(db)
+    success = await service.update_transaction(transaction_id, wid, persona_id, data)
     if not success:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Transaction not found")
     return {"success": True, "message": "Transaction updated successfully"}
@@ -184,7 +191,7 @@ async def update_transaction(
 
 @router.get("", response_model=BaseResponse)
 async def get_orders(
-    persona_id: Optional[int] = Query(None),
+    persona_id: int = Query(..., ge=1),
     order_status: Optional[Literal["pending", "confirmed", "preparing", "ready", "completed", "cancelled"]] = Query(None, alias="status"),
     start_date: Optional[datetime] = Query(None),
     end_date: Optional[datetime] = Query(None),
@@ -194,9 +201,7 @@ async def get_orders(
     db: AsyncSession = Depends(get_db),
 ):
     """Get paginated order list."""
-    wid = current_user.get("workspace_id")
-    if not wid:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="workspace_id required")
+    wid = _require_workspace(current_user)
     service = OrderService(db)
     items, total, total_pages = await service.get_paginated_orders(
         workspace_id=wid,
@@ -225,16 +230,16 @@ async def get_orders(
 @router.get("/{order_id}", response_model=BaseResponse)
 async def get_order(
     order_id: str,
+    persona_id: int = Query(..., ge=1),
     current_user: Dict[str, Any] = Depends(ApplicationPermissionCheck.require("orders:read")),
     db: AsyncSession = Depends(get_db),
 ):
     """Get a single order with its line items."""
+    wid = _require_workspace(current_user)
     service = OrderService(db)
-    order = await service.get_order_with_items(order_id)
+    order = await service.get_order_with_items(order_id, wid, persona_id)
     if not order:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Order not found")
-    if order.get("workspace_id") != current_user.get("workspace_id"):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
     return {"success": True, "message": "Order retrieved successfully", "data": order}
 
 
@@ -242,17 +247,18 @@ async def get_order(
 async def update_order_status(
     order_id: str,
     request: UpdateStatusRequest,
+    persona_id: int = Query(..., ge=1),
     current_user: Dict[str, Any] = Depends(ApplicationPermissionCheck.require("orders:status")),
     db: AsyncSession = Depends(get_db),
 ):
     """Update the status of an order."""
+    wid = _require_workspace(current_user)
     service = OrderService(db)
-    order = await service.get_order_with_items(order_id)
+    # Fetch first to confirm existence and persona scope before updating
+    order = await service.get_order_with_items(order_id, wid, persona_id)
     if not order:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Order not found")
-    if order.get("workspace_id") != current_user.get("workspace_id"):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
-    success = await service.update_order_status(order_id, request.status)
+    success = await service.update_order_status(order_id, wid, persona_id, request.status)
     if not success:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Order not found")
     return {"success": True, "message": "Order status updated successfully"}
@@ -261,23 +267,23 @@ async def update_order_status(
 @router.put("/{order_id}/cancel", response_model=BaseResponse)
 async def cancel_order(
     order_id: str,
+    persona_id: int = Query(..., ge=1),
     current_user: Dict[str, Any] = Depends(ApplicationPermissionCheck.require("orders:update")),
     db: AsyncSession = Depends(get_db),
 ):
     """Cancel an order."""
+    wid = _require_workspace(current_user)
     service = OrderService(db)
-    order = await service.get_order_with_items(order_id)
+    order = await service.get_order_with_items(order_id, wid, persona_id)
     if not order:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Order not found")
-    if order.get("workspace_id") != current_user.get("workspace_id"):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
     terminal_status = order.get("status")
     if terminal_status in ("cancelled", "served", "completed"):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Cannot cancel an order that is already {terminal_status}",
         )
-    success = await service.cancel_order(order_id)
+    success = await service.cancel_order(order_id, wid, persona_id)
     if not success:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Order not found")
     return {"success": True, "message": "Order cancelled successfully"}
@@ -286,16 +292,16 @@ async def cancel_order(
 @router.get("/{order_id}/items", response_model=BaseResponse)
 async def get_order_items(
     order_id: str,
+    persona_id: int = Query(..., ge=1),
     current_user: Dict[str, Any] = Depends(ApplicationPermissionCheck.require("orders:read")),
     db: AsyncSession = Depends(get_db),
 ):
     """Get all line items for an order."""
+    wid = _require_workspace(current_user)
     service = OrderService(db)
-    order = await service.get_order_with_items(order_id)
+    order = await service.get_order_with_items(order_id, wid, persona_id)
     if not order:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Order not found")
-    if order.get("workspace_id") != current_user.get("workspace_id"):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
     items = await service.get_order_items(order_id)
     return {"success": True, "message": "Order items retrieved successfully", "data": items}
 
@@ -304,25 +310,24 @@ async def get_order_items(
 async def create_transaction(
     order_id: str,
     request: CreateTransactionRequest,
+    persona_id: int = Query(..., ge=1),
     current_user: Dict[str, Any] = Depends(ApplicationPermissionCheck.require("orders:payment")),
     db: AsyncSession = Depends(get_db),
 ):
     """Create a payment transaction for an order."""
-    workspace_id = current_user.get("workspace_id")
+    wid = _require_workspace(current_user)
 
-    # Verify order exists and belongs to the caller's workspace
+    # Verify order exists and is scoped to this workspace + persona
     order_service = OrderService(db)
-    order = await order_service.get_order_with_items(order_id)
+    order = await order_service.get_order_with_items(order_id, wid, persona_id)
     if not order:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Order not found")
-    if order.get("workspace_id") != workspace_id:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
 
     tx_service = OrderTransactionService(db)
     data = request.model_dump()
-    data["workspace_id"] = workspace_id
+    data["workspace_id"] = wid
     data["order_id"] = order_id
-    data["persona_id"] = order.get("persona_id")
+    data["persona_id"] = persona_id
     transaction = await tx_service.create_transaction(data)
     return {"success": True, "message": "Transaction created successfully", "data": transaction}
 
@@ -330,16 +335,16 @@ async def create_transaction(
 @router.get("/{order_id}/transaction", response_model=BaseResponse)
 async def get_order_transaction(
     order_id: str,
+    persona_id: int = Query(..., ge=1),
     current_user: Dict[str, Any] = Depends(ApplicationPermissionCheck.require("orders:read")),
     db: AsyncSession = Depends(get_db),
 ):
     """Get the payment transaction for an order."""
+    wid = _require_workspace(current_user)
     order_service = OrderService(db)
-    order = await order_service.get_order_with_items(order_id)
+    order = await order_service.get_order_with_items(order_id, wid, persona_id)
     if not order:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Order not found")
-    if order.get("workspace_id") != current_user.get("workspace_id"):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
     service = OrderTransactionService(db)
     transaction = await service.get_transaction_by_order(order_id)
     if not transaction:

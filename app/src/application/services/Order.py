@@ -123,16 +123,20 @@ class OrderService:
         order_detail["items"] = created_items
         return order_detail
 
-
     # ------------------------------------------------------------------
     # Read
     # ------------------------------------------------------------------
 
     async def get_order_with_items(
-        self, order_id: str
+        self,
+        order_id: str,
+        workspace_id: int,
+        persona_id: int,
     ) -> Optional[Dict[str, Any]]:
-        """Fetch order_details + all orders rows for that order_id."""
-        detail = await self.detail_repo.get_by_order_id(order_id)
+        """Fetch order_details + all orders rows scoped to workspace and persona."""
+        detail = await self.detail_repo.get_by_order_id_for_persona(
+            order_id, workspace_id, persona_id
+        )
         if not detail:
             return None
         items = await self.order_repo.get_by_order_id(order_id)
@@ -142,20 +146,19 @@ class OrderService:
     async def get_paginated_orders(
         self,
         workspace_id: int,
-        persona_id: Optional[int] = None,
+        persona_id: int,
         status: Optional[str] = None,
         start_date: Optional[datetime] = None,
         end_date: Optional[datetime] = None,
         page: int = 1,
         page_size: int = 20,
     ) -> Tuple[List[Dict[str, Any]], int, int]:
-        """Return paginated order_details with optional filters."""
+        """Return paginated order_details with optional filters, always scoped to persona."""
         conditions = [
             OrderDetail.workspace_id == workspace_id,
+            OrderDetail.persona_id == persona_id,
             OrderDetail.is_active.is_(True),  # noqa: E712
         ]
-        if persona_id is not None:
-            conditions.append(OrderDetail.persona_id == persona_id)
         if status is not None:
             conditions.append(OrderDetail.status == status)
         if start_date is not None:
@@ -187,16 +190,26 @@ class OrderService:
     # Update
     # ------------------------------------------------------------------
 
-    async def update_order_status(self, order_id: str, status: str) -> bool:
-        """Update order_details.status by order_id string."""
-        detail = await self.detail_repo.get_by_order_id(order_id)
-        if not detail:
-            return False
-        return await self.detail_repo.update(detail["id"], {"status": status})
+    async def update_order_status(
+        self,
+        order_id: str,
+        workspace_id: int,
+        persona_id: int,
+        status: str,
+    ) -> bool:
+        """Single-query UPDATE of order status scoped to workspace and persona."""
+        return await self.detail_repo.update_status_for_persona(
+            order_id, workspace_id, persona_id, status
+        )
 
-    async def cancel_order(self, order_id: str) -> bool:
-        """Set order status to cancelled."""
-        return await self.update_order_status(order_id, "cancelled")
+    async def cancel_order(
+        self,
+        order_id: str,
+        workspace_id: int,
+        persona_id: int,
+    ) -> bool:
+        """Set order status to cancelled (terminal check must be done by caller)."""
+        return await self.update_order_status(order_id, workspace_id, persona_id, "cancelled")
 
     # ------------------------------------------------------------------
     # Statistics
@@ -205,19 +218,18 @@ class OrderService:
     async def get_order_statistics(
         self,
         workspace_id: int,
-        persona_id: Optional[int] = None,
+        persona_id: int,
         start_date: Optional[datetime] = None,
         end_date: Optional[datetime] = None,
     ) -> Dict[str, Any]:
-        """Aggregate order statistics for a workspace."""
+        """Aggregate order statistics for a workspace, always scoped to persona."""
         today = datetime.now(timezone.utc).date()
 
         base_conditions = [
             OrderDetail.workspace_id == workspace_id,
+            OrderDetail.persona_id == persona_id,
             OrderDetail.is_active.is_(True),  # noqa: E712
         ]
-        if persona_id is not None:
-            base_conditions.append(OrderDetail.persona_id == persona_id)
         if start_date is not None:
             base_conditions.append(OrderDetail.created_at >= start_date)
         if end_date is not None:
@@ -255,11 +267,10 @@ class OrderService:
         # Today's orders + revenue
         today_conditions = [
             OrderDetail.workspace_id == workspace_id,
+            OrderDetail.persona_id == persona_id,
             OrderDetail.is_active.is_(True),  # noqa: E712
             func.date(OrderDetail.created_at) == today,
         ]
-        if persona_id is not None:
-            today_conditions.append(OrderDetail.persona_id == persona_id)
 
         today_stmt = select(
             func.count(OrderDetail.id).label("today_orders"),

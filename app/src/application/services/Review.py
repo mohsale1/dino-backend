@@ -34,31 +34,67 @@ class ReviewService(BaseService):
 
         return await self.review_repo.create(payload)
 
-    async def update_review(self, review_id: int, data: Dict[str, Any]) -> bool:
-        """Update allowed fields on an existing review."""
+    async def update_review(
+        self,
+        review_id: int,
+        workspace_id: int,
+        persona_id: int,
+        data: Dict[str, Any],
+    ) -> bool:
+        """Update allowed fields on an existing review, scoped to persona."""
         allowed_fields = {"rating", "comment", "is_approved"}
         update_data = {k: v for k, v in data.items() if k in allowed_fields}
 
         if not update_data:
             return False
 
-        return await self.review_repo.update(review_id, update_data)
+        return await self.review_repo.update_for_persona(
+            review_id, workspace_id, persona_id, update_data
+        )
 
-    async def approve_review(self, review_id: int) -> bool:
-        """Mark a review as approved (visible on homepage)."""
-        return await self.review_repo.approve_review(review_id)
+    async def approve_review(
+        self,
+        review_id: int,
+        workspace_id: int,
+        persona_id: int,
+    ) -> bool:
+        """Mark a review as approved (visible on homepage), scoped to persona."""
+        return await self.review_repo.approve_for_persona(
+            review_id, workspace_id, persona_id
+        )
 
-    async def unapprove_review(self, review_id: int) -> bool:
-        """Withdraw approval from a review."""
-        return await self.review_repo.unapprove_review(review_id)
+    async def unapprove_review(
+        self,
+        review_id: int,
+        workspace_id: int,
+        persona_id: int,
+    ) -> bool:
+        """Withdraw approval from a review, scoped to persona."""
+        return await self.review_repo.unapprove_for_persona(
+            review_id, workspace_id, persona_id
+        )
 
-    async def soft_delete_review(self, review_id: int) -> bool:
-        """Soft-delete a review (sets is_active=False)."""
-        return await self.review_repo.soft_delete(review_id)
+    async def soft_delete_review(
+        self,
+        review_id: int,
+        workspace_id: int,
+        persona_id: int,
+    ) -> bool:
+        """Soft-delete a review (sets is_active=False), scoped to persona."""
+        return await self.review_repo.soft_delete_for_persona(
+            review_id, workspace_id, persona_id
+        )
 
-    async def restore_review(self, review_id: int) -> bool:
-        """Restore a soft-deleted review (sets is_active=True)."""
-        return await self.review_repo.restore(review_id)
+    async def restore_review(
+        self,
+        review_id: int,
+        workspace_id: int,
+        persona_id: int,
+    ) -> bool:
+        """Restore a soft-deleted review (sets is_active=True), scoped to persona."""
+        return await self.review_repo.restore_for_persona(
+            review_id, workspace_id, persona_id
+        )
 
     # ------------------------------------------------------------------
     # Read operations
@@ -67,7 +103,7 @@ class ReviewService(BaseService):
     async def get_paginated_reviews(
         self,
         workspace_id: int,
-        persona_id: Optional[int] = None,
+        persona_id: int,
         is_approved: Optional[bool] = None,
         page: int = 1,
         page_size: int = 20,
@@ -92,7 +128,7 @@ class ReviewService(BaseService):
     async def get_approved_reviews(
         self,
         workspace_id: int,
-        persona_id: Optional[int] = None,
+        persona_id: int,
         limit: int = 10,
     ) -> List[Dict[str, Any]]:
         """
@@ -109,12 +145,23 @@ class ReviewService(BaseService):
     async def get_rating_summary(
         self,
         workspace_id: int,
-        persona_id: Optional[int] = None,
+        persona_id: int,
     ) -> Dict[str, Any]:
         """Delegate rating statistics to the repository."""
         return await self.review_repo.get_rating_summary(
             workspace_id=workspace_id,
             persona_id=persona_id,
+        )
+
+    async def get_review_for_persona(
+        self,
+        review_id: int,
+        workspace_id: int,
+        persona_id: int,
+    ) -> Optional[Dict[str, Any]]:
+        """Fetch a single review by ID, scoped to workspace and persona."""
+        return await self.review_repo.get_by_id_for_persona(
+            review_id, workspace_id, persona_id
         )
 
     # ------------------------------------------------------------------

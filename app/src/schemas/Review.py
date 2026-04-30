@@ -14,7 +14,7 @@ class ReviewCreate(BaseSchema):
     """Payload for creating a new review."""
 
     # workspace_id and user_id are always injected server-side from current_user in the route
-    persona_id: Optional[int] = None
+    persona_id: int = Field(..., ge=1)
     rating: int = Field(default=5, ge=1, le=5, description="Star rating from 1 to 5")
     comment: Optional[str] = Field(default=None, max_length=2000)
 
