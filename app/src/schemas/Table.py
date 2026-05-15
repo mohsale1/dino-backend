@@ -3,14 +3,14 @@ from typing import Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
-TableStatus = Literal[''available'', ''occupied'', ''reserved'', ''out_of_service'']
+TableStatus = Literal['available', 'occupied', 'reserved', 'out_of_service']
 
 
 class TableBase(BaseModel):
     table_number: str = Field(..., min_length=1, max_length=50)
     area_id: int
     capacity: int = Field(default=4, ge=1)
-    status: TableStatus = ''available''
+    status: TableStatus = 'available'
 
 
 class TableCreate(TableBase):

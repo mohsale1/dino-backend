@@ -207,7 +207,7 @@ _redoc_url = None if settings.ENVIRONMENT == "production" else "/redoc"
 app = FastAPI(
     title=settings.APP_NAME,
     version=settings.APP_VERSION,
-    description="Dino System Service â€” system-level administration and management",
+    description="Dino System Service system-level administration and management",
     lifespan=lifespan,
     docs_url=_docs_url,
     redoc_url=_redoc_url,

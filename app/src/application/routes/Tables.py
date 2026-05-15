@@ -1,12 +1,14 @@
 ﻿"""
-Tables router â€” CRUD for restaurant tables.
+Tables router — CRUD for restaurant tables.
 """
 
 from typing import Any, Dict, Literal, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
+
+from src.config.Settings import settings
 
 from src.application.middleware.RoleCheck import ApplicationPermissionCheck
 from src.application.services.Table import TableService
@@ -121,6 +123,25 @@ async def create_table(
     table = await service.create_table(data)
     return {"success": True, "message": "Table created successfully", "data": table}
 
+
+
+@router.get("/{table_id}/qr-code")
+async def get_table_qr_code(
+    table_id: int,
+    persona_id: int = Query(..., ge=1),
+    current_user: Dict[str, Any] = Depends(ApplicationPermissionCheck.require("tables:read")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Return a QR code PNG for the given table linking to the customer menu page."""
+    wid = _require_workspace(current_user)
+    service = TableService(db)
+    png_bytes = await service.generate_qr_code(
+        table_id=table_id,
+        workspace_id=wid,
+        persona_id=persona_id,
+        frontend_url=settings.FRONTEND_URL,
+    )
+    return Response(content=png_bytes, media_type="image/png")
 
 
 @router.get("/{table_id}", response_model=BaseResponse)

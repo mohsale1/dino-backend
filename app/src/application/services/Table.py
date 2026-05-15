@@ -1,5 +1,5 @@
 ﻿"""
-TableService â€” business logic for restaurant tables.
+TableService — business logic for restaurant tables.
 """
 
 from typing import Any, Dict, List, Optional, Tuple
@@ -110,3 +110,38 @@ class TableService(BaseService):
     ) -> Dict[str, int]:
         """Return counts of tables grouped by status, scoped to the given persona."""
         return await self.table_repo.get_status_counts(workspace_id, persona_id)
+
+    async def generate_qr_code(
+        self,
+        table_id: int,
+        workspace_id: int,
+        persona_id: int,
+        frontend_url: str,
+    ) -> bytes:
+        """
+        Fetch the table, build a menu URL, generate a QR code PNG and return
+        the raw bytes. Raises 404 if the table does not exist for this persona.
+        """
+        import io
+        import qrcode
+
+        table = await self.table_repo.get_by_id_for_persona(table_id, workspace_id, persona_id)
+        if not table:
+            from fastapi import HTTPException, status
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Table not found")
+
+        url = f"{frontend_url.rstrip('/')}/menu/{workspace_id}/{persona_id}/{table_id}"
+
+        qr = qrcode.QRCode(
+            version=None,
+            error_correction=qrcode.constants.ERROR_CORRECT_M,
+            box_size=10,
+            border=4,
+        )
+        qr.add_data(url)
+        qr.make(fit=True)
+
+        img = qr.make_image(fill_color="black", back_color="white")
+        buf = io.BytesIO()
+        img.save(buf, format="PNG")
+        return buf.getvalue()

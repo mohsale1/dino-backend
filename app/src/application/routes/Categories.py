@@ -25,15 +25,15 @@ class CreateCategoryRequest(BaseModel):
     name: str = Field(..., min_length=1, max_length=200)
     description: Optional[str] = Field(None, max_length=500)
     persona_id: int = Field(..., ge=1)
-    image_url: Optional[str] = Field(None, max_length=500)
     is_available: bool = True
+
 
 
 class UpdateCategoryRequest(BaseModel):
     name: Optional[str] = Field(None, min_length=1, max_length=200)
     description: Optional[str] = Field(None, max_length=500)
-    image_url: Optional[str] = Field(None, max_length=500)
     is_available: Optional[bool] = None
+
 
 
 # ---------------------------------------------------------------------------

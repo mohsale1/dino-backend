@@ -25,6 +25,7 @@ from src.application.routes import (
     Orders,
     Permissions,
     Personas,
+    PublicMenu,
     Reviews,
     Roles,
     Tables,
@@ -140,6 +141,7 @@ app.include_router(Roles.router, prefix=PREFIX)
 app.include_router(Permissions.router, prefix=PREFIX)
 app.include_router(Reviews.router, prefix=PREFIX)
 app.include_router(HomePage.router, prefix=PREFIX)
+app.include_router(PublicMenu.router, prefix=PREFIX)
 
 
 @app.exception_handler(SQLAlchemyError)

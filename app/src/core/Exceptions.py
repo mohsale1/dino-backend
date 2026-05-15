@@ -20,6 +20,11 @@ class ForbiddenException(HTTPException):
     def __init__(self, detail: str = "Forbidden"):
         super().__init__(status_code=status.HTTP_403_FORBIDDEN, detail=detail)
 
+class GoneException(HTTPException):
+    """Resource permanently gone exception"""
+    def __init__(self, detail: str = "Resource is no longer available"):
+        super().__init__(status_code=410, detail=detail)
+
 class ConflictException(HTTPException):
     """Conflict exception"""
     def __init__(self, detail: str = "Resource already exists"):
