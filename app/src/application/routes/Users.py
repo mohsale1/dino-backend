@@ -1,102 +1,106 @@
+"""
+Users router — CRUD for application users (user_type=1).
+"""
+
+import logging
 from typing import Any, Dict, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
-from pydantic import BaseModel
+from fastapi import APIRouter, Depends, Query
+from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.application.middleware.RoleCheck import ApplicationPermissionCheck
 from src.application.services.User import ApplicationUserService
 from src.base.BaseSchema import BaseResponse
 from src.config.Database import get_db
+from src.core.Exceptions import (
+    BadRequestError,
+    EmailAlreadyExistsError,
+    InvalidRoleError,
+    NotFoundError,
+    UserNotDeletedError,
+)
 from src.schemas.User import UserCreate, UserUpdate
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/users", tags=["Application Users"])
 
 
 class UpdateRoleRequest(BaseModel):
-    role_id: int
+    role_id: int = Field(..., ge=1)
 
 
-# ── /users/me  &  /users/me/data ────────────────────────────────────────────
+# ---------------------------------------------------------------------------
+# GET /users/me
+# ---------------------------------------------------------------------------
 
 @router.get("/me", response_model=BaseResponse)
 async def get_me(
     current_user: Dict[str, Any] = Depends(ApplicationPermissionCheck.require_authenticated),
     db: AsyncSession = Depends(get_db),
 ):
-    """Return the currently authenticated user with role and workspace."""
-    service = ApplicationUserService(db)
-    user = await service.get_user_with_role(current_user["id"])
+    """Return the currently authenticated user with role."""
+    user_id = current_user.get("id")
+    logger.info("users.me.request user_id=%s", user_id)
+
+    user = await ApplicationUserService(db).get_user_with_role(user_id)
     if not user:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+        raise NotFoundError("User not found")
+
+    logger.info("users.me.response user_id=%s", user_id)
     return {"success": True, "message": "User retrieved successfully", "data": user}
 
+
+# ---------------------------------------------------------------------------
+# GET /users/me/data
+# ---------------------------------------------------------------------------
 
 @router.get("/me/data", response_model=BaseResponse)
 async def get_me_data(
     current_user: Dict[str, Any] = Depends(ApplicationPermissionCheck.require_authenticated),
     db: AsyncSession = Depends(get_db),
 ):
-    """Return the currently authenticated user with full workspace and persona data."""
-    from src.repositories.WorkspaceRepository import WorkspaceRepository
-    from src.repositories.PersonaRepository import PersonaRepository
+    """Return the currently authenticated user with role + linked personas (single batch query)."""
+    user_id = current_user.get("id")
+    logger.info("users.me_data.request user_id=%s", user_id)
 
-    service = ApplicationUserService(db)
-    user = await service.get_user_with_role(current_user["id"])
-    if not user:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+    data = await ApplicationUserService(db).get_user_with_personas(user_id)
+    if not data:
+        raise NotFoundError("User not found")
 
-    workspace = None
-    personas = []
-    workspace_id = user.get("workspace_id")
-    if workspace_id:
-        workspace = await WorkspaceRepository(db).get_by_id(workspace_id)
-        personas = await PersonaRepository(db).get_paginated_by_workspace(
-            workspace_id=workspace_id, page=1, page_size=100
-        )
-        if isinstance(personas, tuple):
-            personas = personas[0]  # (items, total, total_pages)
-
-    return {
-        "success": True,
-        "message": "User data retrieved successfully",
-        "data": {
-            "user": user,
-            "workspace": workspace,
-            "personas": personas,
-        },
-    }
+    logger.info(
+        "users.me_data.response user_id=%s personas=%s",
+        user_id, len(data.get("personas", [])),
+    )
+    return {"success": True, "message": "User data retrieved successfully", "data": data}
 
 
-def _assert_same_workspace(current_user: Dict[str, Any], target_user: Dict[str, Any]) -> None:
-    """Raise 404 if caller attempts to access a user outside their workspace."""
-    caller_workspace_id = current_user.get("workspace_id")
-    if target_user.get("workspace_id") != caller_workspace_id:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
-
+# ---------------------------------------------------------------------------
+# GET /users
+# ---------------------------------------------------------------------------
 
 @router.get("", response_model=BaseResponse)
 async def get_all_users(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
-    persona_id: Optional[int] = Query(None),
-    role_id: Optional[int] = Query(None),
-    search: Optional[str] = Query(None),
+    workspace_id: Optional[int] = Query(None, ge=1),
+    persona_id: Optional[int] = Query(None, ge=1),
+    role_id: Optional[int] = Query(None, ge=1),
+    search: Optional[str] = Query(None, max_length=200),
     include_deleted: bool = Query(False),
-    current_user: Dict[str, Any] = Depends(ApplicationPermissionCheck.require("users:read")),
+    current_user: Dict[str, Any] = Depends(ApplicationPermissionCheck.require_authenticated),
     db: AsyncSession = Depends(get_db),
 ):
-    """Get paginated application users scoped to the caller's workspace."""
-    service = ApplicationUserService(db)
+    """Get paginated application users."""
+    user_id = current_user.get("id")
+    logger.info(
+        "users.list.request user_id=%s workspace_id=%s persona_id=%s "
+        "role_id=%s search=%r page=%s page_size=%s include_deleted=%s",
+        user_id, workspace_id, persona_id, role_id, search, page, page_size, include_deleted,
+    )
 
-    workspace_id = current_user.get("workspace_id")
-    if not workspace_id:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="User does not belong to a workspace",
-        )
-
-    items, total, total_pages = await service.get_paginated_users(
+    items, total, total_pages = await ApplicationUserService(db).get_paginated_users(
         workspace_id=workspace_id,
         persona_id=persona_id,
         role_id=role_id,
@@ -106,6 +110,10 @@ async def get_all_users(
         include_deleted=include_deleted,
     )
 
+    logger.info(
+        "users.list.response user_id=%s total=%s page=%s returned=%s",
+        user_id, total, page, len(items),
+    )
     return {
         "success": True,
         "message": "Users retrieved successfully",
@@ -121,162 +129,219 @@ async def get_all_users(
     }
 
 
-@router.post("", response_model=BaseResponse, status_code=status.HTTP_201_CREATED)
+# ---------------------------------------------------------------------------
+# POST /users
+# ---------------------------------------------------------------------------
+
+@router.post("", response_model=BaseResponse, status_code=201)
 async def create_user(
     user: UserCreate,
-    current_user: Dict[str, Any] = Depends(ApplicationPermissionCheck.require("users:create")),
+    current_user: Dict[str, Any] = Depends(ApplicationPermissionCheck.require_authenticated),
     db: AsyncSession = Depends(get_db),
 ):
     """Create a new application user."""
+    actor_id = current_user.get("id")
+    logger.info(
+        "users.create.request actor_id=%s email=%s role_id=%s",
+        actor_id, user.email, user.role_id,
+    )
+
     service = ApplicationUserService(db)
 
-    workspace_id = current_user.get("workspace_id")
-    if not workspace_id:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="User does not belong to a workspace",
-        )
-
-    if await service.email_exists(user.email, workspace_id):
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Email already registered in this workspace",
-        )
+    if await service.email_exists(user.email):
+        logger.warning("users.create.email_exists actor_id=%s email=%s", actor_id, user.email)
+        raise EmailAlreadyExistsError()
 
     if not await service.validate_application_role(user.role_id):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid role or role is not an application role (role_type must be 1)",
-        )
+        logger.warning("users.create.invalid_role actor_id=%s role_id=%s", actor_id, user.role_id)
+        raise InvalidRoleError()
 
-    user_data = user.model_dump()
-    user_data["workspace_id"] = workspace_id  # enforce caller's workspace
+    created = await service.create_user(user.model_dump())
 
-    created = await service.create_user(user_data)
-    return {
-        "success": True,
-        "message": "User created successfully",
-        "data": created,
-    }
+    logger.info(
+        "users.create.response actor_id=%s user_id=%s email=%s",
+        actor_id, created.get("id"), user.email,
+    )
+    return {"success": True, "message": "User created successfully", "data": created}
 
 
-# NOTE: Static sub-path /role/{role_id} must be declared before /{user_id}
-# to prevent FastAPI matching "role" as a user_id integer.
+# ---------------------------------------------------------------------------
+# GET /users/role/{role_id}
+# ---------------------------------------------------------------------------
+
 @router.get("/role/{role_id}", response_model=BaseResponse)
 async def get_users_by_role(
     role_id: int,
-    current_user: Dict[str, Any] = Depends(ApplicationPermissionCheck.require("users:read")),
+    workspace_id: Optional[int] = Query(None, ge=1),
+    current_user: Dict[str, Any] = Depends(ApplicationPermissionCheck.require_authenticated),
     db: AsyncSession = Depends(get_db),
 ):
-    """Get all users with a specific role in the caller's workspace."""
-    service = ApplicationUserService(db)
-    workspace_id = current_user.get("workspace_id")
-    users = await service.get_users_by_role(role_id, workspace_id=workspace_id)
+    """Get all users with a specific role."""
+    user_id = current_user.get("id")
+    logger.info(
+        "users.by_role.request user_id=%s role_id=%s workspace_id=%s",
+        user_id, role_id, workspace_id,
+    )
+
+    users = await ApplicationUserService(db).get_users_by_role(role_id, workspace_id=workspace_id)
+
+    logger.info(
+        "users.by_role.response user_id=%s role_id=%s returned=%s",
+        user_id, role_id, len(users),
+    )
     return {"success": True, "message": "Users retrieved successfully", "data": users}
 
+
+# ---------------------------------------------------------------------------
+# GET /users/{user_id}
+# ---------------------------------------------------------------------------
 
 @router.get("/{user_id}", response_model=BaseResponse)
 async def get_user(
     user_id: int,
-    current_user: Dict[str, Any] = Depends(ApplicationPermissionCheck.require("users:read")),
+    current_user: Dict[str, Any] = Depends(ApplicationPermissionCheck.require_authenticated),
     db: AsyncSession = Depends(get_db),
 ):
-    """Get user details."""
-    service = ApplicationUserService(db)
-    user = await service.get_user_with_role(user_id)
+    """Get user details with role."""
+    actor_id = current_user.get("id")
+    logger.info("users.get.request actor_id=%s user_id=%s", actor_id, user_id)
+
+    user = await ApplicationUserService(db).get_user_with_role(user_id)
     if not user:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
-    _assert_same_workspace(current_user, user)
+        logger.warning("users.get.not_found actor_id=%s user_id=%s", actor_id, user_id)
+        raise NotFoundError("User not found")
+
+    logger.info("users.get.response actor_id=%s user_id=%s", actor_id, user_id)
     return {"success": True, "message": "User retrieved successfully", "data": user}
 
+
+# ---------------------------------------------------------------------------
+# PUT /users/{user_id}
+# ---------------------------------------------------------------------------
 
 @router.put("/{user_id}", response_model=BaseResponse)
 async def update_user(
     user_id: int,
     user: UserUpdate,
-    current_user: Dict[str, Any] = Depends(ApplicationPermissionCheck.require("users:update")),
+    current_user: Dict[str, Any] = Depends(ApplicationPermissionCheck.require_authenticated),
     db: AsyncSession = Depends(get_db),
 ):
-    """Update user."""
-    service = ApplicationUserService(db)
-    existing = await service.get_by_id(user_id)
-    if not existing:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
-    _assert_same_workspace(current_user, existing)
-
+    """Update user fields."""
+    actor_id = current_user.get("id")
     data = user.model_dump(exclude_unset=True)
+
+    if not data:
+        logger.warning("users.update.empty_payload actor_id=%s user_id=%s", actor_id, user_id)
+        raise BadRequestError("No fields provided for update")
+
+    logger.info(
+        "users.update.request actor_id=%s user_id=%s fields=%s",
+        actor_id, user_id, list(data.keys()),
+    )
+
+    service = ApplicationUserService(db)
+
     if "role_id" in data and not await service.validate_application_role(data["role_id"]):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid role or role is not an application role",
-        )
+        logger.warning("users.update.invalid_role actor_id=%s role_id=%s", actor_id, data["role_id"])
+        raise InvalidRoleError()
 
     success = await service.update_user(user_id, data)
     if not success:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+        logger.warning("users.update.not_found actor_id=%s user_id=%s", actor_id, user_id)
+        raise NotFoundError("User not found")
+
+    logger.info(
+        "users.update.response actor_id=%s user_id=%s fields=%s",
+        actor_id, user_id, list(data.keys()),
+    )
     return {"success": True, "message": "User updated successfully"}
 
+
+# ---------------------------------------------------------------------------
+# DELETE /users/{user_id}
+# ---------------------------------------------------------------------------
 
 @router.delete("/{user_id}", response_model=BaseResponse)
 async def delete_user(
     user_id: int,
-    current_user: Dict[str, Any] = Depends(ApplicationPermissionCheck.require("users:delete")),
+    current_user: Dict[str, Any] = Depends(ApplicationPermissionCheck.require_authenticated),
     db: AsyncSession = Depends(get_db),
 ):
-    """Soft delete user."""
-    service = ApplicationUserService(db)
-    user = await service.get_by_id(user_id)
-    if not user:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
-    _assert_same_workspace(current_user, user)
-    success = await service.soft_delete_user(user_id)
+    """Soft-delete a user."""
+    actor_id = current_user.get("id")
+    logger.info("users.delete.request actor_id=%s user_id=%s", actor_id, user_id)
+
+    success = await ApplicationUserService(db).soft_delete_user(user_id)
     if not success:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+        logger.warning("users.delete.not_found actor_id=%s user_id=%s", actor_id, user_id)
+        raise NotFoundError("User not found")
+
+    logger.info("users.delete.response actor_id=%s user_id=%s", actor_id, user_id)
     return {"success": True, "message": "User deleted successfully"}
 
+
+# ---------------------------------------------------------------------------
+# POST /users/{user_id}/restore
+# ---------------------------------------------------------------------------
 
 @router.post("/{user_id}/restore", response_model=BaseResponse)
 async def restore_user(
     user_id: int,
-    current_user: Dict[str, Any] = Depends(ApplicationPermissionCheck.require("users:update")),
+    current_user: Dict[str, Any] = Depends(ApplicationPermissionCheck.require_authenticated),
     db: AsyncSession = Depends(get_db),
 ):
     """Restore a soft-deleted user."""
+    actor_id = current_user.get("id")
+    logger.info("users.restore.request actor_id=%s user_id=%s", actor_id, user_id)
+
     service = ApplicationUserService(db)
     user = await service.get_by_id(user_id, include_deleted=True)
     if not user:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
-    _assert_same_workspace(current_user, user)
+        logger.warning("users.restore.not_found actor_id=%s user_id=%s", actor_id, user_id)
+        raise NotFoundError("User not found")
     if user.get("is_active", False):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="User is not deleted",
-        )
-    success = await service.restore_user(user_id)
-    if not success:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+        raise UserNotDeletedError()
+
+    await service.restore_user(user_id)
+
+    logger.info("users.restore.response actor_id=%s user_id=%s", actor_id, user_id)
     return {"success": True, "message": "User restored successfully"}
 
+
+# ---------------------------------------------------------------------------
+# PUT /users/{user_id}/role
+# ---------------------------------------------------------------------------
 
 @router.put("/{user_id}/role", response_model=BaseResponse)
 async def update_user_role(
     user_id: int,
     request: UpdateRoleRequest,
-    current_user: Dict[str, Any] = Depends(ApplicationPermissionCheck.require("users:update")),
+    current_user: Dict[str, Any] = Depends(ApplicationPermissionCheck.require_authenticated),
     db: AsyncSession = Depends(get_db),
 ):
     """Update user role."""
+    actor_id = current_user.get("id")
+    logger.info(
+        "users.role.update.request actor_id=%s user_id=%s role_id=%s",
+        actor_id, user_id, request.role_id,
+    )
+
     service = ApplicationUserService(db)
-    existing = await service.get_by_id(user_id)
-    if not existing:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
-    _assert_same_workspace(current_user, existing)
+
     if not await service.validate_application_role(request.role_id):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid role or role is not an application role",
+        logger.warning(
+            "users.role.update.invalid_role actor_id=%s role_id=%s",
+            actor_id, request.role_id,
         )
+        raise InvalidRoleError()
+
     success = await service.update_user(user_id, {"role_id": request.role_id})
     if not success:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+        logger.warning("users.role.update.not_found actor_id=%s user_id=%s", actor_id, user_id)
+        raise NotFoundError("User not found")
+
+    logger.info(
+        "users.role.update.response actor_id=%s user_id=%s role_id=%s",
+        actor_id, user_id, request.role_id,
+    )
     return {"success": True, "message": "User role updated successfully"}

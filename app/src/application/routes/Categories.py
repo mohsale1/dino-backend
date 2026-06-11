@@ -1,11 +1,11 @@
 """
-Categories router — CRUD for menu categories.
-All endpoints are scoped by both workspace_id (from JWT) and persona_id (required query/body param).
+Categories router — CRUD for menu categories, scoped by persona_id.
 """
 
+import logging
 from typing import Any, Dict, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -13,13 +13,12 @@ from src.application.middleware.RoleCheck import ApplicationPermissionCheck
 from src.application.services.Category import CategoryService
 from src.base.BaseSchema import BaseResponse
 from src.config.Database import get_db
+from src.core.Exceptions import BadRequestError, NotFoundError
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/categories", tags=["Categories"])
 
-
-# ---------------------------------------------------------------------------
-# Request schemas
-# ---------------------------------------------------------------------------
 
 class CreateCategoryRequest(BaseModel):
     name: str = Field(..., min_length=1, max_length=200)
@@ -28,34 +27,11 @@ class CreateCategoryRequest(BaseModel):
     is_available: bool = True
 
 
-
 class UpdateCategoryRequest(BaseModel):
     name: Optional[str] = Field(None, min_length=1, max_length=200)
     description: Optional[str] = Field(None, max_length=500)
     is_available: Optional[bool] = None
 
-
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-def _require_workspace(current_user: Dict[str, Any]) -> int:
-    wid = current_user.get("workspace_id")
-    if not wid:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="workspace_id required")
-    return wid
-
-
-def _require_persona(persona_id: Optional[int]) -> int:
-    if persona_id is None:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="persona_id required")
-    return persona_id
-
-
-# ---------------------------------------------------------------------------
-# Routes
-# ---------------------------------------------------------------------------
 
 @router.get("", response_model=BaseResponse)
 async def get_categories(
@@ -63,19 +39,26 @@ async def get_categories(
     is_available: Optional[bool] = Query(None),
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
-    current_user: Dict[str, Any] = Depends(ApplicationPermissionCheck.require("categories:read")),
+    current_user: Dict[str, Any] = Depends(ApplicationPermissionCheck.require_authenticated),
     db: AsyncSession = Depends(get_db),
 ):
-    """Get paginated categories scoped to the user's workspace and persona."""
-    wid = _require_workspace(current_user)
-    _require_persona(persona_id)
-    service = CategoryService(db)
-    items, total, total_pages = await service.get_paginated_categories(
-        workspace_id=wid,
+    """Get paginated categories scoped to persona."""
+    user_id = current_user.get("id")
+    logger.info(
+        "categories.list.request user_id=%s persona_id=%s is_available=%s page=%s page_size=%s",
+        user_id, persona_id, is_available, page, page_size,
+    )
+
+    items, total, total_pages = await CategoryService(db).get_paginated_categories(
         persona_id=persona_id,
         is_available=is_available,
         page=page,
         page_size=page_size,
+    )
+
+    logger.info(
+        "categories.list.response user_id=%s persona_id=%s total=%s page=%s total_pages=%s returned=%s",
+        user_id, persona_id, total, page, total_pages, len(items),
     )
     return {
         "success": True,
@@ -92,19 +75,26 @@ async def get_categories(
     }
 
 
-@router.post("", response_model=BaseResponse, status_code=status.HTTP_201_CREATED)
+@router.post("", response_model=BaseResponse, status_code=201)
 async def create_category(
     request: CreateCategoryRequest,
-    current_user: Dict[str, Any] = Depends(ApplicationPermissionCheck.require("categories:create")),
+    current_user: Dict[str, Any] = Depends(ApplicationPermissionCheck.require_authenticated),
     db: AsyncSession = Depends(get_db),
 ):
-    """Create a new category in the authenticated user's workspace, bound to a persona."""
-    wid = _require_workspace(current_user)
-    _require_persona(request.persona_id)
-    service = CategoryService(db)
+    """Create a new category scoped to persona."""
+    user_id = current_user.get("id")
+    logger.info(
+        "categories.create.request user_id=%s persona_id=%s name=%r",
+        user_id, request.persona_id, request.name,
+    )
+
     data = request.model_dump()
-    data["workspace_id"] = wid
-    category = await service.create_category(data)
+    category = await CategoryService(db).create_category(data)
+
+    logger.info(
+        "categories.create.response user_id=%s persona_id=%s category_id=%s name=%r",
+        user_id, request.persona_id, category.get("id"), category.get("name"),
+    )
     return {"success": True, "message": "Category created successfully", "data": category}
 
 
@@ -112,16 +102,28 @@ async def create_category(
 async def get_category(
     category_id: int,
     persona_id: int = Query(..., ge=1),
-    current_user: Dict[str, Any] = Depends(ApplicationPermissionCheck.require("categories:read")),
+    current_user: Dict[str, Any] = Depends(ApplicationPermissionCheck.require_authenticated),
     db: AsyncSession = Depends(get_db),
 ):
-    """Get a single category scoped to the user's workspace and persona."""
-    wid = _require_workspace(current_user)
-    _require_persona(persona_id)
-    service = CategoryService(db)
-    category = await service.get_category_for_persona(category_id, wid, persona_id)
+    """Get a single category scoped to persona."""
+    user_id = current_user.get("id")
+    logger.info(
+        "categories.get.request user_id=%s category_id=%s persona_id=%s",
+        user_id, category_id, persona_id,
+    )
+
+    category = await CategoryService(db).get_category_for_persona(category_id, persona_id)
     if not category:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Category not found")
+        logger.warning(
+            "categories.get.not_found user_id=%s category_id=%s persona_id=%s",
+            user_id, category_id, persona_id,
+        )
+        raise NotFoundError("Category not found")
+
+    logger.info(
+        "categories.get.response user_id=%s category_id=%s persona_id=%s name=%r",
+        user_id, category_id, persona_id, category.get("name"),
+    )
     return {"success": True, "message": "Category retrieved successfully", "data": category}
 
 
@@ -130,20 +132,37 @@ async def update_category(
     category_id: int,
     request: UpdateCategoryRequest,
     persona_id: int = Query(..., ge=1),
-    current_user: Dict[str, Any] = Depends(ApplicationPermissionCheck.require("categories:update")),
+    current_user: Dict[str, Any] = Depends(ApplicationPermissionCheck.require_authenticated),
     db: AsyncSession = Depends(get_db),
 ):
-    """Update a category. Ownership enforced via workspace_id + persona_id in a single DB query."""
-    wid = _require_workspace(current_user)
-    _require_persona(persona_id)
+    """Update a category scoped to persona."""
+    user_id = current_user.get("id")
     data = request.model_dump(exclude_unset=True)
-    if not data:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No fields provided to update")
 
-    service = CategoryService(db)
-    updated = await service.update_category(category_id, wid, persona_id, data)
+    if not data:
+        logger.warning(
+            "categories.update.empty_payload user_id=%s category_id=%s persona_id=%s",
+            user_id, category_id, persona_id,
+        )
+        raise BadRequestError("No fields provided to update")
+
+    logger.info(
+        "categories.update.request user_id=%s category_id=%s persona_id=%s fields=%s",
+        user_id, category_id, persona_id, list(data.keys()),
+    )
+
+    updated = await CategoryService(db).update_category(category_id, persona_id, data)
     if not updated:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Category not found")
+        logger.warning(
+            "categories.update.not_found user_id=%s category_id=%s persona_id=%s",
+            user_id, category_id, persona_id,
+        )
+        raise NotFoundError("Category not found")
+
+    logger.info(
+        "categories.update.response user_id=%s category_id=%s persona_id=%s fields=%s",
+        user_id, category_id, persona_id, list(data.keys()),
+    )
     return {"success": True, "message": "Category updated successfully"}
 
 
@@ -151,16 +170,28 @@ async def update_category(
 async def delete_category(
     category_id: int,
     persona_id: int = Query(..., ge=1),
-    current_user: Dict[str, Any] = Depends(ApplicationPermissionCheck.require("categories:delete")),
+    current_user: Dict[str, Any] = Depends(ApplicationPermissionCheck.require_authenticated),
     db: AsyncSession = Depends(get_db),
 ):
-    """Soft-delete a category. Ownership enforced via workspace_id + persona_id in a single DB query."""
-    wid = _require_workspace(current_user)
-    _require_persona(persona_id)
-    service = CategoryService(db)
-    deleted = await service.soft_delete_category(category_id, wid, persona_id)
+    """Soft-delete a category scoped to persona."""
+    user_id = current_user.get("id")
+    logger.info(
+        "categories.delete.request user_id=%s category_id=%s persona_id=%s",
+        user_id, category_id, persona_id,
+    )
+
+    deleted = await CategoryService(db).soft_delete_category(category_id, persona_id)
     if not deleted:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Category not found")
+        logger.warning(
+            "categories.delete.not_found user_id=%s category_id=%s persona_id=%s",
+            user_id, category_id, persona_id,
+        )
+        raise NotFoundError("Category not found")
+
+    logger.info(
+        "categories.delete.response user_id=%s category_id=%s persona_id=%s",
+        user_id, category_id, persona_id,
+    )
     return {"success": True, "message": "Category deleted successfully"}
 
 
@@ -168,17 +199,26 @@ async def delete_category(
 async def restore_category(
     category_id: int,
     persona_id: int = Query(..., ge=1),
-    current_user: Dict[str, Any] = Depends(ApplicationPermissionCheck.require("categories:update")),
+    current_user: Dict[str, Any] = Depends(ApplicationPermissionCheck.require_authenticated),
     db: AsyncSession = Depends(get_db),
 ):
-    """Restore a soft-deleted category. Ownership and state enforced via workspace_id + persona_id in a single DB query."""
-    wid = _require_workspace(current_user)
-    _require_persona(persona_id)
-    service = CategoryService(db)
-    restored = await service.restore_category(category_id, wid, persona_id)
+    """Restore a soft-deleted category scoped to persona."""
+    user_id = current_user.get("id")
+    logger.info(
+        "categories.restore.request user_id=%s category_id=%s persona_id=%s",
+        user_id, category_id, persona_id,
+    )
+
+    restored = await CategoryService(db).restore_category(category_id, persona_id)
     if not restored:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Category not found or is not deleted",
+        logger.warning(
+            "categories.restore.not_found user_id=%s category_id=%s persona_id=%s",
+            user_id, category_id, persona_id,
         )
+        raise NotFoundError("Category not found or is not deleted")
+
+    logger.info(
+        "categories.restore.response user_id=%s category_id=%s persona_id=%s",
+        user_id, category_id, persona_id,
+    )
     return {"success": True, "message": "Category restored successfully"}

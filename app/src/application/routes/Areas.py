@@ -1,10 +1,11 @@
-﻿"""
-Areas router â€” CRUD for dining areas, scoped by workspace (JWT) and persona.
+"""
+Areas router — CRUD for dining areas, scoped by persona_id.
 """
 
+import logging
 from typing import Any, Dict, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -12,13 +13,12 @@ from src.application.middleware.RoleCheck import ApplicationPermissionCheck
 from src.application.services.Area import AreaService
 from src.base.BaseSchema import BaseResponse
 from src.config.Database import get_db
+from src.core.Exceptions import BadRequestError, NotFoundError
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/areas", tags=["Areas"])
 
-
-# ---------------------------------------------------------------------------
-# Request schemas
-# ---------------------------------------------------------------------------
 
 class CreateAreaRequest(BaseModel):
     name: str = Field(..., min_length=1, max_length=200)
@@ -33,43 +33,32 @@ class UpdateAreaRequest(BaseModel):
     is_available: Optional[bool] = None
 
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-def _require_workspace(current_user: Dict[str, Any]) -> int:
-    """Extract workspace_id from JWT claims; raise 400 if absent."""
-    wid = current_user.get("workspace_id")
-    if not wid:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="workspace_id required",
-        )
-    return wid
-
-
-# ---------------------------------------------------------------------------
-# Routes
-# ---------------------------------------------------------------------------
-
 @router.get("", response_model=BaseResponse)
 async def get_areas(
     persona_id: int = Query(..., ge=1),
     is_available: Optional[bool] = Query(None),
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
-    current_user: Dict[str, Any] = Depends(ApplicationPermissionCheck.require("areas:read")),
+    current_user: Dict[str, Any] = Depends(ApplicationPermissionCheck.require_authenticated),
     db: AsyncSession = Depends(get_db),
 ):
-    """List paginated areas scoped to workspace + persona, ordered oldest-first with 1-based absolute index."""
-    wid = _require_workspace(current_user)
-    service = AreaService(db)
-    items, total, total_pages = await service.get_all_areas(
-        workspace_id=wid,
+    """List paginated areas scoped to persona."""
+    user_id = current_user.get("id")
+    logger.info(
+        "areas.list.request user_id=%s persona_id=%s is_available=%s page=%s page_size=%s",
+        user_id, persona_id, is_available, page, page_size,
+    )
+
+    items, total, total_pages = await AreaService(db).get_all_areas(
         persona_id=persona_id,
         is_available=is_available,
         page=page,
         page_size=page_size,
+    )
+
+    logger.info(
+        "areas.list.response user_id=%s persona_id=%s total=%s page=%s total_pages=%s returned=%s",
+        user_id, persona_id, total, page, total_pages, len(items),
     )
     return {
         "success": True,
@@ -86,22 +75,26 @@ async def get_areas(
     }
 
 
-
-@router.post("", response_model=BaseResponse, status_code=status.HTTP_201_CREATED)
+@router.post("", response_model=BaseResponse, status_code=201)
 async def create_area(
     request: CreateAreaRequest,
-    current_user: Dict[str, Any] = Depends(ApplicationPermissionCheck.require("areas:create")),
+    current_user: Dict[str, Any] = Depends(ApplicationPermissionCheck.require_authenticated),
     db: AsyncSession = Depends(get_db),
 ):
-    """
-    Create a new area scoped to workspace + persona.
-    Automatically links the persona to the workspace in workspace_personas if not already linked.
-    """
-    wid = _require_workspace(current_user)
-    service = AreaService(db)
+    """Create a new area scoped to persona."""
+    user_id = current_user.get("id")
+    logger.info(
+        "areas.create.request user_id=%s persona_id=%s name=%r",
+        user_id, request.persona_id, request.name,
+    )
+
     data = request.model_dump()
-    data["workspace_id"] = wid
-    area = await service.create_area(data)
+    area = await AreaService(db).create_area(data)
+
+    logger.info(
+        "areas.create.response user_id=%s persona_id=%s area_id=%s name=%r",
+        user_id, request.persona_id, area.get("id"), area.get("name"),
+    )
     return {"success": True, "message": "Area created successfully", "data": area}
 
 
@@ -109,15 +102,28 @@ async def create_area(
 async def get_area(
     area_id: int,
     persona_id: int = Query(..., ge=1),
-    current_user: Dict[str, Any] = Depends(ApplicationPermissionCheck.require("areas:read")),
+    current_user: Dict[str, Any] = Depends(ApplicationPermissionCheck.require_authenticated),
     db: AsyncSession = Depends(get_db),
 ):
-    """Get a single area scoped to workspace + persona."""
-    wid = _require_workspace(current_user)
-    service = AreaService(db)
-    area = await service.get_area_for_persona(area_id, wid, persona_id)
+    """Get a single area scoped to persona."""
+    user_id = current_user.get("id")
+    logger.info(
+        "areas.get.request user_id=%s area_id=%s persona_id=%s",
+        user_id, area_id, persona_id,
+    )
+
+    area = await AreaService(db).get_area_for_persona(area_id, persona_id)
     if not area:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Area not found")
+        logger.warning(
+            "areas.get.not_found user_id=%s area_id=%s persona_id=%s",
+            user_id, area_id, persona_id,
+        )
+        raise NotFoundError("Area not found")
+
+    logger.info(
+        "areas.get.response user_id=%s area_id=%s persona_id=%s name=%r",
+        user_id, area_id, persona_id, area.get("name"),
+    )
     return {"success": True, "message": "Area retrieved successfully", "data": area}
 
 
@@ -126,21 +132,37 @@ async def update_area(
     area_id: int,
     request: UpdateAreaRequest,
     persona_id: int = Query(..., ge=1),
-    current_user: Dict[str, Any] = Depends(ApplicationPermissionCheck.require("areas:update")),
+    current_user: Dict[str, Any] = Depends(ApplicationPermissionCheck.require_authenticated),
     db: AsyncSession = Depends(get_db),
 ):
-    """Update name, description, or is_available for an area scoped to workspace + persona."""
-    wid = _require_workspace(current_user)
+    """Update name, description, or is_available for an area."""
+    user_id = current_user.get("id")
     data = request.model_dump(exclude_unset=True)
+
     if not data:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="No fields provided for update",
+        logger.warning(
+            "areas.update.empty_payload user_id=%s area_id=%s persona_id=%s",
+            user_id, area_id, persona_id,
         )
-    service = AreaService(db)
-    updated = await service.update_area(area_id, wid, persona_id, data)
+        raise BadRequestError("No fields provided for update")
+
+    logger.info(
+        "areas.update.request user_id=%s area_id=%s persona_id=%s fields=%s",
+        user_id, area_id, persona_id, list(data.keys()),
+    )
+
+    updated = await AreaService(db).update_area(area_id, persona_id, data)
     if not updated:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Area not found")
+        logger.warning(
+            "areas.update.not_found user_id=%s area_id=%s persona_id=%s",
+            user_id, area_id, persona_id,
+        )
+        raise NotFoundError("Area not found")
+
+    logger.info(
+        "areas.update.response user_id=%s area_id=%s persona_id=%s fields=%s",
+        user_id, area_id, persona_id, list(data.keys()),
+    )
     return {"success": True, "message": "Area updated successfully"}
 
 
@@ -148,34 +170,56 @@ async def update_area(
 async def delete_area(
     area_id: int,
     persona_id: int = Query(..., ge=1),
-    current_user: Dict[str, Any] = Depends(ApplicationPermissionCheck.require("areas:delete")),
+    current_user: Dict[str, Any] = Depends(ApplicationPermissionCheck.require_authenticated),
     db: AsyncSession = Depends(get_db),
 ):
-    """Soft-delete an area (sets is_active=False) scoped to workspace + persona."""
-    wid = _require_workspace(current_user)
-    service = AreaService(db)
-    deleted = await service.soft_delete_area(
-        area_id, wid, persona_id, updated_by=current_user.get("id")
+    """Soft-delete an area."""
+    user_id = current_user.get("id")
+    logger.info(
+        "areas.delete.request user_id=%s area_id=%s persona_id=%s",
+        user_id, area_id, persona_id,
     )
+
+    deleted = await AreaService(db).soft_delete_area(area_id, persona_id)
     if not deleted:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Area not found")
+        logger.warning(
+            "areas.delete.not_found user_id=%s area_id=%s persona_id=%s",
+            user_id, area_id, persona_id,
+        )
+        raise NotFoundError("Area not found")
+
+    logger.info(
+        "areas.delete.response user_id=%s area_id=%s persona_id=%s",
+        user_id, area_id, persona_id,
+    )
     return {"success": True, "message": "Area deleted successfully"}
+
 
 
 @router.post("/{area_id}/restore", response_model=BaseResponse)
 async def restore_area(
     area_id: int,
     persona_id: int = Query(..., ge=1),
-    current_user: Dict[str, Any] = Depends(ApplicationPermissionCheck.require("areas:update")),
+    current_user: Dict[str, Any] = Depends(ApplicationPermissionCheck.require_authenticated),
     db: AsyncSession = Depends(get_db),
 ):
-    """Restore a soft-deleted area scoped to workspace + persona."""
-    wid = _require_workspace(current_user)
-    service = AreaService(db)
-    restored = await service.restore_area(area_id, wid, persona_id)
+    """Restore a soft-deleted area."""
+    user_id = current_user.get("id")
+    logger.info(
+        "areas.restore.request user_id=%s area_id=%s persona_id=%s",
+        user_id, area_id, persona_id,
+    )
+
+    restored = await AreaService(db).restore_area(area_id, persona_id)
     if not restored:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Area not found or is not deleted",
+        logger.warning(
+            "areas.restore.not_found user_id=%s area_id=%s persona_id=%s",
+            user_id, area_id, persona_id,
         )
+        raise NotFoundError("Area not found or is not deleted")
+
+    logger.info(
+        "areas.restore.response user_id=%s area_id=%s persona_id=%s",
+        user_id, area_id, persona_id,
+    )
     return {"success": True, "message": "Area restored successfully"}

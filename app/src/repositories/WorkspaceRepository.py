@@ -18,10 +18,6 @@ class WorkspaceRepository(BaseRepository):
     def __init__(self, db: AsyncSession) -> None:
         super().__init__(Workspace, db)
 
-    async def get_by_owner(self, owner_id: int) -> List[Dict[str, Any]]:
-        """Return all active workspaces owned by a user."""
-        return await self.get_all(filters={"owner_id": owner_id})
-
     async def get_with_billing(self, workspace_id: int) -> Optional[Dict[str, Any]]:
         """Return workspace dict (billing is loaded separately via BillingService)."""
         return await self.get_by_id(workspace_id)

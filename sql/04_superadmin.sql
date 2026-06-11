@@ -9,13 +9,12 @@
 BEGIN;
 
 INSERT INTO users (
-    user_type,3f8a2b1c9d4e7f6a5b0c3d2e1f8a9b4c7d6e5f0a3b2c1d4e7f6a5b8c9d0e1f2
+    user_type,
     email,
     first_name,
     last_name,
     password_hash,
     role_id,
-    workspace_id,
     is_active,
     created_at,
     updated_at
@@ -27,13 +26,12 @@ SELECT
     'Admin',
     '$2b$12$fb3MAlzQw9PPNnx/Mv/BT.88qzd27BhiwUbVbvtyHO7UsQ8Sk8KB2',
     r.id,
-    NULL,
     true,
     (now() AT TIME ZONE 'Asia/Kolkata'),
     (now() AT TIME ZONE 'Asia/Kolkata')
 FROM roles r
 WHERE r.name = 'SuperAdmin'
-ON CONFLICT (email, workspace_id) DO NOTHING;
+ON CONFLICT (email) DO NOTHING;
 
 COMMIT;
 

@@ -1,17 +1,24 @@
 import logging
 from typing import Any, Dict
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
-from slowapi import Limiter
+from fastapi import APIRouter, Depends, Query, Request
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.application.middleware.RoleCheck import ApplicationPermissionCheck
 from src.application.services.Auth import ApplicationAuthService
 from src.base.BaseSchema import BaseResponse
 from src.config.Database import get_db
+from src.core.Exceptions import (
+    ConflictError,
+    InvalidCredentialsError,
+    InternalError,
+    NotFoundError,
+    TokenInvalidError,
+    NotAuthenticatedError,
+)
 from src.core.Security import decode_token
-from src.repositories.UserRepository import UserRepository
-from src.repositories.WorkspaceRepository import WorkspaceRepository
+from src.models.User import User
 from src.schemas.Auth import (
     ChangePasswordRequest,
     LoginRequest,
@@ -27,82 +34,84 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/auth", tags=["Application Auth"])
 
 
-def _get_real_ip(request: Request) -> str:
-    """Extract the real client IP from X-Forwarded-For (set by GCP load balancer)."""
+def _client_ip(request: Request) -> str:
     forwarded_for = request.headers.get("X-Forwarded-For")
     if forwarded_for:
         return forwarded_for.split(",")[0].strip()
     return request.client.host if request.client else "unknown"
 
 
-limiter = Limiter(key_func=_get_real_ip)
-
-
 @router.post("/login", response_model=LoginResponse)
-@limiter.limit("5/minute")
 async def login(request: Request, body: LoginRequest, db: AsyncSession = Depends(get_db)):
     """Application user login."""
-    auth_service = ApplicationAuthService(db)
-    try:
-        result = await auth_service.login(body.email, body.password)
-    except PermissionError as e:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
+    ip = _client_ip(request)
+    logger.info("auth.login.request email=%s ip=%s", body.email, ip)
+
+    result = await ApplicationAuthService(db).login(body.email, body.password)
 
     if not result:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid email or password",
-        )
+        logger.warning("auth.login.failed email=%s ip=%s reason=invalid_credentials", body.email, ip)
+        raise InvalidCredentialsError()
+
+    user_id = result.get("user", {}).get("id")
+    logger.info("auth.login.success user_id=%s email=%s ip=%s", user_id, body.email, ip)
     return result
 
 
-@router.post("/signup", response_model=SignupResponse, status_code=status.HTTP_201_CREATED)
-@limiter.limit("3/minute")
+@router.post("/signup", response_model=SignupResponse, status_code=201)
 async def signup(request: Request, body: SignupRequest, db: AsyncSession = Depends(get_db)):
     """Complete signup: create workspace, persona, and admin user."""
-    auth_service = ApplicationAuthService(db)
-
-    workspace_data = {
-        "name": body.workspace_name,
-        "description": body.workspace_description,
-    }
-    persona_data = {
-        "name": body.persona_name,
-        "persona_type": body.persona_type,
-        "order_type": body.order_type,
-        "address": body.persona_address,
-        "city": body.persona_city,
-        "state": body.persona_state,
-        "country": body.persona_country,
-        "postal_code": body.persona_postal_code,
-        "phone": body.persona_phone,
-        "email": body.persona_email,
-    }
-    admin_data = {
-        "email": body.admin_email,
-        "password": body.admin_password,
-        "first_name": body.admin_first_name,
-        "last_name": body.admin_last_name,
-        "phone": body.admin_phone,
-    }
+    ip = _client_ip(request)
+    logger.info(
+        "auth.signup.request workspace=%r email=%s ip=%s",
+        body.workspace_name, body.admin_email, ip,
+    )
 
     try:
-        result = await auth_service.signup(
-            workspace_data=workspace_data,
-            persona_data=persona_data,
-            admin_data=admin_data,
+        result = await ApplicationAuthService(db).signup(
+            workspace_data={"name": body.workspace_name, "description": body.workspace_description},
+            persona_data={
+                "name": body.persona_name,
+                "persona_type": body.persona_type,
+                "order_type": body.order_type,
+                "address": body.persona_address,
+                "city": body.persona_city,
+                "state": body.persona_state,
+                "country": body.persona_country,
+                "postal_code": body.persona_postal_code,
+                "phone": body.persona_phone,
+                "email": body.persona_email,
+            },
+            admin_data={
+                "email": body.admin_email,
+                "password": body.admin_password,
+                "first_name": body.admin_first_name,
+                "last_name": body.admin_last_name,
+                "phone": body.admin_phone,
+            },
             referral_email=body.referral_email,
         )
     except ValueError as e:
-        # Pass the exact error message from the service — do NOT override it
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
-    except Exception as e:
-        logger.error("Unexpected error during signup: %s", e, exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="An unexpected error occurred. Please try again later.",
+        logger.warning(
+            "auth.signup.conflict workspace=%r email=%s ip=%s reason=%s",
+            body.workspace_name, body.admin_email, ip, str(e),
         )
+        raise ConflictError(str(e))
+    except Exception:
+        logger.error(
+            "auth.signup.error workspace=%r email=%s ip=%s",
+            body.workspace_name, body.admin_email, ip,
+            exc_info=True,
+        )
+        raise InternalError("An unexpected error occurred. Please try again later.")
 
+    workspace_id = result["workspace"].get("id")
+    user_id = result["user"].get("id")
+    persona_id = result["persona"].get("id")
+    logger.info(
+        "auth.signup.success workspace_id=%s persona_id=%s user_id=%s email=%s ip=%s",
+        workspace_id, persona_id, user_id, body.admin_email, ip,
+    )
     return SignupResponse(
         workspace=result["workspace"],
         persona=result["persona"],
@@ -112,105 +121,91 @@ async def signup(request: Request, body: SignupRequest, db: AsyncSession = Depen
 
 
 @router.get("/validate-referral", response_model=BaseResponse)
-@limiter.limit("3/minute")
 async def validate_referral(
     request: Request,
     email: str = Query(..., description="Agent email address to validate"),
     db: AsyncSession = Depends(get_db),
 ):
     """Validate that a referral email belongs to an active system user (agent)."""
-    user_repo = UserRepository(db)
-    user = await user_repo.get_by_field("email", email)
+    ip = _client_ip(request)
+    logger.info("auth.validate_referral.request email=%s ip=%s", email, ip)
 
-    if not user or user.get("user_type") != 0 or not user.get("is_active"):
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="No active agent found with this email",
+    stmt = select(
+        User.user_type,
+        User.is_active,
+        User.first_name,
+        User.last_name,
+    ).where(User.email == email.strip().lower())
+
+    row = (await db.execute(stmt)).one_or_none()
+
+    if not row or row.user_type != 0 or not row.is_active:
+        logger.warning(
+            "auth.validate_referral.not_found email=%s ip=%s",
+            email, ip,
         )
+        raise NotFoundError("No active agent found with this email")
 
-    first = user.get("first_name", "")
-    last = user.get("last_name", "")
-    return BaseResponse(success=True, message="Agent found", data={"valid": True, "name": f"{first} {last}".strip()})
+    agent_name = f"{row.first_name} {row.last_name}".strip()
+    logger.info(
+        "auth.validate_referral.success email=%s agent=%r ip=%s",
+        email, agent_name, ip,
+    )
+    return BaseResponse(
+        success=True,
+        message="Agent found",
+        data={"valid": True, "name": agent_name},
+    )
 
 
 @router.post("/refresh", response_model=RefreshTokenResponse)
-@limiter.limit("10/minute")
 async def refresh_token(request: Request, body: RefreshTokenRequest, db: AsyncSession = Depends(get_db)):
-    """Refresh access token."""
+    """Refresh access token using a valid refresh token."""
+    ip = _client_ip(request)
+    logger.info("auth.token.refresh.request ip=%s", ip)
+
     payload = decode_token(body.refresh_token)
 
-    if payload.get("type") != "refresh":
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid refresh token",
-        )
+    if payload.get("type") != "refresh" or payload.get("user_type") != 1:
+        logger.warning("auth.token.refresh.invalid_type ip=%s type=%s", ip, payload.get("type"))
+        raise TokenInvalidError("Invalid refresh token")
 
-    if payload.get("user_type") != 1:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid refresh token",
-        )
-
-    sub = payload.get("sub")
     try:
-        user_id = int(sub)
-    except (ValueError, TypeError):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid refresh token",
+        user_id = int(payload["sub"])
+    except (ValueError, TypeError, KeyError):
+        logger.warning("auth.token.refresh.invalid_sub ip=%s", ip)
+        raise TokenInvalidError("Invalid refresh token")
+
+    stmt = select(User.is_active).where(User.id == user_id, User.user_type == 1)
+    row = (await db.execute(stmt)).one_or_none()
+    if not row or not row.is_active:
+        logger.warning(
+            "auth.token.refresh.user_not_found user_id=%s ip=%s",
+            user_id, ip,
         )
+        raise NotAuthenticatedError("User not found or inactive")
 
-    user = await UserRepository(db).get_by_id(user_id)
-    if not user or not user.get("is_active"):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="User not found or inactive",
-        )
+    token_data = {"sub": payload["sub"], "email": payload["email"], "user_type": 1}
+    access_token = ApplicationAuthService(db).create_access_token(token_data)
 
-    workspace_id = user.get("workspace_id")
-    if workspace_id:
-        workspace = await WorkspaceRepository(db).get_by_id(workspace_id)
-        if not workspace or not workspace.get("is_active"):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Workspace is inactive",
-            )
-
-    auth_service = ApplicationAuthService(db)
-    token_data = {
-        "sub": payload.get("sub"),
-        "email": payload.get("email"),
-        "user_type": 1,
-    }
-    access_token = auth_service.create_access_token(token_data)
+    logger.info("auth.token.refresh.success user_id=%s ip=%s", user_id, ip)
     return {"access_token": access_token, "token_type": "bearer"}
 
 
 @router.get("/me", response_model=BaseResponse)
-@limiter.limit("30/minute")
 async def get_current_user(
-    request: Request,
     current_user: Dict[str, Any] = Depends(ApplicationPermissionCheck.require_authenticated),
-    db: AsyncSession = Depends(get_db),
 ):
-    """Get current application user."""
-    workspace_repo = WorkspaceRepository(db)
-
-    workspace = None
-    workspace_id = current_user.get("workspace_id")
-    if workspace_id:
-        workspace = await workspace_repo.get_by_id(workspace_id)
-
-    user = {k: v for k, v in current_user.items() if k != "password_hash"}
+    """Return the currently authenticated user — resolved from JWT, no extra DB call."""
+    logger.info("auth.me.request user_id=%s", current_user.get("id"))
     return {
         "success": True,
         "message": "User retrieved successfully",
-        "data": {"user": user, "workspace": workspace},
+        "data": {"user": current_user},
     }
 
 
 @router.post("/change-password", response_model=BaseResponse)
-@limiter.limit("5/minute")
 async def change_password(
     request: Request,
     body: ChangePasswordRequest,
@@ -218,6 +213,13 @@ async def change_password(
     db: AsyncSession = Depends(get_db),
 ):
     """Change password for the currently authenticated user."""
-    user_id = current_user.get("id")
-    await ApplicationAuthService(db).change_password(user_id, body.old_password, body.new_password)
+    user_id = current_user["id"]
+    ip = _client_ip(request)
+    logger.info("auth.change_password.request user_id=%s ip=%s", user_id, ip)
+
+    await ApplicationAuthService(db).change_password(
+        user_id, body.old_password, body.new_password
+    )
+
+    logger.info("auth.change_password.success user_id=%s ip=%s", user_id, ip)
     return {"success": True, "message": "Password changed successfully"}

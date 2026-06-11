@@ -17,7 +17,6 @@ class UserCreate(UserBase):
     password: str = Field(..., min_length=6)
     role_id: int
     user_type: int = Field(default=0, ge=0, le=1, description="0=System, 1=Application")
-    workspace_id: Optional[int] = None
 
 
 class UserUpdate(BaseModel):
@@ -28,7 +27,6 @@ class UserUpdate(BaseModel):
     phone: Optional[str] = None
     password: Optional[str] = Field(None, min_length=6)
     role_id: Optional[int] = None
-    workspace_id: Optional[int] = None
     is_active: Optional[bool] = None
 
 
@@ -41,7 +39,6 @@ class UserResponse(BaseModel):
     last_name: str
     phone: Optional[str] = None
     role_id: int
-    workspace_id: Optional[int] = None
     is_active: bool
     last_login: Optional[datetime] = None
     created_at: datetime

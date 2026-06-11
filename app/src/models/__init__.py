@@ -36,6 +36,7 @@ from src.models.BillingTransaction import BillingTransaction  # noqa: F401
 from src.models.Review import Review  # noqa: F401
 from src.models.BillingConfig import BillingConfig  # noqa: F401
 from src.models.CustomerSession import CustomerSession  # noqa: F401
+from src.models.Homepage import HomepageConfig  # noqa: F401
 
 __all__ = [
     # Base & mixins
@@ -66,4 +67,5 @@ __all__ = [
     "Review",
     "BillingConfig",
     "CustomerSession",
+    "HomepageConfig",
 ]

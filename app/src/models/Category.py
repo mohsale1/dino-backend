@@ -1,8 +1,7 @@
 ﻿"""
-Category ORM model. No sort_order, no parent_id.
+Category ORM model.
+workspace_id removed — scoped via persona_id (CASCADE, NOT NULL).
 """
-
-from typing import Optional
 
 from sqlalchemy import BigInteger, Boolean, ForeignKey, Index, String, Text, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -16,24 +15,18 @@ class Category(BigIntPrimaryKeyMixin, EntityMixin, Base):
     __tablename__ = "categories"
 
     __table_args__ = (
-        Index("ix_categories_workspace_id", "workspace_id"),
         Index("ix_categories_persona_id", "persona_id"),
     )
 
     name: Mapped[str] = mapped_column(String(200), nullable=False)
-    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
     is_available: Mapped[bool] = mapped_column(
         Boolean, nullable=False, server_default=text("true")
     )
-    workspace_id: Mapped[int] = mapped_column(
+    persona_id: Mapped[int] = mapped_column(
         BigInteger,
-        ForeignKey("workspaces.id", ondelete="CASCADE"),
+        ForeignKey("personas.id", ondelete="CASCADE"),
         nullable=False,
-    )
-    persona_id: Mapped[Optional[int]] = mapped_column(
-        BigInteger,
-        ForeignKey("personas.id", ondelete="SET NULL"),
-        nullable=True,
     )
 
     # Relationships

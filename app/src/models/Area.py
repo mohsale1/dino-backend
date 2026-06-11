@@ -1,5 +1,7 @@
 """
-Area ORM model. No display_order column.
+Area ORM model.
+workspace_id removed — scoped entirely via persona_id.
+persona_id FK is CASCADE (area deleted when persona is deleted).
 """
 
 from typing import Optional
@@ -16,7 +18,6 @@ class Area(BigIntPrimaryKeyMixin, EntityMixin, Base):
     __tablename__ = "areas"
 
     __table_args__ = (
-        Index("ix_areas_workspace_id", "workspace_id"),
         Index("ix_areas_persona_id", "persona_id"),
     )
 
@@ -25,19 +26,14 @@ class Area(BigIntPrimaryKeyMixin, EntityMixin, Base):
     is_available: Mapped[bool] = mapped_column(
         Boolean, nullable=False, server_default=text("true")
     )
-    workspace_id: Mapped[int] = mapped_column(
+    persona_id: Mapped[int] = mapped_column(
         BigInteger,
-        ForeignKey("workspaces.id", ondelete="CASCADE"),
+        ForeignKey("personas.id", ondelete="CASCADE"),
         nullable=False,
-    )
-    persona_id: Mapped[Optional[int]] = mapped_column(
-        BigInteger,
-        ForeignKey("personas.id", ondelete="SET NULL"),
-        nullable=True,
     )
 
     # Relationships
-    persona: Mapped[Optional["Persona"]] = relationship(  # noqa: F821
+    persona: Mapped["Persona"] = relationship(  # noqa: F821
         "Persona",
         back_populates="areas",
         lazy="noload",

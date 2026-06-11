@@ -1,5 +1,7 @@
 """
-Item ORM model. No sort_order.
+Item ORM model.
+workspace_id replaced with persona_id (CASCADE, NOT NULL).
+Scoped directly via persona_id — no longer requires Category join for isolation.
 """
 
 from decimal import Decimal
@@ -12,12 +14,12 @@ from src.models.Base import Base, BigIntPrimaryKeyMixin, EntityMixin
 
 
 class Item(BigIntPrimaryKeyMixin, EntityMixin, Base):
-    """A menu item."""
+    """A menu item belonging to a category and persona."""
 
     __tablename__ = "items"
 
     __table_args__ = (
-        Index("ix_items_workspace_id", "workspace_id"),
+        Index("ix_items_persona_id", "persona_id"),
         Index("ix_items_category_id", "category_id"),
     )
 
@@ -29,9 +31,9 @@ class Item(BigIntPrimaryKeyMixin, EntityMixin, Base):
         Boolean, nullable=False, server_default=text("true")
     )
     is_vegetarian: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True)
-    workspace_id: Mapped[int] = mapped_column(
+    persona_id: Mapped[int] = mapped_column(
         BigInteger,
-        ForeignKey("workspaces.id", ondelete="CASCADE"),
+        ForeignKey("personas.id", ondelete="CASCADE"),
         nullable=False,
     )
     category_id: Mapped[int] = mapped_column(

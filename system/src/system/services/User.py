@@ -30,7 +30,6 @@ class SystemUserService(BaseService):
             data["password_hash"] = get_password_hash(data.pop("password"))
         data["user_type"] = 0
         data.setdefault("is_active", True)
-        data.setdefault("workspace_id", None)
         return await self.user_repo.create(data)
 
     # ------------------------------------------------------------------
@@ -60,7 +59,6 @@ class SystemUserService(BaseService):
     async def get_paginated_users(
         self,
         user_type: Optional[int] = None,
-        workspace_id: Optional[int] = None,
         role_id: Optional[int] = None,
         search: Optional[str] = None,
         page: int = 1,
@@ -70,7 +68,6 @@ class SystemUserService(BaseService):
         """Return paginated users with role enrichment, password_hash stripped."""
         items, total, total_pages = await self.user_repo.get_paginated_users(
             user_type=user_type,
-            workspace_id=workspace_id,
             role_id=role_id,
             search_query=search,
             page=page,
@@ -91,11 +88,10 @@ class SystemUserService(BaseService):
     async def email_exists(
         self,
         email: str,
-        workspace_id: Optional[int] = None,
         exclude_id: Optional[int] = None,
     ) -> bool:
-        """Check email uniqueness."""
-        return await self.user_repo.email_exists(email, workspace_id, exclude_id)
+        """Check email uniqueness globally."""
+        return await self.user_repo.email_exists(email, exclude_id)
 
     async def get_users_by_role(self, role_id: int) -> List[Dict[str, Any]]:
         """Return all users with the given role."""

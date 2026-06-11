@@ -8,7 +8,6 @@ This module provides shared dict-conversion utilities used across the codebase.
 import uuid
 from datetime import datetime, timezone
 from decimal import Decimal
-from typing import Optional
 
 
 SENSITIVE_FIELDS: frozenset = frozenset([
@@ -48,13 +47,3 @@ def row_to_dict(row) -> dict:
     return result
 
 
-def sanitize_dict(data: dict, extra_fields: Optional[set] = None) -> dict:
-    """
-    Return a shallow copy of *data* with SENSITIVE_FIELDS (and any
-    caller-supplied *extra_fields*) removed.
-    """
-    fields_to_remove = SENSITIVE_FIELDS
-    if extra_fields:
-        fields_to_remove = fields_to_remove | set(extra_fields)
-
-    return {k: v for k, v in data.items() if k not in fields_to_remove}

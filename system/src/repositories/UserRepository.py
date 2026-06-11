@@ -22,10 +22,6 @@ class UserRepository(BaseRepository):
     # Simple lookups
     # ------------------------------------------------------------------
 
-    async def get_by_workspace(self, workspace_id: int) -> List[Dict[str, Any]]:
-        """Return all active users belonging to the given workspace."""
-        return await self.get_all(filters={"workspace_id": workspace_id})
-
     async def get_by_role(self, role_id: int) -> List[Dict[str, Any]]:
         """Return all active users assigned to the given role."""
         return await self.get_all(filters={"role_id": role_id})
@@ -41,28 +37,16 @@ class UserRepository(BaseRepository):
     async def email_exists(
         self,
         email: str,
-        workspace_id: Optional[int] = None,
         exclude_id: Optional[int] = None,
     ) -> bool:
-        """
-        Return True if a user with the given email exists.
-
-        For system users (workspace_id=None): checks globally unique email.
-        For application users: checks uniqueness within the workspace.
-        """
+        """Return True if a user with the given email exists globally."""
         stmt = (
             select(func.count())
             .select_from(self.model)
             .where(self.model.email == email.lower())
         )
-        if workspace_id is None:
-            stmt = stmt.where(self.model.workspace_id.is_(None))
-        else:
-            stmt = stmt.where(self.model.workspace_id == workspace_id)
-
         if exclude_id is not None:
             stmt = stmt.where(self.model.id != exclude_id)
-
         result = await self.db.execute(stmt)
         return (result.scalar_one() or 0) > 0
 
@@ -73,7 +57,6 @@ class UserRepository(BaseRepository):
     async def get_paginated_users(
         self,
         user_type: Optional[int] = None,
-        workspace_id: Optional[int] = None,
         role_id: Optional[int] = None,
         search_query: Optional[str] = None,
         page: int = 1,
@@ -92,9 +75,6 @@ class UserRepository(BaseRepository):
 
         if user_type is not None:
             conditions.append(self.model.user_type == user_type)
-
-        if workspace_id is not None:
-            conditions.append(self.model.workspace_id == workspace_id)
 
         if role_id is not None:
             conditions.append(self.model.role_id == role_id)

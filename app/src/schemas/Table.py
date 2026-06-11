@@ -14,7 +14,7 @@ class TableBase(BaseModel):
 
 
 class TableCreate(TableBase):
-    persona_id: Optional[int] = None
+    persona_id: int
 
 
 class TableUpdate(BaseModel):
@@ -29,10 +29,9 @@ class TableResponse(BaseModel):
     id: int
     table_number: str
     area_id: int
-    workspace_id: int
+    persona_id: int
     capacity: int
     status: str
-    persona_id: Optional[int] = None
     is_active: bool
     created_at: datetime
     updated_at: datetime

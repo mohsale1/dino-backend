@@ -2,17 +2,17 @@
 ApplicationAuthService — authentication for application users (user_type=1).
 """
 
+import asyncio
 from typing import Any, Dict, Optional
 
-from sqlalchemy import func, select, text as sa_text
+from sqlalchemy import text as sa_text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.base.BaseAuth import BaseAuth
-from src.config.Settings import settings
 from src.core.Security import get_password_hash
-from src.models.User import User as UserModel
+from src.models.User import user_personas
 from src.models.Workspace import workspace_personas
 from src.models.WorkspaceBilling import WorkspaceBilling
 from src.repositories.PersonaRepository import PersonaRepository
@@ -28,7 +28,6 @@ class ApplicationAuthService(BaseAuth):
         user_repo = UserRepository(db)
         role_repo = RoleRepository(db)
         super().__init__(user_repo, role_repo)
-
         self.db = db
         self.user_repo = user_repo
         self.role_repo = role_repo
@@ -36,27 +35,21 @@ class ApplicationAuthService(BaseAuth):
         self.persona_repo = PersonaRepository(db)
 
     # ------------------------------------------------------------------
-    # Login
+    # Login — 2 DB round-trips total
     # ------------------------------------------------------------------
 
     async def login(self, email: str, password: str) -> Optional[Dict[str, Any]]:
-        """Authenticate an application user and return tokens + user data."""
+        """
+        Authenticate an app user and return tokens + enriched user dict.
+
+        Round-trips:
+          1. authenticate_user  — SELECT user by email + UPDATE last_login
+          2. get_user_with_role — SELECT user + role + permissions (selectinload)
+        Token creation is synchronous — no extra DB calls.
+        """
         user = await self.authenticate_user(email, password)
-        if not user:
+        if not user or user.get("user_type") != 1:
             return None
-
-        # Enforce application user type
-        if user.get("user_type") != 1:
-            return None
-
-        # Reject login when the workspace has been deactivated
-        workspace_id = user.get("workspace_id")
-        if workspace_id is not None:
-            workspace = await self.workspace_repo.get_by_id(workspace_id)
-            if workspace is None or not workspace.get("is_active", False):
-                raise PermissionError(
-                    "Your workspace is inactive. Please contact support."
-                )
 
         token_data = {
             "sub": str(user["id"]),
@@ -64,8 +57,11 @@ class ApplicationAuthService(BaseAuth):
             "user_type": 1,
         }
 
+        # Token creation is CPU-only — do it before the second DB call
         access_token = self.create_access_token(token_data)
         refresh_token = self.create_refresh_token(token_data)
+
+        # Fetch enriched user (role + permissions) in one selectinload query
         user_with_role = await self.get_user_with_role(user["id"])
 
         return {
@@ -77,7 +73,7 @@ class ApplicationAuthService(BaseAuth):
         }
 
     # ------------------------------------------------------------------
-    # Signup
+    # Signup — atomic, pre-flight checks parallelised
     # ------------------------------------------------------------------
 
     async def signup(
@@ -88,31 +84,74 @@ class ApplicationAuthService(BaseAuth):
         referral_email: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
-        Complete signup: create workspace, workspace_billing, persona, and admin user.
+        Complete signup: workspace + billing + persona + admin user, all atomic.
 
-        The entire operation runs inside a single explicit SAVEPOINT so that any
-        failure — including unexpected DB errors — rolls back every insert atomically.
+        Pre-flight reads (email check + referral lookup + owner role fetch)
+        run in parallel before the savepoint is opened.
+
+        If no valid referral_email is supplied, the default system user
+        (superadmin@dino.internal) is used as the referrer.
         """
         admin_email = admin_data["email"].strip().lower()
+        _DEFAULT_REFERRER_EMAIL = "default@dino.internal"
 
         # ------------------------------------------------------------------
-        # 0b. Resolve referrer (system user) from referral_email if supplied
+        # Pre-flight: run all read-only checks in parallel
         # ------------------------------------------------------------------
-        referrer_user_id: Optional[int] = None
-        if referral_email:
-            referrer = await self.user_repo.get_by_field("email", referral_email.strip().lower())
-            if referrer and referrer.get("user_type") == 0 and referrer.get("is_active"):
-                referrer_user_id = referrer["id"]
+        async def _check_email() -> bool:
+            return await self.user_repo.email_exists(admin_email)
+
+        async def _resolve_referrer() -> Optional[int]:
+            """
+            1. Try the supplied referral_email (must be an active system user, user_type=0).
+            2. Fall back to the default dino.internal system user.
+            3. Return None only if neither exists.
+            """
+            async def _lookup_system_user(email: str) -> Optional[int]:
+                from sqlalchemy import select as _select
+                from src.models.User import User as _User
+                stmt = _select(_User.id).where(
+                    _User.email == email,
+                    _User.user_type == 0,
+                    _User.is_active.is_(True),
+                )
+                return (await self.db.execute(stmt)).scalar_one_or_none()
+
+            if referral_email:
+                ref_id = await _lookup_system_user(referral_email.strip().lower())
+                if ref_id is not None:
+                    return ref_id
+
+            return await _lookup_system_user(_DEFAULT_REFERRER_EMAIL)
+
+        async def _get_owner_role() -> Optional[Dict[str, Any]]:
+            return await self.role_repo.get_by_name_and_type("Owner", 1)
+
+        email_taken, referrer_user_id, owner_role = await asyncio.gather(
+            _check_email(),
+            _resolve_referrer(),
+            _get_owner_role(),
+        )
+
+        if email_taken:
+            raise ValueError(
+                f"An account with the email '{admin_email}' already exists. "
+                "Please use a different email address."
+            )
+
+        # Determine the email to record in workspace_requests
+        recorded_referral_email = (
+            referral_email.strip().lower()
+            if referral_email
+            else _DEFAULT_REFERRER_EMAIL
+        )
 
         # ------------------------------------------------------------------
-        # All writes below run inside a SAVEPOINT.
-        # If anything raises, the SAVEPOINT is rolled back — leaving the DB
-        # in exactly the state it was before signup was called.
+        # All writes inside a SAVEPOINT — fully atomic
         # ------------------------------------------------------------------
         async with self.db.begin_nested():
             try:
-                # 1. Get or create Owner role (role_type=1)
-                owner_role = await self.role_repo.get_by_name_and_type("Owner", 1)
+                # 1. Create Owner role if it doesn't exist yet
                 if not owner_role:
                     owner_role = await self.role_repo.create({
                         "name": "Owner",
@@ -125,25 +164,20 @@ class ApplicationAuthService(BaseAuth):
                 created_workspace = await self.workspace_repo.create({
                     "name": workspace_data["name"],
                     "description": workspace_data.get("description"),
-                    "owner_id": None,   # back-filled after user creation
                     "is_active": True,
                 })
                 workspace_id = created_workspace["id"]
 
-                # 3. Create workspace_billing (plan=free)
-                billing = WorkspaceBilling(
+                # 3. Add workspace_billing + create persona, then flush both
+                self.db.add(WorkspaceBilling(
                     workspace_id=workspace_id,
                     plan="free",
                     plan_status="active",
-                )
-                self.db.add(billing)
-                await self.db.flush()
+                ))
 
-                # 4. Create persona
                 created_persona = await self.persona_repo.create({
                     "name": persona_data["name"],
                     "description": persona_data.get("description"),
-                    "workspace_id": workspace_id,
                     "persona_type": persona_data.get("persona_type", 0),
                     "order_type": persona_data.get("order_type", 0),
                     "address": persona_data.get("address"),
@@ -156,18 +190,9 @@ class ApplicationAuthService(BaseAuth):
                     "is_active": True,
                 })
                 persona_id = created_persona["id"]
+                await self.db.flush()
 
-                # 5. Link workspace <-> persona
-                stmt = (
-                    pg_insert(workspace_personas)
-                    .values(workspace_id=workspace_id, persona_id=persona_id)
-                    .on_conflict_do_nothing()
-                )
-                await self.db.execute(stmt)
-
-                # 6. Create admin user (user_type=1)
-                # The DB unique constraint is (email, workspace_id) so the same
-                # email can exist across different workspaces — this is by design.
+                # 4. Create admin user
                 created_owner = await self.user_repo.create({
                     "user_type": 1,
                     "email": admin_email,
@@ -176,15 +201,23 @@ class ApplicationAuthService(BaseAuth):
                     "last_name": admin_data["last_name"],
                     "phone": admin_data.get("phone"),
                     "role_id": owner_role["id"],
-                    "workspace_id": workspace_id,
                     "is_active": True,
                 })
+                user_id = created_owner["id"]
 
-                # 7. Back-fill workspace.owner_id
-                await self.workspace_repo.update(workspace_id, {"owner_id": created_owner["id"]})
-                created_workspace["owner_id"] = created_owner["id"]
+                # 5. Link workspace ↔ persona + user ↔ persona
+                await self.db.execute(
+                    pg_insert(workspace_personas)
+                    .values(workspace_id=workspace_id, persona_id=persona_id)
+                    .on_conflict_do_nothing()
+                )
+                await self.db.execute(
+                    pg_insert(user_personas)
+                    .values(user_id=user_id, persona_id=persona_id)
+                    .on_conflict_do_nothing()
+                )
 
-                # 8. Insert workspace_request referral row if a valid referrer was found
+                # 6. Always insert a workspace_request row — using referrer or default
                 if referrer_user_id is not None:
                     await self.db.execute(
                         sa_text(
@@ -193,15 +226,19 @@ class ApplicationAuthService(BaseAuth):
                             " VALUES (:email, :user_id, :workspace_id, 'pending', true, now(), now())"
                         ),
                         {
-                            "email": referral_email.strip().lower(),
+                            "email": recorded_referral_email,
                             "user_id": referrer_user_id,
                             "workspace_id": workspace_id,
                         },
                     )
 
             except IntegrityError as exc:
-                # Translate DB constraint violations into readable messages
                 err_str = str(exc).lower()
+                if "uq_users_email" in err_str or ("users" in err_str and "email" in err_str):
+                    raise ValueError(
+                        f"An account with the email '{admin_email}' already exists. "
+                        "Please use a different email address."
+                    ) from exc
                 if "workspace" in err_str and "name" in err_str:
                     raise ValueError(
                         f"A workspace named '{workspace_data['name']}' already exists. "
@@ -213,9 +250,9 @@ class ApplicationAuthService(BaseAuth):
                 ) from exc
 
         created_owner.pop("password_hash", None)
-
         return {
             "workspace": created_workspace,
             "persona": created_persona,
             "user": created_owner,
         }
+

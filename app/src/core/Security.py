@@ -1,51 +1,43 @@
+import base64
+import hashlib
 import logging
 from typing import Optional
-from fastapi import Depends, HTTPException, status
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-import jwt
-from jwt.exceptions import ExpiredSignatureError, InvalidTokenError
-from src.config.Settings import settings
-import hashlib
-import base64
+
 import bcrypt
+import jwt
+from fastapi import Depends
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from jwt.exceptions import ExpiredSignatureError, InvalidTokenError
+
+from src.config.Settings import settings
+from src.core.Exceptions import (
+    JwtDisabledError,
+    TokenExpiredError,
+    TokenInvalidError,
+    TokenMissingError,
+)
 
 logger = logging.getLogger(__name__)
 
 security = HTTPBearer(auto_error=False)
 
+
 def _prehash_password(password: str) -> bytes:
     """
     Pre-hash password with SHA256 to avoid bcrypt's 72-byte limit.
 
-    This allows passwords of any length while maintaining security.
-    The SHA256 hash is base64-encoded to produce a fixed-length string
-    that's always under bcrypt's limit.
-
-    Args:
-        password: Plain text password of any length
-
-    Returns:
-        Base64-encoded SHA256 hash as bytes (always 44 bytes)
+    SHA256 digest (32 bytes) is base64-encoded to 44 bytes — always under
+    bcrypt's limit. This is the documented approach for long-password support.
     """
-    sha256_hash = hashlib.sha256(password.encode('utf-8')).digest()
+    sha256_hash = hashlib.sha256(password.encode("utf-8")).digest()
     return base64.b64encode(sha256_hash)
 
+
 def verify_password(plain_password: str, hashed_password: str) -> bool:
-    """
-    Verify a password against a hash.
-
-    Uses SHA256 pre-hashing to support passwords of any length.
-
-    Args:
-        plain_password: Plain text password to verify
-        hashed_password: Stored bcrypt hash
-
-    Returns:
-        True if password matches, False otherwise
-    """
+    """Verify a plain-text password against a stored bcrypt hash."""
     try:
         prehashed = _prehash_password(plain_password)
-        return bcrypt.checkpw(prehashed, hashed_password.encode('utf-8'))
+        return bcrypt.checkpw(prehashed, hashed_password.encode("utf-8"))
     except ValueError:
         return False
     except Exception:
@@ -54,81 +46,33 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
 
 
 def get_password_hash(password: str) -> str:
-    """
-    Hash a password using SHA256 + bcrypt.
-
-    This approach:
-    1. Pre-hashes the password with SHA256 (produces 32 bytes)
-    2. Base64 encodes it (produces 44 bytes)
-    3. Hashes with bcrypt (always under 72-byte limit)
-
-    Benefits:
-    - Supports passwords of ANY length
-    - No truncation or length restrictions
-    - Strong security (SHA256 + bcrypt)
-    - Fixed-length input to bcrypt
-
-    Args:
-        password: Plain text password of any length
-
-    Returns:
-        Bcrypt hash of the SHA256-hashed password
-    """
+    """Hash a password using SHA256 pre-hash + bcrypt."""
     prehashed = _prehash_password(password)
     salt = bcrypt.gensalt()
     hashed = bcrypt.hashpw(prehashed, salt)
-    return hashed.decode('utf-8')
+    return hashed.decode("utf-8")
 
-def decode_token(token: str) -> Optional[dict]:
-    """Decode JWT token. Returns payload dict or raises HTTPException."""
+
+def decode_token(token: str) -> dict:
+    """Decode and verify a JWT. Raises typed AppException on failure."""
     try:
-        payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
-        return payload
+        return jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
     except ExpiredSignatureError:
-        logger.warning("JWT decode failed: ExpiredSignatureError")
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Token has expired"
-        )
+        logger.warning("JWT decode failed: token expired")
+        raise TokenExpiredError()
     except InvalidTokenError as exc:
         logger.warning("JWT decode failed: %s", type(exc).__name__)
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid token"
-        )
+        raise TokenInvalidError()
+
 
 async def get_current_user_token(
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(security),
 ) -> str:
-    """Extract token from Authorization header. Raises 503 if JWT is disabled."""
+    """Extract the raw JWT string from the Authorization header."""
     if not settings.ENABLE_JWT:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="JWT authentication is disabled",
-        )
-
+        raise JwtDisabledError()
     if credentials is None:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Authorization credentials are missing",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-
+        raise TokenMissingError()
     return credentials.credentials
 
-
-def verify_token_type(token: str, expected_type: str) -> bool:
-    """Verify token type (access or refresh) without raising HTTPException."""
-    try:
-        payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
-        return payload.get("type") == expected_type
-    except ExpiredSignatureError:
-        logger.warning("verify_token_type: token has expired")
-        return False
-    except InvalidTokenError as exc:
-        logger.warning("verify_token_type: invalid token — %s", type(exc).__name__)
-        return False
-    except Exception:
-        logger.error("verify_token_type: unexpected error during token decode", exc_info=True)
-        return False
 

@@ -11,14 +11,13 @@ class CategoryBase(BaseModel):
 
 
 class CategoryCreate(CategoryBase):
-    persona_id: Optional[int] = None
+    persona_id: int
 
 
 class CategoryUpdate(BaseModel):
     name: Optional[str] = Field(None, min_length=1, max_length=200)
     description: Optional[str] = Field(None, max_length=500)
     is_available: Optional[bool] = None
-    persona_id: Optional[int] = None
 
 
 class CategoryResponse(BaseModel):
@@ -27,8 +26,7 @@ class CategoryResponse(BaseModel):
     id: int
     name: str
     description: Optional[str] = None
-    workspace_id: int
-    persona_id: Optional[int] = None
+    persona_id: int
     is_available: bool
     is_active: bool
     created_at: datetime

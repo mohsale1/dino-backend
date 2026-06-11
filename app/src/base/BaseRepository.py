@@ -19,6 +19,7 @@ from sqlalchemy import and_, delete, func, literal, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.base.BaseModel import row_to_dict
+from src.core.Exceptions import BadRequestError, BulkLimitExceededError
 from src.models.Base import Base
 
 logger = logging.getLogger(__name__)
@@ -61,8 +62,8 @@ class BaseRepository:
             for field, value in filters.items():
                 col = getattr(self.model, field, None)
                 if col is None:
-                    raise ValueError(
-                        f"'{field}' is not a valid column on {self.model.__name__}"
+                    raise BadRequestError(
+                        f"'{field}' is not a valid filter field on {self.model.__name__}"
                     )
                 clauses.append(col == value)
 
@@ -161,7 +162,7 @@ class BaseRepository:
         fully populated before the dicts are returned.
         """
         if len(items) > 500:
-            raise ValueError(f"bulk_create limit is 500 rows, got {len(items)}")
+            raise BulkLimitExceededError(f"bulk_create limit is 500 rows, got {len(items)}")
         instances = [self.model(**item) for item in items]
         self.db.add_all(instances)
         await self.db.flush()
@@ -207,8 +208,8 @@ class BaseRepository:
         """
         col = getattr(self.model, field, None)
         if col is None:
-            raise ValueError(
-                f"'{field}' is not a valid column on {self.model.__name__}"
+            raise BadRequestError(
+                f"'{field}' is not a valid field on {self.model.__name__}"
             )
         clauses = [col == value]
         if not include_deleted and hasattr(self.model, "is_active"):
@@ -309,8 +310,8 @@ class BaseRepository:
         """
         col = getattr(self.model, field, None)
         if col is None:
-            raise ValueError(
-                f"'{field}' is not a valid column on {self.model.__name__}"
+            raise BadRequestError(
+                f"'{field}' is not a valid field on {self.model.__name__}"
             )
         clauses = [col == value]
         if not include_deleted and hasattr(self.model, "is_active"):

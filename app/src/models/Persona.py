@@ -1,23 +1,28 @@
 """
-Persona ORM model (shared with dino-system).
+Persona ORM model.
+workspace_id removed — workspace association is via workspace_personas join table.
+
+persona_type: 0=Food, 1=NonFood
+order_type:   0=Online, 1=Manual
+is_open        — whether the persona is currently open for business.
+is_deactivated — billing-level suspension flag.
 """
 
 from typing import Optional
 
-from sqlalchemy import BigInteger, Boolean, ForeignKey, Index, SmallInteger, String, Text, text
+from sqlalchemy import Boolean, Index, SmallInteger, String, Text, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from src.models.Base import Base, BigIntPrimaryKeyMixin, EntityMixin
 
 
 class Persona(BigIntPrimaryKeyMixin, EntityMixin, Base):
-    """A persona (outlet/branch) that belongs to a Workspace."""
+    """A persona (outlet/branch) linked to workspaces via workspace_personas."""
 
     __tablename__ = "personas"
 
     __table_args__ = (
         Index("ix_personas_persona_type", "persona_type"),
-        Index("ix_personas_workspace_id", "workspace_id"),
     )
 
     name: Mapped[str] = mapped_column(String(200), nullable=False)
@@ -38,55 +43,21 @@ class Persona(BigIntPrimaryKeyMixin, EntityMixin, Base):
     postal_code: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
     phone: Mapped[Optional[str]] = mapped_column(String(30), nullable=True)
     email: Mapped[Optional[str]] = mapped_column(String(254), nullable=True)
-    is_open: Mapped[bool] = mapped_column(
-        Boolean, nullable=False, server_default=text("true")
-    )
-    is_deactivated: Mapped[bool] = mapped_column(
-        Boolean, nullable=False, server_default=text("false")
-    )
-    workspace_id: Mapped[int] = mapped_column(
-        BigInteger,
-        ForeignKey("workspaces.id", ondelete="CASCADE"),
-        nullable=False,
-    )
+    is_open: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("true"))
+    is_deactivated: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
 
     # Relationships
-    workspace: Mapped["Workspace"] = relationship(  # noqa: F821
-        "Workspace",
-        lazy="noload",
-        # One-sided — Workspace does not declare a matching back_populates
-    )
     areas: Mapped[list["Area"]] = relationship(  # noqa: F821
-        "Area",
-        back_populates="persona",
-        lazy="noload",
-    )
-    customers: Mapped[list["Customer"]] = relationship(  # noqa: F821
-        "Customer",
-        back_populates="persona",
-        lazy="noload",
+        "Area", back_populates="persona", lazy="noload",
     )
     users: Mapped[list["User"]] = relationship(  # noqa: F821
-        "User",
-        secondary="user_personas",
-        back_populates="personas",
-        lazy="noload",
+        "User", secondary="user_personas", back_populates="personas", lazy="noload",
     )
     order_details: Mapped[list["OrderDetail"]] = relationship(  # noqa: F821
-        "OrderDetail",
-        back_populates="persona",
-        lazy="noload",
+        "OrderDetail", back_populates="persona", lazy="noload",
     )
     orders: Mapped[list["Order"]] = relationship(  # noqa: F821
-        "Order",
-        back_populates="persona",
-        foreign_keys="[Order.persona_id]",
-        lazy="noload",
-    )
-    reviews: Mapped[list["Review"]] = relationship(  # noqa: F821
-        "Review",
-        back_populates="persona",
-        lazy="noload",
+        "Order", back_populates="persona", foreign_keys="[Order.persona_id]", lazy="noload",
     )
 
     def __repr__(self) -> str:

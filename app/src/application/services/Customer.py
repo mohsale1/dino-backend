@@ -1,15 +1,15 @@
 """
 CustomerService — business logic for customers.
+workspace_id and persona_id removed. mobile is globally unique.
 """
 
 from typing import Any, Dict, List, Optional, Tuple
 
-from sqlalchemy import and_, func, or_, select
+from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.base.BaseModel import row_to_dict
 from src.base.BaseService import BaseService
-from src.models.Customer import Customer
 from src.models.OrderDetail import OrderDetail
 from src.repositories.CustomerRepository import CustomerRepository
 
@@ -26,22 +26,16 @@ class CustomerService(BaseService):
         self,
         name: str,
         mobile: str,
-        workspace_id: int,
-        persona_id: Optional[int] = None,
     ) -> Dict[str, Any]:
-        """Upsert a customer by mobile + workspace_id. Returns existing or newly created."""
-        existing = await self.customer_repo.get_by_mobile_and_workspace(mobile, workspace_id)
+        """Upsert a customer by mobile. Returns existing or newly created."""
+        existing = await self.customer_repo.get_by_mobile(mobile)
         if existing:
             return existing
-        payload: Dict[str, Any] = {
+        return await self.customer_repo.create({
             "name": name,
             "mobile": mobile,
-            "workspace_id": workspace_id,
             "is_active": True,
-        }
-        if persona_id is not None:
-            payload["persona_id"] = persona_id
-        return await self.customer_repo.create(payload)
+        })
 
     async def create_customer(self, data: Dict[str, Any]) -> Dict[str, Any]:
         """Create a new customer record."""
@@ -50,43 +44,16 @@ class CustomerService(BaseService):
 
     async def get_paginated_customers(
         self,
-        workspace_id: int,
-        persona_id: Optional[int] = None,
         search: Optional[str] = None,
         page: int = 1,
         page_size: int = 20,
     ) -> Tuple[List[Dict[str, Any]], int, int]:
         """Return paginated customers with optional search."""
-        conditions = [
-            Customer.workspace_id == workspace_id,
-            Customer.is_active.is_(True),  # noqa: E712
-        ]
-        if persona_id is not None:
-            conditions.append(Customer.persona_id == persona_id)
-        if search:
-            pattern = f"%{search}%"
-            conditions.append(
-                or_(
-                    Customer.name.ilike(pattern),
-                    Customer.mobile.ilike(pattern),
-                )
-            )
-
-        where_expr = and_(*conditions)
-        count_stmt = select(func.count()).select_from(Customer).where(where_expr)
-        total = (await self.db.execute(count_stmt)).scalar_one() or 0
-        total_pages = max(1, (total + page_size - 1) // page_size)
-
-        offset = (page - 1) * page_size
-        data_stmt = (
-            select(Customer)
-            .where(where_expr)
-            .order_by(Customer.created_at.desc())
-            .limit(page_size)
-            .offset(offset)
+        return await self.customer_repo.get_paginated(
+            search=search,
+            page=page,
+            page_size=page_size,
         )
-        rows = (await self.db.execute(data_stmt)).scalars().all()
-        return [row_to_dict(r) for r in rows], total, total_pages
 
     async def get_customer_orders(
         self,
@@ -97,7 +64,7 @@ class CustomerService(BaseService):
         """Return paginated order_details for a customer."""
         conditions = [
             OrderDetail.customer_id == customer_id,
-            OrderDetail.is_active.is_(True),  # noqa: E712
+            OrderDetail.is_active.is_(True),
         ]
         where_expr = and_(*conditions)
 

@@ -39,7 +39,6 @@ class UserResponse(BaseModel):
     last_name: str
     phone: Optional[str] = None
     role_id: int
-    workspace_id: Optional[int] = None
     is_active: bool
     last_login: Optional[datetime] = None
     created_at: datetime

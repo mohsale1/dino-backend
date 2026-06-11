@@ -14,8 +14,7 @@ class ReviewCreate(BaseSchema):
     """Payload for creating a new review."""
 
     # workspace_id and user_id are always injected server-side from current_user in the route
-    persona_id: int = Field(..., ge=1)
-    rating: int = Field(default=5, ge=1, le=5, description="Star rating from 1 to 5")
+    rating: float = Field(default=5.0, ge=0.5, le=5.0, multiple_of=0.5, description="Star rating from 0.5 to 5.0 in 0.5 increments")
     comment: Optional[str] = Field(default=None, max_length=2000)
 
 
@@ -23,7 +22,7 @@ class ReviewUpdate(BaseSchema):
     """Payload for updating an existing review (all fields optional)."""
 
     # is_active is managed exclusively via delete/restore endpoints
-    rating: Optional[int] = Field(default=None, ge=1, le=5, description="Star rating from 1 to 5")
+    rating: Optional[float] = Field(default=None, ge=0.5, le=5.0, multiple_of=0.5, description="Star rating from 0.5 to 5.0 in 0.5 increments")
     comment: Optional[str] = Field(default=None, max_length=2000)
     is_approved: Optional[bool] = None
 
@@ -33,9 +32,8 @@ class ReviewResponse(BaseSchema):
 
     id: int
     workspace_id: int
-    persona_id: Optional[int] = None
     user_id: Optional[int] = None
-    rating: int
+    rating: float
     comment: Optional[str] = None
     is_approved: bool
     is_active: bool

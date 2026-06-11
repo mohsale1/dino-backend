@@ -14,6 +14,7 @@ class ItemBase(BaseModel):
 
 
 class ItemCreate(ItemBase):
+    persona_id: int
     image_url: Optional[str] = None
 
 
@@ -34,7 +35,7 @@ class ItemResponse(BaseModel):
     name: str
     description: Optional[str] = None
     category_id: int
-    workspace_id: int
+    persona_id: int
     price: float
     is_available: bool
     is_vegetarian: Optional[bool] = None

@@ -1,5 +1,6 @@
 ﻿"""
-TableRepository â€” async SQLAlchemy 2.x repository for the Table model.
+TableRepository — async SQLAlchemy 2.x repository for the Table model.
+Scoped by persona_id only (workspace_id removed from tables table).
 """
 
 from datetime import datetime, timezone
@@ -19,24 +20,43 @@ class TableRepository(BaseRepository):
     def __init__(self, db: AsyncSession) -> None:
         super().__init__(Table, db)
 
-    async def get_by_workspace(self, workspace_id: int) -> List[Dict[str, Any]]:
-        """Return all active tables for a workspace."""
-        return await self.get_all(filters={"workspace_id": workspace_id})
+    async def create_table(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        """Insert a new table and return the full row dict."""
+        instance = Table(**data)
+        self.db.add(instance)
+        await self.db.flush()
+        await self.db.refresh(instance)
+        return row_to_dict(instance)
 
-    async def get_paginated_by_workspace(
+    async def table_number_exists_for_persona(
         self,
-        workspace_id: int,
+        table_number: str,
+        persona_id: int,
+        exclude_id: Optional[int] = None,
+    ) -> bool:
+        """Return True if an active table with the same number exists for this persona."""
+        conditions = [
+            Table.table_number == table_number,
+            Table.persona_id == persona_id,
+            Table.is_active.is_(True),
+        ]
+        if exclude_id is not None:
+            conditions.append(Table.id != exclude_id)
+        stmt = select(func.count()).select_from(Table).where(and_(*conditions))
+        return (await self.db.execute(stmt)).scalar_one() > 0
+
+    async def get_paginated_by_persona(
+        self,
         persona_id: int,
         area_id: Optional[int] = None,
         status: Optional[str] = None,
         page: int = 1,
         page_size: int = 20,
     ) -> Tuple[List[Dict[str, Any]], int, int]:
-        """Return paginated tables for a workspace scoped to a persona, with optional filters."""
+        """Return paginated active tables scoped to persona, with optional filters."""
         conditions = [
-            Table.workspace_id == workspace_id,
-            Table.is_active.is_(True),
             Table.persona_id == persona_id,
+            Table.is_active.is_(True),
         ]
 
         if area_id is not None:
@@ -44,11 +64,7 @@ class TableRepository(BaseRepository):
         if status is not None:
             conditions.append(Table.status == status)
 
-        count_stmt = (
-            select(func.count())
-            .select_from(Table)
-            .where(and_(*conditions))
-        )
+        count_stmt = select(func.count()).select_from(Table).where(and_(*conditions))
         total = (await self.db.execute(count_stmt)).scalar_one() or 0
         total_pages = max(1, (total + page_size - 1) // page_size)
 
@@ -71,17 +87,14 @@ class TableRepository(BaseRepository):
     async def get_by_id_for_persona(
         self,
         table_id: int,
-        workspace_id: int,
         persona_id: int,
     ) -> Optional[Dict[str, Any]]:
-        """Return a single active table by id, scoped to a persona via Table.persona_id."""
-        stmt = (
-            select(Table)
-            .where(
+        """Return a single active table by id scoped to persona."""
+        stmt = select(Table).where(
+            and_(
                 Table.id == table_id,
-                Table.workspace_id == workspace_id,
-                Table.is_active.is_(True),
                 Table.persona_id == persona_id,
+                Table.is_active.is_(True),
             )
         )
         row = (await self.db.execute(stmt)).scalars().one_or_none()
@@ -90,23 +103,19 @@ class TableRepository(BaseRepository):
     async def update_for_persona(
         self,
         table_id: int,
-        workspace_id: int,
         persona_id: int,
         data: Dict[str, Any],
     ) -> bool:
-        """
-        Update an active table scoped directly to the given persona.
-        Does NOT call self.db.commit() â€” commit is managed by get_db.
-        """
+        """Update an active table scoped to persona. Single round-trip."""
         payload = {**data, "updated_at": datetime.now(timezone.utc)}
-
         stmt = (
             update(Table)
             .where(
-                Table.id == table_id,
-                Table.workspace_id == workspace_id,
-                Table.persona_id == persona_id,
-                Table.is_active.is_(True),
+                and_(
+                    Table.id == table_id,
+                    Table.persona_id == persona_id,
+                    Table.is_active.is_(True),
+                )
             )
             .values(**payload)
             .execution_options(synchronize_session=False)
@@ -117,40 +126,29 @@ class TableRepository(BaseRepository):
     async def soft_delete_for_persona(
         self,
         table_id: int,
-        workspace_id: int,
         persona_id: int,
     ) -> bool:
-        """Soft-delete an active table scoped to a persona by setting is_active=False."""
-        return await self.update_for_persona(
-            table_id=table_id,
-            workspace_id=workspace_id,
-            persona_id=persona_id,
-            data={"is_active": False},
-        )
+        """Soft-delete an active table scoped to persona."""
+        return await self.update_for_persona(table_id, persona_id, {"is_active": False})
 
     async def restore_for_persona(
         self,
         table_id: int,
-        workspace_id: int,
         persona_id: int,
     ) -> bool:
-        """
-        Restore a soft-deleted table scoped directly to the given persona.
-        Matches only rows where is_active=False.
-        Does NOT call self.db.commit() â€” commit is managed by get_db.
-        """
+        """Restore a soft-deleted table scoped to persona."""
         payload = {
             "is_active": True,
             "updated_at": datetime.now(timezone.utc),
         }
-
         stmt = (
             update(Table)
             .where(
-                Table.id == table_id,
-                Table.workspace_id == workspace_id,
-                Table.persona_id == persona_id,
-                Table.is_active.is_(False),
+                and_(
+                    Table.id == table_id,
+                    Table.persona_id == persona_id,
+                    Table.is_active.is_(False),
+                )
             )
             .values(**payload)
             .execution_options(synchronize_session=False)
@@ -160,10 +158,9 @@ class TableRepository(BaseRepository):
 
     async def get_status_counts(
         self,
-        workspace_id: int,
         persona_id: int,
     ) -> Dict[str, int]:
-        """Return counts of tables grouped by status for a workspace, scoped to a persona."""
+        """Return counts of tables grouped by status scoped to persona."""
         stmt = (
             select(
                 func.count(case((Table.status == "available", 1))).label("available"),
@@ -172,12 +169,8 @@ class TableRepository(BaseRepository):
                 func.count(case((Table.is_active.is_(False), 1))).label("inactive"),
             )
             .select_from(Table)
-            .where(
-                Table.workspace_id == workspace_id,
-                Table.persona_id == persona_id,
-            )
+            .where(Table.persona_id == persona_id)
         )
-
         row = (await self.db.execute(stmt)).one_or_none()
         if row is None:
             return {"available": 0, "occupied": 0, "reserved": 0, "inactive": 0}

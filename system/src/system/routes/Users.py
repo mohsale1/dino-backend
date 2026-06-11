@@ -25,7 +25,6 @@ async def get_users(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     user_type: Optional[int] = Query(None, description="0=System, 1=Application"),
-    workspace_id: Optional[int] = Query(None),
     role_id: Optional[int] = Query(None),
     search: Optional[str] = Query(None),
     include_deleted: bool = Query(False),
@@ -35,7 +34,6 @@ async def get_users(
     service = SystemUserService(db)
     items, total, total_pages = await service.get_paginated_users(
         user_type=user_type,
-        workspace_id=workspace_id,
         role_id=role_id,
         search=search,
         page=page,
@@ -66,7 +64,7 @@ async def create_user(user: UserCreate, db: AsyncSession = Depends(get_db)):
     """Create a new system user."""
     service = SystemUserService(db)
 
-    if await service.email_exists(user.email, user.workspace_id):
+    if await service.email_exists(user.email):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="Email already registered",

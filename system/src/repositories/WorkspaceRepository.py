@@ -19,10 +19,6 @@ class WorkspaceRepository(BaseRepository):
     def __init__(self, db: AsyncSession) -> None:
         super().__init__(Workspace, db)
 
-    async def get_by_owner(self, owner_id: int) -> List[Dict[str, Any]]:
-        """Return all non-deleted workspaces owned by the given user."""
-        return await self.get_all(filters={"owner_id": owner_id})
-
     async def get_paginated_workspaces(
         self,
         is_active: Optional[bool] = None,

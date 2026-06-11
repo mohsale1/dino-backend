@@ -1,7 +1,9 @@
 """
 ReviewRepository — async SQLAlchemy 2.x repository for the Review model.
+One review per authenticated user per workspace enforced via partial unique index.
 """
 
+import asyncio
 import math
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
@@ -15,6 +17,20 @@ from src.models.Review import Review
 from src.models.User import User
 
 
+# Columns selected for list/detail responses
+_REVIEW_COLS = (
+    Review.id,
+    Review.workspace_id,
+    Review.user_id,
+    Review.rating,
+    Review.comment,
+    Review.is_approved,
+    Review.is_active,
+    Review.created_at,
+    Review.updated_at,
+)
+
+
 class ReviewRepository(BaseRepository):
     """Repository for Review entities."""
 
@@ -22,90 +38,66 @@ class ReviewRepository(BaseRepository):
         super().__init__(Review, db)
 
     # ------------------------------------------------------------------
-    # Public query methods
+    # Existence checks
     # ------------------------------------------------------------------
 
-    async def get_approved_reviews(
+    async def user_has_review_for_workspace(
         self,
+        user_id: int,
         workspace_id: int,
-        persona_id: int,
-        limit: int = 10,
-    ) -> List[Dict[str, Any]]:
+        exclude_id: Optional[int] = None,
+    ) -> bool:
         """
-        Return approved + active reviews for a workspace scoped to a persona,
-        newest first.
-
-        Performs a LEFT OUTER JOIN against users so that first_name and
-        last_name are available for user_name enrichment in the service layer.
-        The user columns are surfaced as extra keys on each dict.
+        Return True if an active review from this user already exists
+        for this workspace. Used to enforce one-review-per-user-per-workspace.
         """
         conditions = [
+            Review.user_id == user_id,
             Review.workspace_id == workspace_id,
-            Review.persona_id == persona_id,
-            Review.is_approved.is_(True),
             Review.is_active.is_(True),
         ]
+        if exclude_id is not None:
+            conditions.append(Review.id != exclude_id)
 
-        stmt = (
-            select(
-                Review,
-                User.first_name.label("_user_first_name"),
-                User.last_name.label("_user_last_name"),
-            )
-            .outerjoin(User, Review.user_id == User.id)
-            .where(and_(*conditions))
-            .order_by(Review.created_at.desc())
-            .limit(limit)
-        )
+        stmt = select(func.count()).select_from(Review).where(and_(*conditions))
+        return (await self.db.execute(stmt)).scalar_one() > 0
 
-        rows = (await self.db.execute(stmt)).all()
-        return self._map_rows_with_user(rows)
+    # ------------------------------------------------------------------
+    # Read — paginated
+    # ------------------------------------------------------------------
 
     async def get_paginated_reviews(
         self,
         workspace_id: int,
-        persona_id: int,
         is_approved: Optional[bool] = None,
         is_active: Optional[bool] = None,
         page: int = 1,
         page_size: int = 20,
     ) -> Tuple[List[Dict[str, Any]], int, int]:
         """
-        Return a paginated list of reviews scoped to a persona with optional
-        filters.
-
-        Returns
-        -------
-        (items, total_count, total_pages)
+        Return (items, total_count, total_pages).
+        COUNT and DATA queries run in parallel.
+        user_name built inline from LEFT JOIN.
         """
-        # Always show only active reviews unless caller explicitly requests inactive
         conditions = [
             Review.workspace_id == workspace_id,
-            Review.persona_id == persona_id,
             Review.is_active.is_(is_active if is_active is not None else True),
         ]
-
         if is_approved is not None:
             conditions.append(Review.is_approved == is_approved)
 
         where_expr = and_(*conditions)
-
-        # COUNT query
-        count_stmt = (
-            select(func.count())
-            .select_from(Review)
-            .where(where_expr)
-        )
-        total: int = (await self.db.execute(count_stmt)).scalar_one()
-        total_pages = max(1, math.ceil(total / page_size))
-
-        # DATA query — LEFT JOIN users for name enrichment
         offset = (page - 1) * page_size
+
+        count_stmt = select(func.count()).select_from(Review).where(where_expr)
         data_stmt = (
             select(
-                Review,
-                User.first_name.label("_user_first_name"),
-                User.last_name.label("_user_last_name"),
+                *_REVIEW_COLS,
+                func.concat(
+                    func.coalesce(User.first_name, ""),
+                    " ",
+                    func.coalesce(User.last_name, ""),
+                ).label("user_name"),
             )
             .outerjoin(User, Review.user_id == User.id)
             .where(where_expr)
@@ -114,232 +106,187 @@ class ReviewRepository(BaseRepository):
             .offset(offset)
         )
 
-        rows = (await self.db.execute(data_stmt)).all()
-        return self._map_rows_with_user(rows), total, total_pages
-
-    async def get_rating_summary(
-        self,
-        workspace_id: int,
-        persona_id: int,
-    ) -> Dict[str, Any]:
-        """
-        Return rating statistics for approved + active reviews scoped to a
-        persona.
-
-        Returns
-        -------
-        {
-            "average_rating": float,
-            "total_reviews": int,
-            "rating_distribution": {1: N, 2: N, 3: N, 4: N, 5: N},
-        }
-        """
-        conditions = [
-            Review.workspace_id == workspace_id,
-            Review.persona_id == persona_id,
-            Review.is_approved.is_(True),
-            Review.is_active.is_(True),
-        ]
-
-        where_expr = and_(*conditions)
-
-        # Aggregate: average + count
-        agg_stmt = select(
-            func.avg(Review.rating).label("avg_rating"),
-            func.count(Review.id).label("total"),
-        ).where(where_expr)
-        agg_row = (await self.db.execute(agg_stmt)).one_or_none()
-
-        if agg_row is None:
-            return {
-                "average_rating": 0.0,
-                "total_reviews": 0,
-                "rating_distribution": {star: 0 for star in range(1, 6)},
-            }
-
-        total_reviews: int = agg_row.total or 0
-        average_rating: float = round(float(agg_row.avg_rating), 2) if agg_row.avg_rating else 0.0
-
-        # Distribution: one row per star value
-        dist_stmt = (
-            select(Review.rating, func.count(Review.id).label("cnt"))
-            .where(where_expr)
-            .group_by(Review.rating)
-        )
-        dist_rows = (await self.db.execute(dist_stmt)).all()
-        distribution: Dict[int, int] = {star: 0 for star in range(1, 6)}
-        for row in dist_rows:
-            distribution[row.rating] = row.cnt
-
-        return {
-            "average_rating": average_rating,
-            "total_reviews": total_reviews,
-            "rating_distribution": distribution,
-        }
-
-    async def get_by_id_for_persona(
-        self,
-        review_id: int,
-        workspace_id: int,
-        persona_id: int,
-    ) -> Optional[Dict[str, Any]]:
-        """
-        Return a single active review matched by id, workspace_id, and
-        persona_id. Returns None when no matching row is found.
-
-        Intended for ownership checks before scoped write operations.
-        """
-        stmt = select(Review).where(
-            and_(
-                Review.id == review_id,
-                Review.workspace_id == workspace_id,
-                Review.persona_id == persona_id,
-                Review.is_active.is_(True),
-            )
-        )
-        row = (await self.db.execute(stmt)).scalar_one_or_none()
-        return row_to_dict(row) if row is not None else None
-
-    async def update_for_persona(
-        self,
-        review_id: int,
-        workspace_id: int,
-        persona_id: int,
-        data: Dict[str, Any],
-    ) -> bool:
-        """
-        UPDATE a review WHERE id + workspace_id + persona_id + is_active=True.
-
-        Automatically stamps updated_at. Returns True when exactly one row was
-        affected, False otherwise.
-        """
-        payload = {
-            **data,
-            "updated_at": datetime.now(timezone.utc),
-        }
-        stmt = (
-            update(Review)
-            .where(
-                and_(
-                    Review.id == review_id,
-                    Review.workspace_id == workspace_id,
-                    Review.persona_id == persona_id,
-                    Review.is_active.is_(True),
-                )
-            )
-            .values(**payload)
-        )
-        result = await self.db.execute(stmt)
-        return result.rowcount == 1
-
-    async def soft_delete_for_persona(
-        self,
-        review_id: int,
-        workspace_id: int,
-        persona_id: int,
-    ) -> bool:
-        """
-        Soft-delete a review scoped to persona by setting is_active=False.
-        """
-        return await self.update_for_persona(
-            review_id, workspace_id, persona_id, {"is_active": False}
+        total_result, rows = await asyncio.gather(
+            self.db.execute(count_stmt),
+            self.db.execute(data_stmt),
         )
 
-    async def restore_for_persona(
-        self,
-        review_id: int,
-        workspace_id: int,
-        persona_id: int,
-    ) -> bool:
-        """
-        Restore a soft-deleted review scoped to persona (is_active=False ->
-        True). Targets only inactive rows so it cannot accidentally touch live
-        records.
-        """
-        payload = {
-            "is_active": True,
-            "updated_at": datetime.now(timezone.utc),
-        }
-        stmt = (
-            update(Review)
-            .where(
-                and_(
-                    Review.id == review_id,
-                    Review.workspace_id == workspace_id,
-                    Review.persona_id == persona_id,
-                    Review.is_active.is_(False),
-                )
-            )
-            .values(**payload)
-        )
-        result = await self.db.execute(stmt)
-        return result.rowcount == 1
+        total: int = total_result.scalar_one() or 0
+        total_pages = max(1, math.ceil(total / page_size))
 
-    async def approve_for_persona(
-        self,
-        review_id: int,
-        workspace_id: int,
-        persona_id: int,
-    ) -> bool:
-        """Set is_approved=True scoped to persona."""
-        return await self.update_for_persona(
-            review_id, workspace_id, persona_id, {"is_approved": True}
-        )
+        result = []
+        for idx, row in enumerate(rows.all(), start=offset + 1):
+            d = self._row_to_review_dict(row)
+            d["index"] = idx
+            result.append(d)
 
-    async def unapprove_for_persona(
-        self,
-        review_id: int,
-        workspace_id: int,
-        persona_id: int,
-    ) -> bool:
-        """Set is_approved=False scoped to persona."""
-        return await self.update_for_persona(
-            review_id, workspace_id, persona_id, {"is_approved": False}
-        )
+        return result, total, total_pages
 
     # ------------------------------------------------------------------
-    # Global / unscoped write methods (no persona isolation)
+    # Read — approved (public)
+    # ------------------------------------------------------------------
+
+    async def get_approved_reviews(
+        self,
+        workspace_id: int,
+        limit: int = 10,
+    ) -> List[Dict[str, Any]]:
+        """Return approved + active reviews for a workspace, newest first."""
+        stmt = (
+            select(
+                *_REVIEW_COLS,
+                func.concat(
+                    func.coalesce(User.first_name, ""),
+                    " ",
+                    func.coalesce(User.last_name, ""),
+                ).label("user_name"),
+            )
+            .outerjoin(User, Review.user_id == User.id)
+            .where(
+                Review.workspace_id == workspace_id,
+                Review.is_approved.is_(True),
+                Review.is_active.is_(True),
+            )
+            .order_by(Review.created_at.desc())
+            .limit(limit)
+        )
+        rows = (await self.db.execute(stmt)).all()
+        return [self._row_to_review_dict(r) for r in rows]
+
+    # ------------------------------------------------------------------
+    # Read — single
+    # ------------------------------------------------------------------
+
+    async def get_by_id_for_workspace(
+        self,
+        review_id: int,
+        workspace_id: int,
+        include_deleted: bool = False,
+    ) -> Optional[Dict[str, Any]]:
+        """Return a single review by id + workspace_id, with user_name."""
+        conditions = [
+            Review.id == review_id,
+            Review.workspace_id == workspace_id,
+        ]
+        if not include_deleted:
+            conditions.append(Review.is_active.is_(True))
+
+        stmt = (
+            select(
+                *_REVIEW_COLS,
+                func.concat(
+                    func.coalesce(User.first_name, ""),
+                    " ",
+                    func.coalesce(User.last_name, ""),
+                ).label("user_name"),
+            )
+            .outerjoin(User, Review.user_id == User.id)
+            .where(and_(*conditions))
+        )
+        row = (await self.db.execute(stmt)).one_or_none()
+        return self._row_to_review_dict(row) if row is not None else None
+
+    # ------------------------------------------------------------------
+    # Read — rating summary
+    # ------------------------------------------------------------------
+
+    async def get_rating_summary(self, workspace_id: int) -> Dict[str, Any]:
+        """Return average_rating and total_reviews — single aggregation query."""
+        stmt = select(
+            func.avg(Review.rating).label("avg_rating"),
+            func.count(Review.id).label("total"),
+        ).where(
+            Review.workspace_id == workspace_id,
+            Review.is_approved.is_(True),
+            Review.is_active.is_(True),
+        )
+        row = (await self.db.execute(stmt)).one_or_none()
+        if row is None or not row.total:
+            return {"average_rating": 0.0, "total_reviews": 0}
+        return {
+            "average_rating": round(float(row.avg_rating), 1) if row.avg_rating else 0.0,
+            "total_reviews": row.total,
+        }
+
+    # ------------------------------------------------------------------
+    # Write — scoped (single-query)
+    # ------------------------------------------------------------------
+
+    async def update_for_workspace(
+        self,
+        review_id: int,
+        workspace_id: int,
+        data: Dict[str, Any],
+        include_deleted: bool = False,
+    ) -> bool:
+        """UPDATE a review scoped to workspace. Single round-trip."""
+        conditions = [
+            Review.id == review_id,
+            Review.workspace_id == workspace_id,
+        ]
+        if not include_deleted:
+            conditions.append(Review.is_active.is_(True))
+
+        stmt = (
+            update(Review)
+            .where(and_(*conditions))
+            .values(**data, updated_at=datetime.now(timezone.utc))
+            .execution_options(synchronize_session=False)
+        )
+        return (await self.db.execute(stmt)).rowcount > 0
+
+    async def soft_delete_for_workspace(self, review_id: int, workspace_id: int) -> bool:
+        return await self.update_for_workspace(review_id, workspace_id, {"is_active": False})
+
+    async def restore_for_workspace(self, review_id: int, workspace_id: int) -> bool:
+        stmt = (
+            update(Review)
+            .where(
+                Review.id == review_id,
+                Review.workspace_id == workspace_id,
+                Review.is_active.is_(False),
+            )
+            .values(is_active=True, updated_at=datetime.now(timezone.utc))
+            .execution_options(synchronize_session=False)
+        )
+        return (await self.db.execute(stmt)).rowcount > 0
+
+    async def approve_for_workspace(self, review_id: int, workspace_id: int) -> bool:
+        return await self.update_for_workspace(review_id, workspace_id, {"is_approved": True})
+
+    async def unapprove_for_workspace(self, review_id: int, workspace_id: int) -> bool:
+        return await self.update_for_workspace(review_id, workspace_id, {"is_approved": False})
+
+    # ------------------------------------------------------------------
+    # Global / unscoped
     # ------------------------------------------------------------------
 
     async def get_global_average_rating(self) -> float:
-        """
-        Return the average rating across ALL approved + active reviews
-        platform-wide (no workspace filter). Used for homepage stats.
-        """
+        """Platform-wide average rating across all approved + active reviews."""
         stmt = select(func.avg(Review.rating)).where(
             Review.is_approved.is_(True),
             Review.is_active.is_(True),
         )
         avg = (await self.db.execute(stmt)).scalar_one_or_none()
-        return round(float(avg), 2) if avg is not None else 0.0
-
-    async def approve_review(self, review_id: int) -> bool:
-        """Set is_approved=True for the given review (no persona scope)."""
-        return await self.update(review_id, {"is_approved": True})
-
-    async def unapprove_review(self, review_id: int) -> bool:
-        """Set is_approved=False for the given review (no persona scope)."""
-        return await self.update(review_id, {"is_approved": False})
+        return round(float(avg), 1) if avg is not None else 0.0
 
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _map_rows_with_user(rows: list) -> List[Dict[str, Any]]:
-        """
-        Convert joined (Review, first_name, last_name) rows to dicts.
-
-        The private _user_first_name / _user_last_name keys are kept on the
-        dict so the service layer can build user_name without an extra query.
-        """
-        result = []
-        for row in rows:
-            review_obj = row[0]
-            first_name = row[1]
-            last_name = row[2]
-            d = row_to_dict(review_obj)
-            d["_user_first_name"] = first_name
-            d["_user_last_name"] = last_name
-            result.append(d)
-        return result
+    def _row_to_review_dict(row: Any) -> Dict[str, Any]:
+        """Convert a named-column row to a dict. Strips blank user_name to None."""
+        d = row._asdict()
+        user_name = d.get("user_name", "").strip()
+        d["user_name"] = user_name if user_name else None
+        # Coerce Decimal rating to float
+        if "rating" in d and d["rating"] is not None:
+            d["rating"] = float(d["rating"])
+        # Coerce datetimes to ISO strings
+        for field in ("created_at", "updated_at"):
+            if field in d and d[field] is not None:
+                val = d[field]
+                if hasattr(val, "isoformat"):
+                    d[field] = val.isoformat()
+        return d

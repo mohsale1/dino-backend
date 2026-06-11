@@ -1,19 +1,24 @@
 """
 Workspaces router — workspace info and billing management.
+All endpoints are scoped to the caller's own workspace via _assert_own_workspace.
 """
 
+import logging
 from typing import Any, Dict, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
-from pydantic import BaseModel, EmailStr, Field
-from sqlalchemy import select
+from fastapi import APIRouter, Depends, Query
+from pydantic import BaseModel, EmailStr, Field, field_validator
+from sqlalchemy import text as sa_text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.application.middleware.RoleCheck import ApplicationPermissionCheck
 from src.application.services.Billing import BillingService
 from src.base.BaseSchema import BaseResponse
 from src.config.Database import get_db
+from src.core.Exceptions import BadRequestError, NotFoundError, WorkspaceMismatchError
 from src.repositories.WorkspaceRepository import WorkspaceRepository
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/workspaces", tags=["Workspaces"])
 
@@ -23,25 +28,30 @@ router = APIRouter(prefix="/workspaces", tags=["Workspaces"])
 # ---------------------------------------------------------------------------
 
 class UpdateWorkspaceRequest(BaseModel):
-    name: Optional[str] = Field(None, max_length=200)
+    name: Optional[str] = Field(None, min_length=1, max_length=200)
     description: Optional[str] = Field(None, max_length=500)
+
+    @field_validator("name")
+    @classmethod
+    def strip_name(cls, v: Optional[str]) -> Optional[str]:
+        return v.strip() if v else v
 
 
 class UpdateWorkspaceBillingRequest(BaseModel):
-    billing_cycle: Optional[str] = None
-    billing_email: Optional[str] = None
-    billing_name: Optional[str] = None
-    billing_address: Optional[str] = None
-    billing_city: Optional[str] = None
-    billing_state: Optional[str] = None
-    billing_country: Optional[str] = None
-    billing_postal_code: Optional[str] = None
-    billing_phone: Optional[str] = None
+    billing_cycle: Optional[str] = Field(None, max_length=50)
+    billing_email: Optional[str] = Field(None, max_length=320)
+    billing_name: Optional[str] = Field(None, max_length=200)
+    billing_address: Optional[str] = Field(None, max_length=500)
+    billing_city: Optional[str] = Field(None, max_length=100)
+    billing_state: Optional[str] = Field(None, max_length=100)
+    billing_country: Optional[str] = Field(None, max_length=100)
+    billing_postal_code: Optional[str] = Field(None, max_length=20)
+    billing_phone: Optional[str] = Field(None, max_length=30)
 
 
 class UpsertBillingDetailRequest(BaseModel):
-    legal_name: Optional[str] = None
-    trade_name: Optional[str] = None
+    legal_name: Optional[str] = Field(None, max_length=200)
+    trade_name: Optional[str] = Field(None, max_length=200)
     gstin: Optional[str] = Field(None, max_length=15)
     pan: Optional[str] = Field(None, max_length=10)
     billing_email: Optional[EmailStr] = None
@@ -54,7 +64,16 @@ class UpsertBillingDetailRequest(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# Routes
+# Helper
+# ---------------------------------------------------------------------------
+
+def _assert_own_workspace(workspace_id: int, current_user: Dict[str, Any]) -> None:
+    if workspace_id != current_user.get("workspace_id"):
+        raise WorkspaceMismatchError()
+
+
+# ---------------------------------------------------------------------------
+# GET /workspaces/me
 # ---------------------------------------------------------------------------
 
 @router.get("/me", response_model=BaseResponse)
@@ -63,119 +82,197 @@ async def get_my_workspace(
     db: AsyncSession = Depends(get_db),
 ):
     """Get the current user's workspace."""
+    user_id = current_user.get("id")
     workspace_id = current_user.get("workspace_id")
+
+    logger.info("workspaces.me.request user_id=%s workspace_id=%s", user_id, workspace_id)
+
     if not workspace_id:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="User does not belong to a workspace",
-        )
-    repo = WorkspaceRepository(db)
-    workspace = await repo.get_by_id(workspace_id)
+        raise NotFoundError("User does not belong to a workspace")
+
+    workspace = await WorkspaceRepository(db).get_by_id(workspace_id)
     if not workspace:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Workspace not found")
+        raise NotFoundError("Workspace not found")
+
+    logger.info(
+        "workspaces.me.response user_id=%s workspace_id=%s name=%r",
+        user_id, workspace_id, workspace.get("name"),
+    )
     return {"success": True, "message": "Workspace retrieved successfully", "data": workspace}
 
+
+# ---------------------------------------------------------------------------
+# GET /workspaces/{workspace_id}
+# ---------------------------------------------------------------------------
 
 @router.get("/{workspace_id}", response_model=BaseResponse)
 async def get_workspace(
     workspace_id: int,
-    current_user: Dict[str, Any] = Depends(ApplicationPermissionCheck.require("workspaces:read")),
+    current_user: Dict[str, Any] = Depends(ApplicationPermissionCheck.require_authenticated),
     db: AsyncSession = Depends(get_db),
 ):
-    """Get a workspace by ID."""
-    if workspace_id != current_user.get("workspace_id"):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
-    repo = WorkspaceRepository(db)
-    workspace = await repo.get_by_id(workspace_id)
+    """Get a workspace by ID — must be the caller's own workspace."""
+    user_id = current_user.get("id")
+    _assert_own_workspace(workspace_id, current_user)
+
+    logger.info("workspaces.get.request user_id=%s workspace_id=%s", user_id, workspace_id)
+
+    workspace = await WorkspaceRepository(db).get_by_id(workspace_id)
     if not workspace:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Workspace not found")
+        raise NotFoundError("Workspace not found")
+
+    logger.info(
+        "workspaces.get.response user_id=%s workspace_id=%s name=%r",
+        user_id, workspace_id, workspace.get("name"),
+    )
     return {"success": True, "message": "Workspace retrieved successfully", "data": workspace}
 
+
+# ---------------------------------------------------------------------------
+# PUT /workspaces/{workspace_id}
+# ---------------------------------------------------------------------------
 
 @router.put("/{workspace_id}", response_model=BaseResponse)
 async def update_workspace(
     workspace_id: int,
     request: UpdateWorkspaceRequest,
-    current_user: Dict[str, Any] = Depends(ApplicationPermissionCheck.require("workspaces:update")),
+    current_user: Dict[str, Any] = Depends(ApplicationPermissionCheck.require_authenticated),
     db: AsyncSession = Depends(get_db),
 ):
-    """Update workspace details."""
-    if workspace_id != current_user.get("workspace_id"):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
-    repo = WorkspaceRepository(db)
-    existing = await repo.get_by_id(workspace_id)
-    if not existing:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Workspace not found")
+    """Update workspace name/description — single round-trip UPDATE."""
+    user_id = current_user.get("id")
+    _assert_own_workspace(workspace_id, current_user)
+
     data = request.model_dump(exclude_unset=True)
-    success = await repo.update(workspace_id, data)
+    if not data:
+        logger.warning("workspaces.update.empty_payload user_id=%s workspace_id=%s", user_id, workspace_id)
+        raise BadRequestError("No fields provided for update")
+
+    logger.info(
+        "workspaces.update.request user_id=%s workspace_id=%s fields=%s",
+        user_id, workspace_id, list(data.keys()),
+    )
+
+    success = await WorkspaceRepository(db).update(workspace_id, data)
     if not success:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Workspace not found")
+        raise NotFoundError("Workspace not found")
+
+    logger.info(
+        "workspaces.update.response user_id=%s workspace_id=%s fields=%s",
+        user_id, workspace_id, list(data.keys()),
+    )
     return {"success": True, "message": "Workspace updated successfully"}
 
+
+# ---------------------------------------------------------------------------
+# GET /workspaces/{workspace_id}/billing
+# ---------------------------------------------------------------------------
 
 @router.get("/{workspace_id}/billing", response_model=BaseResponse)
 async def get_workspace_billing(
     workspace_id: int,
-    current_user: Dict[str, Any] = Depends(ApplicationPermissionCheck.require("billing:read")),
+    current_user: Dict[str, Any] = Depends(ApplicationPermissionCheck.require_authenticated),
     db: AsyncSession = Depends(get_db),
 ):
     """Get workspace billing plan info."""
-    if workspace_id != current_user.get("workspace_id"):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
-    service = BillingService(db)
-    billing = await service.get_workspace_billing(workspace_id)
+    user_id = current_user.get("id")
+    _assert_own_workspace(workspace_id, current_user)
+
+    logger.info("workspaces.billing.get.request user_id=%s workspace_id=%s", user_id, workspace_id)
+
+    billing = await BillingService(db).get_workspace_billing(workspace_id)
     if not billing:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Billing info not found")
+        raise NotFoundError("Billing info not found")
+
+    logger.info("workspaces.billing.get.response user_id=%s workspace_id=%s", user_id, workspace_id)
     return {"success": True, "message": "Billing retrieved successfully", "data": billing}
 
+
+# ---------------------------------------------------------------------------
+# PUT /workspaces/{workspace_id}/billing
+# ---------------------------------------------------------------------------
 
 @router.put("/{workspace_id}/billing", response_model=BaseResponse)
 async def update_workspace_billing(
     workspace_id: int,
     request: UpdateWorkspaceBillingRequest,
-    current_user: Dict[str, Any] = Depends(ApplicationPermissionCheck.require("billing:update")),
+    current_user: Dict[str, Any] = Depends(ApplicationPermissionCheck.require_authenticated),
     db: AsyncSession = Depends(get_db),
 ):
     """Update workspace billing plan info."""
-    if workspace_id != current_user.get("workspace_id"):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
-    service = BillingService(db)
+    user_id = current_user.get("id")
+    _assert_own_workspace(workspace_id, current_user)
+
     data = request.model_dump(exclude_unset=True)
-    result = await service.update_workspace_billing(workspace_id, data)
+    if not data:
+        logger.warning("workspaces.billing.update.empty_payload user_id=%s workspace_id=%s", user_id, workspace_id)
+        raise BadRequestError("No fields provided for update")
+
+    logger.info(
+        "workspaces.billing.update.request user_id=%s workspace_id=%s fields=%s",
+        user_id, workspace_id, list(data.keys()),
+    )
+
+    result = await BillingService(db).update_workspace_billing(workspace_id, data)
     if not result:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Billing info not found")
+        raise NotFoundError("Billing info not found")
+
+    logger.info("workspaces.billing.update.response user_id=%s workspace_id=%s", user_id, workspace_id)
     return {"success": True, "message": "Billing updated successfully", "data": result}
 
+
+# ---------------------------------------------------------------------------
+# GET /workspaces/{workspace_id}/billing-detail
+# ---------------------------------------------------------------------------
 
 @router.get("/{workspace_id}/billing-detail", response_model=BaseResponse)
 async def get_billing_detail(
     workspace_id: int,
-    current_user: Dict[str, Any] = Depends(ApplicationPermissionCheck.require("billing:read")),
+    current_user: Dict[str, Any] = Depends(ApplicationPermissionCheck.require_authenticated),
     db: AsyncSession = Depends(get_db),
 ):
     """Get billing details (GST/tax info) for a workspace."""
-    if workspace_id != current_user.get("workspace_id"):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
-    service = BillingService(db)
-    detail = await service.get_billing_detail(workspace_id)
+    user_id = current_user.get("id")
+    _assert_own_workspace(workspace_id, current_user)
+
+    logger.info("workspaces.billing_detail.get.request user_id=%s workspace_id=%s", user_id, workspace_id)
+
+    detail = await BillingService(db).get_billing_detail(workspace_id)
+
+    logger.info("workspaces.billing_detail.get.response user_id=%s workspace_id=%s", user_id, workspace_id)
     return {"success": True, "message": "Billing detail retrieved successfully", "data": detail}
 
+
+# ---------------------------------------------------------------------------
+# PUT /workspaces/{workspace_id}/billing-detail
+# ---------------------------------------------------------------------------
 
 @router.put("/{workspace_id}/billing-detail", response_model=BaseResponse)
 async def upsert_billing_detail(
     workspace_id: int,
     request: UpsertBillingDetailRequest,
-    current_user: Dict[str, Any] = Depends(ApplicationPermissionCheck.require("billing:update")),
+    current_user: Dict[str, Any] = Depends(ApplicationPermissionCheck.require_authenticated),
     db: AsyncSession = Depends(get_db),
 ):
     """Create or update billing details for a workspace."""
-    if workspace_id != current_user.get("workspace_id"):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
-    service = BillingService(db)
+    user_id = current_user.get("id")
+    _assert_own_workspace(workspace_id, current_user)
+
     data = request.model_dump(exclude_unset=True)
-    result = await service.create_or_update_billing_detail(workspace_id, data)
+    logger.info(
+        "workspaces.billing_detail.upsert.request user_id=%s workspace_id=%s fields=%s",
+        user_id, workspace_id, list(data.keys()),
+    )
+
+    result = await BillingService(db).create_or_update_billing_detail(workspace_id, data)
+
+    logger.info("workspaces.billing_detail.upsert.response user_id=%s workspace_id=%s", user_id, workspace_id)
     return {"success": True, "message": "Billing detail updated successfully", "data": result}
 
+
+# ---------------------------------------------------------------------------
+# GET /workspaces/{workspace_id}/billing-transactions
+# ---------------------------------------------------------------------------
 
 @router.get("/{workspace_id}/billing-transactions", response_model=BaseResponse)
 async def get_billing_transactions(
@@ -183,18 +280,35 @@ async def get_billing_transactions(
     payment_status: Optional[str] = Query(None),
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
-    current_user: Dict[str, Any] = Depends(ApplicationPermissionCheck.require("billing:read")),
+    current_user: Dict[str, Any] = Depends(ApplicationPermissionCheck.require_authenticated),
     db: AsyncSession = Depends(get_db),
 ):
     """Get paginated billing transactions for a workspace."""
-    if workspace_id != current_user.get("workspace_id"):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
-    service = BillingService(db)
-    items, total, total_pages = await service.get_billing_transactions(
+    user_id = current_user.get("id")
+    _assert_own_workspace(workspace_id, current_user)
+
+    logger.info(
+        "workspaces.billing_transactions.request user_id=%s workspace_id=%s "
+        "payment_status=%s page=%s page_size=%s",
+        user_id, workspace_id, payment_status, page, page_size,
+    )
+
+    items, total, total_pages = await BillingService(db).get_billing_transactions(
         workspace_id=workspace_id,
         payment_status=payment_status,
         page=page,
         page_size=page_size,
+    )
+
+    # Add index field
+    offset = (page - 1) * page_size
+    for idx, item in enumerate(items, start=offset + 1):
+        item["index"] = idx
+
+    logger.info(
+        "workspaces.billing_transactions.response user_id=%s workspace_id=%s "
+        "total=%s page=%s returned=%s",
+        user_id, workspace_id, total, page, len(items),
     )
     return {
         "success": True,
@@ -211,26 +325,24 @@ async def get_billing_transactions(
     }
 
 
+# ---------------------------------------------------------------------------
+# GET /workspaces/{workspace_id}/approval-status
+# ---------------------------------------------------------------------------
+
 @router.get("/{workspace_id}/approval-status", response_model=BaseResponse)
 async def get_workspace_approval_status(
     workspace_id: int,
     current_user: Dict[str, Any] = Depends(ApplicationPermissionCheck.require_authenticated),
     db: AsyncSession = Depends(get_db),
 ):
-    """
-    Check the approval status of a workspace request.
+    """Check the approval status of a workspace request."""
+    user_id = current_user.get("id")
+    _assert_own_workspace(workspace_id, current_user)
 
-    Returns:
-      - request_exists: false  → no workspace_request row found
-      - request_exists: true, approved: true  → status = 'approved'
-      - request_exists: true, approved: false → status = 'pending' or 'rejected'
-    """
-    # Scope to caller's own workspace only
-    if workspace_id != current_user.get("workspace_id"):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
-
-    # Lazy import to avoid circular deps — model lives in dino-system
-    from sqlalchemy import text as sa_text
+    logger.info(
+        "workspaces.approval_status.request user_id=%s workspace_id=%s",
+        user_id, workspace_id,
+    )
 
     result = await db.execute(
         sa_text(
@@ -245,6 +357,10 @@ async def get_workspace_approval_status(
     row = result.mappings().first()
 
     if row is None:
+        logger.info(
+            "workspaces.approval_status.no_request user_id=%s workspace_id=%s",
+            user_id, workspace_id,
+        )
         return {
             "success": True,
             "message": "No workspace request found",
@@ -259,6 +375,10 @@ async def get_workspace_approval_status(
         }
 
     req_status = row["status"]
+    logger.info(
+        "workspaces.approval_status.response user_id=%s workspace_id=%s status=%s",
+        user_id, workspace_id, req_status,
+    )
     return {
         "success": True,
         "message": "Workspace request status retrieved successfully",
@@ -266,7 +386,7 @@ async def get_workspace_approval_status(
             "workspace_id": workspace_id,
             "request_exists": True,
             "approved": req_status == "approved",
-            "status": req_status,           # pending / approved / rejected
+            "status": req_status,
             "reviewed_at": str(row["reviewed_at"]) if row["reviewed_at"] else None,
             "rejection_reason": row["rejection_reason"],
         },

@@ -1,17 +1,17 @@
 ﻿"""
-AreaRepository â€” async SQLAlchemy 2.x repository for the Area model.
+AreaRepository — async SQLAlchemy 2.x repository for the Area model.
+Scoped by persona_id only (workspace_id removed from areas table).
 """
 
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
-from sqlalchemy import and_, func, insert, select, update
+from sqlalchemy import and_, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.base.BaseModel import row_to_dict
 from src.base.BaseRepository import BaseRepository
 from src.models.Area import Area
-from src.models.Workspace import workspace_personas
 
 
 class AreaRepository(BaseRepository):
@@ -21,67 +21,25 @@ class AreaRepository(BaseRepository):
         super().__init__(Area, db)
 
     # ------------------------------------------------------------------
-    # Helpers
-    # ------------------------------------------------------------------
-
-    async def _persona_belongs_to_workspace(
-        self, workspace_id: int, persona_id: int
-    ) -> bool:
-        """Return True if the persona is linked to the workspace."""
-        stmt = (
-            select(func.count())
-            .select_from(workspace_personas)
-            .where(
-                and_(
-                    workspace_personas.c.workspace_id == workspace_id,
-                    workspace_personas.c.persona_id == persona_id,
-                )
-            )
-        )
-        count = (await self.db.execute(stmt)).scalar_one()
-        return count > 0
-
-    async def _ensure_workspace_persona(
-        self, workspace_id: int, persona_id: int
-    ) -> None:
-        """Insert into workspace_personas if the link does not already exist."""
-        exists = await self._persona_belongs_to_workspace(workspace_id, persona_id)
-        if not exists:
-            stmt = insert(workspace_personas).values(
-                workspace_id=workspace_id,
-                persona_id=persona_id,
-            )
-            await self.db.execute(stmt)
-
-    # ------------------------------------------------------------------
     # Write
     # ------------------------------------------------------------------
 
     async def create_area(self, data: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Validate persona â†’ workspace membership, ensure workspace_personas link,
-        then INSERT the area. All within the same transaction.
-        """
-        workspace_id: int = data["workspace_id"]
-        persona_id: int = data["persona_id"]
-
-        await self._ensure_workspace_persona(workspace_id, persona_id)
-
+        """Insert a new area scoped to a persona."""
         instance = Area(**data)
         self.db.add(instance)
         await self.db.flush()
         await self.db.refresh(instance)
         return row_to_dict(instance)
 
-    async def update_for_workspace(
+    async def update_for_persona(
         self,
         area_id: int,
-        workspace_id: int,
         persona_id: int,
         data: Dict[str, Any],
     ) -> bool:
         """
-        UPDATE active area scoped to workspace + persona in a single round-trip.
+        UPDATE active area scoped to persona in a single round-trip.
         Stamps updated_at automatically. Returns True when a row was affected.
         """
         payload = {
@@ -93,7 +51,6 @@ class AreaRepository(BaseRepository):
             .where(
                 and_(
                     Area.id == area_id,
-                    Area.workspace_id == workspace_id,
                     Area.persona_id == persona_id,
                     Area.is_active.is_(True),
                 )
@@ -103,40 +60,27 @@ class AreaRepository(BaseRepository):
         result = await self.db.execute(stmt)
         return result.rowcount > 0
 
-    async def soft_delete_for_workspace(
+    async def soft_delete_for_persona(
         self,
         area_id: int,
-        workspace_id: int,
         persona_id: int,
         updated_by: Optional[int] = None,
     ) -> bool:
         """Soft-delete an active area by setting is_active=False."""
-        data: Dict[str, Any] = {"is_active": False}
-        if updated_by is not None:
-            data["updated_by"] = updated_by
-        return await self.update_for_workspace(
-            area_id=area_id,
-            workspace_id=workspace_id,
-            persona_id=persona_id,
-            data=data,
-        )
+        return await self.update_for_persona(area_id, persona_id, {"is_active": False})
 
-    async def restore_for_workspace(
+
+    async def restore_for_persona(
         self,
         area_id: int,
-        workspace_id: int,
         persona_id: int,
     ) -> bool:
-        """
-        Restore a soft-deleted area (is_active=False â†’ True) in a single round-trip.
-        Returns True when a row was affected.
-        """
+        """Restore a soft-deleted area (is_active=False → True)."""
         stmt = (
             update(Area)
             .where(
                 and_(
                     Area.id == area_id,
-                    Area.workspace_id == workspace_id,
                     Area.persona_id == persona_id,
                     Area.is_active.is_(False),
                 )
@@ -155,19 +99,16 @@ class AreaRepository(BaseRepository):
 
     async def get_all_by_persona(
         self,
-        workspace_id: int,
         persona_id: int,
         is_available: Optional[bool] = None,
         page: int = 1,
         page_size: int = 20,
     ) -> Tuple[List[Dict[str, Any]], int, int]:
         """
-        Return paginated active areas scoped to workspace + persona, ordered
-        oldest-first. Each dict includes a 1-based `index` field that reflects
-        the absolute position across all pages.
+        Return paginated active areas scoped to persona, ordered oldest-first.
+        Each dict includes a 1-based absolute `index` field.
         """
         conditions = [
-            Area.workspace_id == workspace_id,
             Area.persona_id == persona_id,
             Area.is_active.is_(True),
         ]
@@ -197,18 +138,15 @@ class AreaRepository(BaseRepository):
 
         return result, total, total_pages
 
-
     async def get_by_id_for_persona(
         self,
         area_id: int,
-        workspace_id: int,
         persona_id: int,
     ) -> Optional[Dict[str, Any]]:
-        """Return a single active area scoped to workspace + persona, or None."""
+        """Return a single active area scoped to persona, or None."""
         stmt = select(Area).where(
             and_(
                 Area.id == area_id,
-                Area.workspace_id == workspace_id,
                 Area.persona_id == persona_id,
                 Area.is_active.is_(True),
             )
@@ -216,7 +154,25 @@ class AreaRepository(BaseRepository):
         row = (await self.db.execute(stmt)).scalars().first()
         return row_to_dict(row) if row is not None else None
 
-    # kept for backward-compat with other callers
-    async def get_by_workspace(self, workspace_id: int) -> List[Dict[str, Any]]:
-        """Return all active areas for a workspace."""
-        return await self.get_all(filters={"workspace_id": workspace_id})
+    async def name_exists_for_persona(
+        self,
+        name: str,
+        persona_id: int,
+        exclude_id: Optional[int] = None,
+    ) -> bool:
+        """
+        Return True if an active area with the same name (case-insensitive)
+        already exists for this persona. Pass exclude_id to skip the current
+        record when checking during an update.
+        """
+        conditions = [
+            func.lower(Area.name) == name.lower(),
+            Area.persona_id == persona_id,
+            Area.is_active.is_(True),
+        ]
+        if exclude_id is not None:
+            conditions.append(Area.id != exclude_id)
+
+        stmt = select(func.count()).select_from(Area).where(and_(*conditions))
+        count = (await self.db.execute(stmt)).scalar_one()
+        return count > 0

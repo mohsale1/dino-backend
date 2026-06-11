@@ -1,9 +1,7 @@
 ﻿"""
 Workspace ORM model and workspace_personas association table.
-
-owner_id    â€“ references users.id (SET NULL on delete)
-is_verified â€“ set to True when an admin approves the workspace request
-No billing columns â€” billing is in workspace_billing table.
+owner_id removed.
+is_verified — set to True when an admin approves the workspace request.
 """
 
 from typing import Optional
@@ -60,12 +58,6 @@ class Workspace(BigIntPrimaryKeyMixin, EntityMixin, Base):
 
     name: Mapped[str] = mapped_column(String(200), nullable=False)
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-
-    owner_id: Mapped[Optional[int]] = mapped_column(
-        BigInteger,
-        ForeignKey("users.id", ondelete="SET NULL"),
-        nullable=True,
-    )
     is_verified: Mapped[bool] = mapped_column(
         Boolean,
         nullable=False,
@@ -75,11 +67,6 @@ class Workspace(BigIntPrimaryKeyMixin, EntityMixin, Base):
     )
 
     # Relationships
-    owner: Mapped[Optional["User"]] = relationship(  # noqa: F821
-        "User",
-        foreign_keys=[owner_id],
-        lazy="noload",
-    )
     billing: Mapped[Optional["WorkspaceBilling"]] = relationship(  # noqa: F821
         "WorkspaceBilling",
         back_populates="workspace",
@@ -93,13 +80,5 @@ class Workspace(BigIntPrimaryKeyMixin, EntityMixin, Base):
         secondaryjoin="Persona.id == workspace_personas.c.persona_id",
         lazy="noload",
     )
-    users: Mapped[list["User"]] = relationship(  # noqa: F821
-        "User",
-        foreign_keys="[User.workspace_id]",
-        back_populates="workspace",
-        lazy="noload",
-    )
-
     def __repr__(self) -> str:
         return f"<Workspace id={self.id} name={self.name!r} verified={self.is_verified}>"
-

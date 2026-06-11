@@ -3,8 +3,9 @@ PostgreSQL async database configuration using SQLAlchemy 2.x + asyncpg.
 """
 
 import logging
+import ssl as _ssl
 from typing import AsyncGenerator
-from urllib.parse import urlparse  # used for hostname/port logging only
+from urllib.parse import urlparse
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
@@ -22,19 +23,16 @@ def _normalize_db_url(url: str) -> tuple:
 
     Returns (clean_url, connect_args) where:
       - clean_url   : postgresql+asyncpg://... with NO query string
-      - connect_args: dict to pass to create_async_engine(connect_args=...)
+      - connect_args: dict passed to create_async_engine(connect_args=...)
                       contains {"ssl": ssl.SSLContext} when SSL is required
 
     asyncpg does not accept sslmode/ssl as query string parameters —
     SSL must be passed via connect_args.
 
-    NOTE: urlparse does not correctly parse non-standard schemes such as
-    postgresql+asyncpg://, so we use plain string operations to strip the
-    query string reliably.
+    NOTE: urlparse misparses non-standard schemes such as postgresql+asyncpg://,
+    so plain string operations are used to strip the query string reliably.
     """
-    import ssl as _ssl
-
-    # 1. Normalise scheme — covers all common variants incl. already-correct ones
+    # 1. Normalise scheme
     for prefix in (
         "postgresql+psycopg2://",
         "postgresql+asyncpg://",
@@ -45,29 +43,23 @@ def _normalize_db_url(url: str) -> tuple:
             url = "postgresql+asyncpg://" + url[len(prefix):]
             break
 
-    # 2. Split on '?' using plain string ops — urlparse misparses non-standard schemes
-    if "?" in url:
-        clean_url, qs = url.split("?", 1)
-    else:
-        clean_url, qs = url, ""
+    # 2. Split query string
+    clean_url, qs = url.split("?", 1) if "?" in url else (url, "")
 
-    # 3. Parse query string into a dict
+    # 3. Parse query params
     params: dict = {}
     for part in qs.split("&"):
         if "=" in part:
             k, v = part.split("=", 1)
             params[k.lower()] = v.lower()
 
-    # 4. Build connect_args for SSL
+    # 4. Build SSL connect_args
     connect_args: dict = {}
     sslmode = params.get("sslmode", params.get("ssl", ""))
     if sslmode and sslmode not in ("disable", "allow", "prefer", "false", "0", ""):
-        # require / verify-ca / verify-full / true → enable SSL
         connect_args["ssl"] = _ssl.create_default_context()
 
     return clean_url, connect_args
-
-
 
 
 async def initialize_db() -> None:
@@ -81,18 +73,19 @@ async def initialize_db() -> None:
 
     db_url, connect_args = _normalize_db_url(settings.DATABASE_URL)
     parsed = urlparse(db_url)
-    logger.info("Connecting to PostgreSQL (application DB)...")
-    logger.info(f"   Host: {parsed.hostname}:{parsed.port}")
-    logger.info(f"   Database: {parsed.path.lstrip('/')}")
+    logger.info(
+        "Connecting to PostgreSQL — host=%s:%s db=%s",
+        parsed.hostname, parsed.port, parsed.path.lstrip("/"),
+    )
 
     engine = create_async_engine(
         db_url,
         connect_args=connect_args,
-        pool_size=10,
-        max_overflow=20,
+        pool_size=settings.DB_POOL_SIZE,
+        max_overflow=settings.DB_MAX_OVERFLOW,
         pool_pre_ping=True,
-        pool_recycle=600,
-        pool_timeout=30,
+        pool_recycle=settings.DB_POOL_RECYCLE,
+        pool_timeout=settings.DB_POOL_TIMEOUT,
         echo=settings.DEBUG and settings.ENVIRONMENT != "production",
     )
 
@@ -102,7 +95,7 @@ async def initialize_db() -> None:
         expire_on_commit=False,
     )
 
-    logger.info("PostgreSQL application engine initialised successfully.")
+    logger.info("PostgreSQL application engine initialised.")
 
 
 async def get_db() -> AsyncGenerator[AsyncSession, None]:
@@ -117,7 +110,6 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
         except Exception:
             await session.rollback()
             raise
-
 
 
 async def close_db() -> None:

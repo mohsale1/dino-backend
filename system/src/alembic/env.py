@@ -27,15 +27,6 @@ if _project_root not in sys.path:
 # Import Base and all model modules so that Base.metadata is fully populated
 # before Alembic inspects it for autogenerate / target_metadata.
 # ---------------------------------------------------------------------------
-from src.models.Base import Base  # noqa: F401
-import src.models.Permission        # noqa: F401
-import src.models.Role              # noqa: F401
-import src.models.User              # noqa: F401
-import src.models.Workspace         # noqa: F401
-import src.models.WorkspaceBilling    # noqa: F401
-import src.models.BillingTransaction  # noqa: F401
-import src.models.Persona             # noqa: F401
-import src.model.WorkspaceRequests
 
 # ---------------------------------------------------------------------------
 # Alembic Config object

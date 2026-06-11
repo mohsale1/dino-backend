@@ -10,11 +10,11 @@ class PersonaBase(BaseModel):
     description: Optional[str] = None
     persona_type: int = Field(default=0, ge=0, le=1, description="0=Food, 1=NonFood")
     order_type: int = Field(default=0, ge=0, le=1, description="0=Online, 1=Manual")
-    workspace_id: int
 
 
 class PersonaCreate(PersonaBase):
     """Create persona schema"""
+    workspace_id: int  # used only for workspace_personas link, not stored on persona
     logo_url: Optional[str] = None
     address: Optional[str] = None
     city: Optional[str] = None
@@ -51,7 +51,6 @@ class PersonaResponse(BaseModel):
     description: Optional[str] = None
     persona_type: int
     order_type: int
-    workspace_id: int
     logo_url: Optional[str] = None
     address: Optional[str] = None
     city: Optional[str] = None

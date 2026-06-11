@@ -1,5 +1,6 @@
 ﻿"""
-Table ORM model. No qr_code_url, no qr_menu_url.
+Table ORM model.
+workspace_id removed — scoped via persona_id (CASCADE, NOT NULL).
 Unique: (area_id, table_number).
 """
 
@@ -18,7 +19,6 @@ class Table(BigIntPrimaryKeyMixin, EntityMixin, Base):
 
     __table_args__ = (
         UniqueConstraint("area_id", "table_number", name="uq_tables_area_table_number"),
-        Index("ix_tables_workspace_id", "workspace_id"),
         Index("ix_tables_area_id", "area_id"),
         Index("ix_tables_persona_id", "persona_id"),
     )
@@ -26,24 +26,18 @@ class Table(BigIntPrimaryKeyMixin, EntityMixin, Base):
     table_number: Mapped[str] = mapped_column(String(50), nullable=False)
     capacity: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("4"))
     status: Mapped[str] = mapped_column(
-        String(30), nullable=False, server_default=text("''available''"),
+        String(30), nullable=False, server_default=text("'available'"),
         comment="available | occupied | reserved | out_of_service",
-    )
-    workspace_id: Mapped[int] = mapped_column(
-        BigInteger,
-        ForeignKey("workspaces.id", ondelete="CASCADE"),
-        nullable=False,
     )
     area_id: Mapped[int] = mapped_column(
         BigInteger,
         ForeignKey("areas.id", ondelete="RESTRICT"),
         nullable=False,
     )
-    persona_id: Mapped[Optional[int]] = mapped_column(
+    persona_id: Mapped[int] = mapped_column(
         BigInteger,
-        ForeignKey("personas.id", ondelete="SET NULL"),
-        nullable=True,
-        comment="Denormalised from areas.persona_id for direct query scoping",
+        ForeignKey("personas.id", ondelete="CASCADE"),
+        nullable=False,
     )
 
     # Relationships

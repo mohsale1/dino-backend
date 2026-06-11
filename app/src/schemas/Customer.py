@@ -3,20 +3,21 @@ from typing import Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
+MOBILE_PATTERN = r'^\+?[0-9\s\-\(\)]{7,30}$'
+
 
 class CustomerBase(BaseModel):
     name: str = Field(..., min_length=1, max_length=200)
-    mobile: str = Field(..., min_length=7, max_length=30, pattern=r'^\+?[0-9\s\-\(\)]{7,30}$')
+    mobile: str = Field(..., min_length=7, max_length=30, pattern=MOBILE_PATTERN)
 
 
 class CustomerCreate(CustomerBase):
-    persona_id: Optional[int] = None
+    pass
 
 
 class CustomerUpdate(BaseModel):
     name: Optional[str] = Field(None, min_length=1, max_length=200)
-    mobile: Optional[str] = Field(None, min_length=7, max_length=30, pattern=r'^\+?[0-9\s\-\(\)]{7,30}$')
-    persona_id: Optional[int] = None
+    mobile: Optional[str] = Field(None, min_length=7, max_length=30, pattern=MOBILE_PATTERN)
 
 
 class CustomerResponse(BaseModel):
@@ -25,8 +26,6 @@ class CustomerResponse(BaseModel):
     id: int
     name: str
     mobile: str
-    workspace_id: int
-    persona_id: Optional[int] = None
     is_active: bool
     created_at: datetime
     updated_at: datetime

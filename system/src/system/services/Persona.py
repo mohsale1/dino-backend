@@ -25,10 +25,10 @@ class PersonaService(BaseService):
     # ------------------------------------------------------------------
 
     async def create_persona(self, data: Dict[str, Any]) -> Dict[str, Any]:
-        """Create persona and link to workspace_personas."""
+        """Create persona and link to workspace via workspace_personas."""
+        workspace_id = data.pop("workspace_id", None)
         result = await self.create(data)
         persona_id = result.get("id")
-        workspace_id = result.get("workspace_id")
 
         if workspace_id and persona_id:
             stmt = (

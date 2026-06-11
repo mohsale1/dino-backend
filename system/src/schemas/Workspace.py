@@ -12,7 +12,6 @@ class WorkspaceBase(BaseModel):
 
 class WorkspaceCreate(WorkspaceBase):
     """Create workspace schema"""
-    owner_id: Optional[int] = None
     persona_ids: Optional[List[int]] = None
 
 
@@ -20,7 +19,6 @@ class WorkspaceUpdate(BaseModel):
     """Update workspace schema"""
     name: Optional[str] = Field(None, min_length=1, max_length=200)
     description: Optional[str] = None
-    owner_id: Optional[int] = None
     is_active: Optional[bool] = None
     persona_ids: Optional[List[int]] = None
 
@@ -30,7 +28,6 @@ class WorkspaceResponse(BaseModel):
     id: int
     name: str
     description: Optional[str] = None
-    owner_id: Optional[int] = None
     is_verified: bool = False
     is_active: bool
     created_at: datetime

@@ -44,7 +44,6 @@ class PersonaResponse(BaseModel):
     description: Optional[str] = None
     persona_type: int
     order_type: int
-    workspace_id: int
     logo_url: Optional[str] = None
     address: Optional[str] = None
     city: Optional[str] = None
