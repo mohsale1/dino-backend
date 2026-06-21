@@ -41,11 +41,6 @@ class ApplicationAuthService(BaseAuth):
     async def login(self, email: str, password: str) -> Optional[Dict[str, Any]]:
         """
         Authenticate an app user and return tokens + enriched user dict.
-
-        Round-trips:
-          1. authenticate_user  — SELECT user by email + UPDATE last_login
-          2. get_user_with_role — SELECT user + role + permissions (selectinload)
-        Token creation is synchronous — no extra DB calls.
         """
         user = await self.authenticate_user(email, password)
         if not user or user.get("user_type") != 1:
@@ -57,11 +52,9 @@ class ApplicationAuthService(BaseAuth):
             "user_type": 1,
         }
 
-        # Token creation is CPU-only — do it before the second DB call
         access_token = self.create_access_token(token_data)
         refresh_token = self.create_refresh_token(token_data)
 
-        # Fetch enriched user (role + permissions) in one selectinload query
         user_with_role = await self.get_user_with_role(user["id"])
 
         return {
@@ -73,7 +66,7 @@ class ApplicationAuthService(BaseAuth):
         }
 
     # ------------------------------------------------------------------
-    # Signup — atomic, pre-flight checks parallelised
+    # Signup — atomic, pre-flight checks sequential
     # ------------------------------------------------------------------
 
     async def signup(
@@ -85,31 +78,17 @@ class ApplicationAuthService(BaseAuth):
     ) -> Dict[str, Any]:
         """
         Complete signup: workspace + billing + persona + admin user, all atomic.
-
-        Pre-flight reads (email check + referral lookup + owner role fetch)
-        run in parallel before the savepoint is opened.
-
-        If no valid referral_email is supplied, the default system user
-        (superadmin@dino.internal) is used as the referrer.
         """
         admin_email = admin_data["email"].strip().lower()
         _DEFAULT_REFERRER_EMAIL = "default@dino.internal"
 
-        # ------------------------------------------------------------------
-        # Pre-flight: run all read-only checks in parallel
-        # ------------------------------------------------------------------
         async def _check_email() -> bool:
             return await self.user_repo.email_exists(admin_email)
 
         async def _resolve_referrer() -> Optional[int]:
-            """
-            1. Try the supplied referral_email (must be an active system user, user_type=0).
-            2. Fall back to the default dino.internal system user.
-            3. Return None only if neither exists.
-            """
+            from sqlalchemy import select as _select
+            from src.models.User import User as _User
             async def _lookup_system_user(email: str) -> Optional[int]:
-                from sqlalchemy import select as _select
-                from src.models.User import User as _User
                 stmt = _select(_User.id).where(
                     _User.email == email,
                     _User.user_type == 0,
@@ -121,17 +100,15 @@ class ApplicationAuthService(BaseAuth):
                 ref_id = await _lookup_system_user(referral_email.strip().lower())
                 if ref_id is not None:
                     return ref_id
-
             return await _lookup_system_user(_DEFAULT_REFERRER_EMAIL)
 
         async def _get_owner_role() -> Optional[Dict[str, Any]]:
             return await self.role_repo.get_by_name_and_type("Owner", 1)
 
-        email_taken, referrer_user_id, owner_role = await asyncio.gather(
-            _check_email(),
-            _resolve_referrer(),
-            _get_owner_role(),
-        )
+        # ✅ Run sequentially instead of asyncio.gather
+        email_taken = await _check_email()
+        referrer_user_id = await _resolve_referrer()
+        owner_role = await _get_owner_role()
 
         if email_taken:
             raise ValueError(
@@ -139,7 +116,6 @@ class ApplicationAuthService(BaseAuth):
                 "Please use a different email address."
             )
 
-        # Determine the email to record in workspace_requests
         recorded_referral_email = (
             referral_email.strip().lower()
             if referral_email
@@ -147,11 +123,10 @@ class ApplicationAuthService(BaseAuth):
         )
 
         # ------------------------------------------------------------------
-        # All writes inside a SAVEPOINT — fully atomic
+        # All writes inside a transaction — fully atomic
         # ------------------------------------------------------------------
-        async with self.db.begin_nested():
+        async with self.db.begin():  # ✅ changed from begin_nested()
             try:
-                # 1. Create Owner role if it doesn't exist yet
                 if not owner_role:
                     owner_role = await self.role_repo.create({
                         "name": "Owner",
@@ -160,7 +135,6 @@ class ApplicationAuthService(BaseAuth):
                         "is_active": True,
                     })
 
-                # 2. Create workspace
                 created_workspace = await self.workspace_repo.create({
                     "name": workspace_data["name"],
                     "description": workspace_data.get("description"),
@@ -168,7 +142,6 @@ class ApplicationAuthService(BaseAuth):
                 })
                 workspace_id = created_workspace["id"]
 
-                # 3. Add workspace_billing + create persona, then flush both
                 self.db.add(WorkspaceBilling(
                     workspace_id=workspace_id,
                     plan="free",
@@ -192,7 +165,6 @@ class ApplicationAuthService(BaseAuth):
                 persona_id = created_persona["id"]
                 await self.db.flush()
 
-                # 4. Create admin user
                 created_owner = await self.user_repo.create({
                     "user_type": 1,
                     "email": admin_email,
@@ -205,7 +177,6 @@ class ApplicationAuthService(BaseAuth):
                 })
                 user_id = created_owner["id"]
 
-                # 5. Link workspace ↔ persona + user ↔ persona
                 await self.db.execute(
                     pg_insert(workspace_personas)
                     .values(workspace_id=workspace_id, persona_id=persona_id)
@@ -217,7 +188,6 @@ class ApplicationAuthService(BaseAuth):
                     .on_conflict_do_nothing()
                 )
 
-                # 6. Always insert a workspace_request row — using referrer or default
                 if referrer_user_id is not None:
                     await self.db.execute(
                         sa_text(
@@ -233,6 +203,7 @@ class ApplicationAuthService(BaseAuth):
                     )
 
             except IntegrityError as exc:
+                await self.db.rollback()  # ✅ added rollback
                 err_str = str(exc).lower()
                 if "uq_users_email" in err_str or ("users" in err_str and "email" in err_str):
                     raise ValueError(
@@ -255,4 +226,4 @@ class ApplicationAuthService(BaseAuth):
             "persona": created_persona,
             "user": created_owner,
         }
-
+    
