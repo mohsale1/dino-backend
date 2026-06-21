@@ -12,59 +12,36 @@ Changes:
 import sqlalchemy as sa
 from alembic import op
 
-revision = "011"
-down_revision = "010"
+revision = "e6f7a8b9c0d2"
+down_revision = "d5e6f7a8b9c1"
 branch_labels = None
 depends_on = None
 
 
 def upgrade() -> None:
-    # ------------------------------------------------------------------ #
+    conn = op.get_bind()
     # tables
-    # ------------------------------------------------------------------ #
-
-    # 1. Drop workspace_id FK + index + column
-    op.drop_constraint("tables_workspace_id_fkey", "tables", type_="foreignkey")
-    op.drop_index("ix_tables_workspace_id", table_name="tables")
-    op.drop_column("tables", "workspace_id")
-
-    # 2. Drop old persona_id FK (SET NULL)
-    op.drop_constraint("tables_persona_id_fkey", "tables", type_="foreignkey")
-
-    # 3. Make persona_id NOT NULL
+    conn.execute(sa.text("ALTER TABLE tables DROP CONSTRAINT IF EXISTS tables_workspace_id_fkey"))
+    conn.execute(sa.text("DROP INDEX IF EXISTS ix_tables_workspace_id"))
+    conn.execute(sa.text("ALTER TABLE tables DROP COLUMN IF EXISTS workspace_id"))
+    conn.execute(sa.text("ALTER TABLE tables DROP CONSTRAINT IF EXISTS tables_persona_id_fkey"))
     op.alter_column("tables", "persona_id", nullable=False)
-
-    # 4. Re-add persona_id FK with CASCADE
+    conn.execute(sa.text("ALTER TABLE tables DROP CONSTRAINT IF EXISTS tables_persona_id_fkey"))
     op.create_foreign_key(
-        "tables_persona_id_fkey",
-        "tables", "personas",
-        ["persona_id"], ["id"],
-        ondelete="CASCADE",
+        "tables_persona_id_fkey", "tables", "personas",
+        ["persona_id"], ["id"], ondelete="CASCADE",
     )
-
-    # ------------------------------------------------------------------ #
     # categories
-    # ------------------------------------------------------------------ #
-
-    # 1. Drop workspace_id FK + index + column
-    op.drop_constraint("categories_workspace_id_fkey", "categories", type_="foreignkey")
-    op.drop_index("ix_categories_workspace_id", table_name="categories")
-    op.drop_column("categories", "workspace_id")
-
-    # 2. Drop old persona_id FK (SET NULL)
-    op.drop_constraint("categories_persona_id_fkey", "categories", type_="foreignkey")
-
-    # 3. Make persona_id NOT NULL
+    conn.execute(sa.text("ALTER TABLE categories DROP CONSTRAINT IF EXISTS categories_workspace_id_fkey"))
+    conn.execute(sa.text("DROP INDEX IF EXISTS ix_categories_workspace_id"))
+    conn.execute(sa.text("ALTER TABLE categories DROP COLUMN IF EXISTS workspace_id"))
+    conn.execute(sa.text("ALTER TABLE categories DROP CONSTRAINT IF EXISTS categories_persona_id_fkey"))
     op.alter_column("categories", "persona_id", nullable=False)
-
-    # 4. Re-add persona_id FK with CASCADE
+    conn.execute(sa.text("ALTER TABLE categories DROP CONSTRAINT IF EXISTS categories_persona_id_fkey"))
     op.create_foreign_key(
-        "categories_persona_id_fkey",
-        "categories", "personas",
-        ["persona_id"], ["id"],
-        ondelete="CASCADE",
+        "categories_persona_id_fkey", "categories", "personas",
+        ["persona_id"], ["id"], ondelete="CASCADE",
     )
-
 
 def downgrade() -> None:
     # ------------------------------------------------------------------ #

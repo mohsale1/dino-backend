@@ -12,38 +12,24 @@ Changes:
 import sqlalchemy as sa
 from alembic import op
 
-revision = "010"
-down_revision = "009"
+revision = "d5e6f7a8b9c1"
+down_revision = "c4d5e6f7a8b9"
 branch_labels = None
 depends_on = None
 
 
 def upgrade() -> None:
-    # 1. Drop the workspace_id FK constraint
-    op.drop_constraint("areas_workspace_id_fkey", "areas", type_="foreignkey")
-
-    # 2. Drop the workspace_id index
-    op.drop_index("ix_areas_workspace_id", table_name="areas")
-
-    # 3. Drop the workspace_id column
-    op.drop_column("areas", "workspace_id")
-
-    # 4. Drop old persona_id FK (SET NULL, nullable)
-    op.drop_constraint("areas_persona_id_fkey", "areas", type_="foreignkey")
-
-    # 5. Make persona_id NOT NULL
+    conn = op.get_bind()
+    conn.execute(sa.text("ALTER TABLE areas DROP CONSTRAINT IF EXISTS areas_workspace_id_fkey"))
+    conn.execute(sa.text("DROP INDEX IF EXISTS ix_areas_workspace_id"))
+    conn.execute(sa.text("ALTER TABLE areas DROP COLUMN IF EXISTS workspace_id"))
+    conn.execute(sa.text("ALTER TABLE areas DROP CONSTRAINT IF EXISTS areas_persona_id_fkey"))
     op.alter_column("areas", "persona_id", nullable=False)
-
-    # 6. Re-add persona_id FK with CASCADE
+    conn.execute(sa.text("ALTER TABLE areas DROP CONSTRAINT IF EXISTS areas_persona_id_fkey"))
     op.create_foreign_key(
-        "areas_persona_id_fkey",
-        "areas",
-        "personas",
-        ["persona_id"],
-        ["id"],
-        ondelete="CASCADE",
+        "areas_persona_id_fkey", "areas", "personas",
+        ["persona_id"], ["id"], ondelete="CASCADE",
     )
-
 
 def downgrade() -> None:
     # 1. Drop CASCADE FK on persona_id

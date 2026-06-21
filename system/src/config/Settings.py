@@ -24,7 +24,7 @@ class Settings(BaseSettings):
     # BUILD_ID   : git SHA, image tag, or CI pipeline run ID
     # DEPLOYED_AT: ISO timestamp set at build time (e.g. 2026-03-19T10:00:00Z)
     BUILD_ID: str = "local"
-    DEPLOYED_AT: str = "unknown"
+    DEPLOYED_AT: str = "US"
 
     # JWT Settings - SECRET_KEY should be set in production
     ENABLE_JWT: bool = True

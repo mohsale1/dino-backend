@@ -15,24 +15,20 @@ Changes:
 import sqlalchemy as sa
 from alembic import op
 
-revision = "016"
-down_revision = "015"
+revision = "d1e2f3a4b5c7"
+down_revision = "c0d1e2f3a4b6"
 branch_labels = None
 depends_on = None
 
 
 def upgrade() -> None:
-    # 1. Drop composite unique constraint
-    op.drop_constraint("uq_users_email_workspace", "users", type_="unique")
-
-    # 2. Drop workspace_id FK + index + column
-    op.drop_constraint("users_workspace_id_fkey", "users", type_="foreignkey")
-    op.drop_index("ix_users_workspace_id", table_name="users")
-    op.drop_column("users", "workspace_id")
-
-    # 3. Add global unique constraint on email
+    conn = op.get_bind()
+    conn.execute(sa.text("ALTER TABLE users DROP CONSTRAINT IF EXISTS uq_users_email_workspace"))
+    conn.execute(sa.text("ALTER TABLE users DROP CONSTRAINT IF EXISTS users_workspace_id_fkey"))
+    conn.execute(sa.text("DROP INDEX IF EXISTS ix_users_workspace_id"))
+    conn.execute(sa.text("ALTER TABLE users DROP COLUMN IF EXISTS workspace_id"))
+    conn.execute(sa.text("ALTER TABLE users DROP CONSTRAINT IF EXISTS uq_users_email"))
     op.create_unique_constraint("uq_users_email", "users", ["email"])
-
 
 def downgrade() -> None:
     # 1. Drop global unique constraint

@@ -11,17 +11,16 @@ Changes:
 import sqlalchemy as sa
 from alembic import op
 
-revision = "014"
-down_revision = "013"
+revision = "b9c0d1e2f3a5"
+down_revision = "a8b9c0d1e2f4"
 branch_labels = None
 depends_on = None
 
 
 def upgrade() -> None:
-    # Drop FK constraint then column
-    op.drop_constraint("workspaces_owner_id_fkey", "workspaces", type_="foreignkey")
-    op.drop_column("workspaces", "owner_id")
-
+    conn = op.get_bind()
+    conn.execute(sa.text("ALTER TABLE workspaces DROP CONSTRAINT IF EXISTS workspaces_owner_id_fkey"))
+    conn.execute(sa.text("ALTER TABLE workspaces DROP COLUMN IF EXISTS owner_id"))
 
 def downgrade() -> None:
     # Re-add column (nullable — cannot restore data)

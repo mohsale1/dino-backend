@@ -14,22 +14,32 @@ from alembic import op
 import sqlalchemy as sa
 
 # revision identifiers
-revision = "009"
-down_revision = "008"
+revision = "c4d5e6f7a8b9"
+down_revision = "b2c3d4e5f6a7"
 branch_labels = None
 depends_on = None
 
 
 def upgrade() -> None:
-    # 1. Drop the old CHECK constraint on rating
-    op.drop_constraint("ck_reviews_rating", "reviews", type_="check")
+    conn = op.get_bind()
 
-    # 2. Drop the index on persona_id
-    op.drop_index("ix_reviews_persona_id", table_name="reviews")
+    # 1. Drop the old CHECK constraint on rating (if exists)
+    conn.execute(sa.text(
+        "ALTER TABLE reviews DROP CONSTRAINT IF EXISTS ck_reviews_rating"
+    ))
 
-    # 3. Drop the persona_id FK constraint then the column
-    op.drop_constraint("reviews_persona_id_fkey", "reviews", type_="foreignkey")
-    op.drop_column("reviews", "persona_id")
+    # 2. Drop the index on persona_id (if exists)
+    conn.execute(sa.text(
+        "DROP INDEX IF EXISTS ix_reviews_persona_id"
+    ))
+
+    # 3. Drop the persona_id FK constraint (if exists) then the column (if exists)
+    conn.execute(sa.text(
+        "ALTER TABLE reviews DROP CONSTRAINT IF EXISTS reviews_persona_id_fkey"
+    ))
+    conn.execute(sa.text(
+        "ALTER TABLE reviews DROP COLUMN IF EXISTS persona_id"
+    ))
 
     # 4. Change rating from SmallInteger to Numeric(3,1)
     op.alter_column(
@@ -43,6 +53,9 @@ def upgrade() -> None:
     )
 
     # 5. Add new CHECK constraint for float rating range
+    conn.execute(sa.text(
+        "ALTER TABLE reviews DROP CONSTRAINT IF EXISTS ck_reviews_rating"
+    ))
     op.create_check_constraint(
         "ck_reviews_rating",
         "reviews",

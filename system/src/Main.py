@@ -154,7 +154,7 @@ async def lifespan(app: FastAPI):
     """Application lifespan events."""
     _banner = "=" * 60
     logger.info(_banner)
-    logger.info("  DINO SYSTEM â€” STARTING UP")
+    logger.info("  DINO SYSTEM - STARTING UP")
     logger.info(_banner)
     logger.info(f"  App Version  : {settings.APP_VERSION}")
     logger.info(f"  Build ID     : {settings.BUILD_ID}")

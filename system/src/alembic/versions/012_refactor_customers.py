@@ -14,31 +14,24 @@ Changes:
 import sqlalchemy as sa
 from alembic import op
 
-revision = "012"
-down_revision = "011"
+revision = "f7a8b9c0d1e3"
+down_revision = "e6f7a8b9c0d2"
 branch_labels = None
 depends_on = None
 
 
 def upgrade() -> None:
-    # 1. Drop old composite unique constraint (mobile, workspace_id)
-    op.drop_constraint("uq_customers_mobile_workspace", "customers", type_="unique")
-
-    # 2. Drop workspace_id FK + index + column
-    op.drop_constraint("customers_workspace_id_fkey", "customers", type_="foreignkey")
-    op.drop_index("ix_customers_workspace_id", table_name="customers")
-    op.drop_column("customers", "workspace_id")
-
-    # 3. Drop persona_id FK + column (no dedicated index existed)
-    op.drop_constraint("customers_persona_id_fkey", "customers", type_="foreignkey")
-    op.drop_column("customers", "persona_id")
-
-    # 4. Add global unique constraint on mobile
+    conn = op.get_bind()
+    conn.execute(sa.text("ALTER TABLE customers DROP CONSTRAINT IF EXISTS uq_customers_mobile_workspace"))
+    conn.execute(sa.text("ALTER TABLE customers DROP CONSTRAINT IF EXISTS customers_workspace_id_fkey"))
+    conn.execute(sa.text("DROP INDEX IF EXISTS ix_customers_workspace_id"))
+    conn.execute(sa.text("ALTER TABLE customers DROP COLUMN IF EXISTS workspace_id"))
+    conn.execute(sa.text("ALTER TABLE customers DROP CONSTRAINT IF EXISTS customers_persona_id_fkey"))
+    conn.execute(sa.text("ALTER TABLE customers DROP COLUMN IF EXISTS persona_id"))
+    conn.execute(sa.text("ALTER TABLE customers DROP CONSTRAINT IF EXISTS uq_customers_mobile"))
     op.create_unique_constraint("uq_customers_mobile", "customers", ["mobile"])
-
-    # 5. Add index on mobile for fast lookups
+    conn.execute(sa.text("DROP INDEX IF EXISTS ix_customers_mobile"))
     op.create_index("ix_customers_mobile", "customers", ["mobile"])
-
 
 def downgrade() -> None:
     # 1. Drop new unique constraint + index

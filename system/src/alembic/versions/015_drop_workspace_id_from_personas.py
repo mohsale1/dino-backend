@@ -13,22 +13,17 @@ Changes:
 import sqlalchemy as sa
 from alembic import op
 
-revision = "015"
-down_revision = "014"
+revision = "c0d1e2f3a4b6"
+down_revision = "b9c0d1e2f3a5"
 branch_labels = None
 depends_on = None
 
 
 def upgrade() -> None:
-    # 1. Drop FK constraint
-    op.drop_constraint("personas_workspace_id_fkey", "personas", type_="foreignkey")
-
-    # 2. Drop index
-    op.drop_index("ix_personas_workspace_id", table_name="personas")
-
-    # 3. Drop column
-    op.drop_column("personas", "workspace_id")
-
+    conn = op.get_bind()
+    conn.execute(sa.text("ALTER TABLE personas DROP CONSTRAINT IF EXISTS personas_workspace_id_fkey"))
+    conn.execute(sa.text("DROP INDEX IF EXISTS ix_personas_workspace_id"))
+    conn.execute(sa.text("ALTER TABLE personas DROP COLUMN IF EXISTS workspace_id"))
 
 def downgrade() -> None:
     # Re-add column (nullable — cannot restore data)
