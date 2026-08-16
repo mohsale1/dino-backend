@@ -36,11 +36,3 @@ class ApplicationPermissionCheck(BaseRoleCheck):
         # Unique name ensures FastAPI dependency cache works correctly per permission
         _check.__name__ = f"require_{permission.replace(':', '_')}"
         return _check
-
-
-    @staticmethod
-    def require_authenticated(
-        user: Dict[str, Any] = Depends(get_current_application_user),
-    ) -> Dict[str, Any]:
-        """Require only that the user is authenticated — no specific permission needed."""
-        return user

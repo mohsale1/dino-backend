@@ -1,22 +1,19 @@
-"""
-HomepageService — business logic for the public homepage.
-
-Contact info and stat metadata come from the singleton homepage_config row.
-Live counts (workspaces, orders processed) are always computed from the
-actual tables — never stored.
-"""
-
 import asyncio
-from typing import Any, Dict, List, Optional
+import logging
+from typing import Any, Dict, List
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.base.BaseService import BaseService
-from src.core.Exceptions import BadRequestError, NotFoundError
+from src.core.Exceptions import NotFoundError
 from src.models.OrderDetail import OrderDetail
 from src.models.Workspace import Workspace
+from src.models.Review import Review
+from src.models.User import User
 from src.repositories.HomepageRepository import HomepageRepository
+
+logger = logging.getLogger(__name__)
 
 # Order statuses that count as "processed"
 _PROCESSED_STATUSES = ("completed", "paid")
@@ -31,40 +28,15 @@ class HomepageService(BaseService):
         super().__init__(self.homepage_repo)
 
     # ------------------------------------------------------------------
-    # Config CRUD
+    # Config
     # ------------------------------------------------------------------
 
     async def get_config(self) -> Dict[str, Any]:
-        """Return the singleton homepage config row.
-
-        Raises
-        ------
-        NotFoundError
-            If the config row has not been seeded yet.
-        """
+        """Return the singleton homepage config row."""
         config = await self.homepage_repo.get_config()
         if config is None:
             raise NotFoundError("Homepage config not found")
         return config
-
-    async def update_config(self, data: Dict[str, Any]) -> Dict[str, Any]:
-        """Update the singleton config row and return the updated record.
-
-        Raises
-        ------
-        BadRequestError
-            If no fields are provided.
-        NotFoundError
-            If the config row does not exist.
-        """
-        if not data:
-            raise BadRequestError("No fields provided to update")
-
-        updated = await self.homepage_repo.update_config(data)
-        if not updated:
-            raise NotFoundError("Homepage config not found")
-
-        return await self.get_config()
 
     # ------------------------------------------------------------------
     # Live count helpers
@@ -90,10 +62,7 @@ class HomepageService(BaseService):
     # ------------------------------------------------------------------
 
     async def get_stats(self, config: Dict[str, Any]) -> List[Dict[str, Any]]:
-        """
-        Build the 4 stat cards. Live counts run in parallel.
-        Metadata (labels, suffixes, icons) comes from the config row.
-        """
+        """Build the 4 stat cards. Live counts run in parallel."""
         total_workspaces, total_orders = await asyncio.gather(
             self._count_workspaces(),
             self._count_orders(),
@@ -124,6 +93,42 @@ class HomepageService(BaseService):
                 "icon": config.get("stat_uptime_icon", "cloud_done"),
                 "decimals": 1,
             },
+        ]
+
+    async def get_testimonials(self) -> List[Dict[str, Any]]:
+        """Return top 5 most recent approved reviews as testimonials."""
+        stmt = (
+            select(
+                Review.id,
+                Review.rating,
+                Review.comment,
+                Review.created_at,
+                User.first_name,
+                User.last_name,
+                Workspace.name.label("workspace_name"),
+            )
+            .outerjoin(User, Review.user_id == User.id)
+            .join(Workspace, Review.workspace_id == Workspace.id)
+            .where(
+                Review.is_approved.is_(True),
+                Review.is_active.is_(True),
+                Workspace.is_active.is_(True),
+            )
+            .order_by(Review.created_at.desc())
+            .limit(5)
+        )
+        rows = (await self.db.execute(stmt)).all()
+        logger.debug("homepage.testimonials.fetched count=%s", len(rows))
+        return [
+            {
+                "name": f"{row.first_name or ''} {row.last_name or ''}".strip() or "Anonymous",
+                "role": "Customer",
+                "rating": float(row.rating),
+                "comment": row.comment or "",
+                "created_at": row.created_at.isoformat() if row.created_at else None,
+                "workspace_name": row.workspace_name,
+            }
+            for row in rows
         ]
 
     @staticmethod

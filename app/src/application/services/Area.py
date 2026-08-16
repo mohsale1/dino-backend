@@ -1,6 +1,6 @@
 ﻿"""
 AreaService — business logic for dining areas.
-Scoped by persona_id only (workspace_id removed from areas table).
+Scoped by persona_id only.
 """
 
 from typing import Any, Dict, List, Optional, Tuple

@@ -4,33 +4,18 @@ Categories router — CRUD for menu categories, scoped by persona_id.
 
 import logging
 from typing import Any, Dict, Optional
-
 from fastapi import APIRouter, Depends, Query
-from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.application.middleware.RoleCheck import ApplicationPermissionCheck
 from src.application.services.Category import CategoryService
+from src.schemas.Category import CategoryCreate, CategoryUpdate
 from src.base.BaseSchema import BaseResponse
 from src.config.Database import get_db
-from src.core.Exceptions import BadRequestError, NotFoundError
+from src.core.Exceptions import BadRequestError, NotFoundError, PermissionDeniedError
 
 logger = logging.getLogger(__name__)
-
 router = APIRouter(prefix="/categories", tags=["Categories"])
-
-
-class CreateCategoryRequest(BaseModel):
-    name: str = Field(..., min_length=1, max_length=200)
-    description: Optional[str] = Field(None, max_length=500)
-    persona_id: int = Field(..., ge=1)
-    is_available: bool = True
-
-
-class UpdateCategoryRequest(BaseModel):
-    name: Optional[str] = Field(None, min_length=1, max_length=200)
-    description: Optional[str] = Field(None, max_length=500)
-    is_available: Optional[bool] = None
 
 
 @router.get("", response_model=BaseResponse)
@@ -39,186 +24,133 @@ async def get_categories(
     is_available: Optional[bool] = Query(None),
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
-    current_user: Dict[str, Any] = Depends(ApplicationPermissionCheck.require_authenticated),
+    current_user: Dict[str, Any] = Depends(ApplicationPermissionCheck.require("categories:read")),
     db: AsyncSession = Depends(get_db),
 ):
     """Get paginated categories scoped to persona."""
-    user_id = current_user.get("id")
-    logger.info(
-        "categories.list.request user_id=%s persona_id=%s is_available=%s page=%s page_size=%s",
-        user_id, persona_id, is_available, page, page_size,
-    )
-
-    items, total, total_pages = await CategoryService(db).get_paginated_categories(
-        persona_id=persona_id,
-        is_available=is_available,
-        page=page,
-        page_size=page_size,
-    )
-
-    logger.info(
-        "categories.list.response user_id=%s persona_id=%s total=%s page=%s total_pages=%s returned=%s",
-        user_id, persona_id, total, page, total_pages, len(items),
-    )
-    return {
-        "success": True,
-        "message": "Categories retrieved successfully",
-        "data": items,
-        "pagination": {
-            "page": page,
-            "page_size": page_size,
-            "total": total,
-            "total_pages": total_pages,
-            "has_next": page < total_pages,
-            "has_prev": page > 1,
-        },
-    }
+    try:
+        items, total, total_pages = await CategoryService(db).get_paginated_categories(
+            persona_id=persona_id, is_available=is_available, page=page, page_size=page_size
+        )
+        return {
+            "success": True,
+            "message": "Categories retrieved successfully",
+            "data": items,
+            "pagination": {
+                "page": page,
+                "page_size": page_size,
+                "total": total,
+                "total_pages": total_pages,
+                "has_next": page < total_pages,
+                "has_prev": page > 1,
+            },
+        }
+    except Exception as e:
+        logger.exception("categories.list.failed persona_id=%s error=%s", persona_id, str(e))
+        return {"success": False, "message": "Failed to retrieve categories", "error_code": "INTERNAL_ERROR"}
 
 
 @router.post("", response_model=BaseResponse, status_code=201)
 async def create_category(
-    request: CreateCategoryRequest,
-    current_user: Dict[str, Any] = Depends(ApplicationPermissionCheck.require_authenticated),
+    request: CategoryCreate,
+    current_user: Dict[str, Any] = Depends(ApplicationPermissionCheck.require("categories:create")),
     db: AsyncSession = Depends(get_db),
 ):
     """Create a new category scoped to persona."""
-    user_id = current_user.get("id")
-    logger.info(
-        "categories.create.request user_id=%s persona_id=%s name=%r",
-        user_id, request.persona_id, request.name,
-    )
-
-    data = request.model_dump()
-    category = await CategoryService(db).create_category(data)
-
-    logger.info(
-        "categories.create.response user_id=%s persona_id=%s category_id=%s name=%r",
-        user_id, request.persona_id, category.get("id"), category.get("name"),
-    )
-    return {"success": True, "message": "Category created successfully", "data": category}
+    try:
+        category = await CategoryService(db).create_category(request.model_dump())
+        return {"success": True, "message": "Category created successfully", "data": category}
+    except PermissionDeniedError:
+        return {"success": False, "message": "You do not have permission to create categories", "error_code": "PERMISSION_DENIED"}
+    except Exception as e:
+        logger.exception("categories.create.failed error=%s", str(e))
+        return {"success": False, "message": "Failed to create category", "error_code": "INTERNAL_ERROR"}
 
 
 @router.get("/{category_id}", response_model=BaseResponse)
 async def get_category(
     category_id: int,
     persona_id: int = Query(..., ge=1),
-    current_user: Dict[str, Any] = Depends(ApplicationPermissionCheck.require_authenticated),
+    current_user: Dict[str, Any] = Depends(ApplicationPermissionCheck.require("categories:read")),
     db: AsyncSession = Depends(get_db),
 ):
     """Get a single category scoped to persona."""
-    user_id = current_user.get("id")
-    logger.info(
-        "categories.get.request user_id=%s category_id=%s persona_id=%s",
-        user_id, category_id, persona_id,
-    )
-
-    category = await CategoryService(db).get_category_for_persona(category_id, persona_id)
-    if not category:
-        logger.warning(
-            "categories.get.not_found user_id=%s category_id=%s persona_id=%s",
-            user_id, category_id, persona_id,
-        )
-        raise NotFoundError("Category not found")
-
-    logger.info(
-        "categories.get.response user_id=%s category_id=%s persona_id=%s name=%r",
-        user_id, category_id, persona_id, category.get("name"),
-    )
-    return {"success": True, "message": "Category retrieved successfully", "data": category}
+    try:
+        category = await CategoryService(db).get_category_for_persona(category_id, persona_id)
+        if not category:
+            raise NotFoundError("Category not found")
+        return {"success": True, "message": "Category retrieved successfully", "data": category}
+    except NotFoundError as e:
+        return {"success": False, "message": str(e), "error_code": "NOT_FOUND"}
+    except Exception as e:
+        logger.exception("categories.get.failed error=%s", str(e))
+        return {"success": False, "message": "Failed to retrieve category", "error_code": "INTERNAL_ERROR"}
 
 
 @router.put("/{category_id}", response_model=BaseResponse)
 async def update_category(
     category_id: int,
-    request: UpdateCategoryRequest,
+    request: CategoryUpdate,
     persona_id: int = Query(..., ge=1),
-    current_user: Dict[str, Any] = Depends(ApplicationPermissionCheck.require_authenticated),
+    current_user: Dict[str, Any] = Depends(ApplicationPermissionCheck.require("categories:update")),
     db: AsyncSession = Depends(get_db),
 ):
     """Update a category scoped to persona."""
-    user_id = current_user.get("id")
-    data = request.model_dump(exclude_unset=True)
+    try:
+        data = request.model_dump(exclude_unset=True)
+        if not data:
+            raise BadRequestError("No fields provided to update")
 
-    if not data:
-        logger.warning(
-            "categories.update.empty_payload user_id=%s category_id=%s persona_id=%s",
-            user_id, category_id, persona_id,
-        )
-        raise BadRequestError("No fields provided to update")
-
-    logger.info(
-        "categories.update.request user_id=%s category_id=%s persona_id=%s fields=%s",
-        user_id, category_id, persona_id, list(data.keys()),
-    )
-
-    updated = await CategoryService(db).update_category(category_id, persona_id, data)
-    if not updated:
-        logger.warning(
-            "categories.update.not_found user_id=%s category_id=%s persona_id=%s",
-            user_id, category_id, persona_id,
-        )
-        raise NotFoundError("Category not found")
-
-    logger.info(
-        "categories.update.response user_id=%s category_id=%s persona_id=%s fields=%s",
-        user_id, category_id, persona_id, list(data.keys()),
-    )
-    return {"success": True, "message": "Category updated successfully"}
+        updated = await CategoryService(db).update_category(category_id, persona_id, data)
+        if not updated:
+            raise NotFoundError("Category not found")
+        return {"success": True, "message": "Category updated successfully"}
+    except BadRequestError as e:
+        return {"success": False, "message": str(e), "error_code": "BAD_REQUEST"}
+    except NotFoundError as e:
+        return {"success": False, "message": str(e), "error_code": "NOT_FOUND"}
+    except Exception as e:
+        logger.exception("categories.update.failed error=%s", str(e))
+        return {"success": False, "message": "Failed to update category", "error_code": "INTERNAL_ERROR"}
 
 
 @router.delete("/{category_id}", response_model=BaseResponse)
 async def delete_category(
     category_id: int,
     persona_id: int = Query(..., ge=1),
-    current_user: Dict[str, Any] = Depends(ApplicationPermissionCheck.require_authenticated),
+    current_user: Dict[str, Any] = Depends(ApplicationPermissionCheck.require("categories:delete")),
     db: AsyncSession = Depends(get_db),
 ):
     """Soft-delete a category scoped to persona."""
-    user_id = current_user.get("id")
-    logger.info(
-        "categories.delete.request user_id=%s category_id=%s persona_id=%s",
-        user_id, category_id, persona_id,
-    )
-
-    deleted = await CategoryService(db).soft_delete_category(category_id, persona_id)
-    if not deleted:
-        logger.warning(
-            "categories.delete.not_found user_id=%s category_id=%s persona_id=%s",
-            user_id, category_id, persona_id,
-        )
-        raise NotFoundError("Category not found")
-
-    logger.info(
-        "categories.delete.response user_id=%s category_id=%s persona_id=%s",
-        user_id, category_id, persona_id,
-    )
-    return {"success": True, "message": "Category deleted successfully"}
+    try:
+        deleted = await CategoryService(db).soft_delete_category(category_id, persona_id)
+        if not deleted:
+            raise NotFoundError("Category not found")
+        return {"success": True, "message": "Category deleted successfully"}
+    except NotFoundError as e:
+        return {"success": False, "message": str(e), "error_code": "NOT_FOUND"}
+    except Exception as e:
+        logger.exception("categories.delete.failed error=%s", str(e))
+        return {"success": False, "message": "Failed to delete category", "error_code": "INTERNAL_ERROR"}
 
 
 @router.post("/{category_id}/restore", response_model=BaseResponse)
 async def restore_category(
     category_id: int,
     persona_id: int = Query(..., ge=1),
-    current_user: Dict[str, Any] = Depends(ApplicationPermissionCheck.require_authenticated),
+    current_user: Dict[str, Any] = Depends(ApplicationPermissionCheck.require("categories:restore")),
     db: AsyncSession = Depends(get_db),
 ):
     """Restore a soft-deleted category scoped to persona."""
-    user_id = current_user.get("id")
-    logger.info(
-        "categories.restore.request user_id=%s category_id=%s persona_id=%s",
-        user_id, category_id, persona_id,
-    )
-
-    restored = await CategoryService(db).restore_category(category_id, persona_id)
-    if not restored:
-        logger.warning(
-            "categories.restore.not_found user_id=%s category_id=%s persona_id=%s",
-            user_id, category_id, persona_id,
-        )
-        raise NotFoundError("Category not found or is not deleted")
-
-    logger.info(
-        "categories.restore.response user_id=%s category_id=%s persona_id=%s",
-        user_id, category_id, persona_id,
-    )
-    return {"success": True, "message": "Category restored successfully"}
+    try:
+        restored = await CategoryService(db).restore_category(category_id, persona_id)
+        if not restored:
+            raise NotFoundError("Category not found or is not deleted")
+        return {"success": True, "message": "Category restored successfully"}
+    except PermissionDeniedError:
+        return {"success": False, "message": "You do not have permission to restore categories", "error_code": "PERMISSION_DENIED"}
+    except NotFoundError as e:
+        return {"success": False, "message": str(e), "error_code": "NOT_FOUND"}
+    except Exception as e:
+        logger.exception("categories.restore.failed error=%s", str(e))
+        return {"success": False, "message": "Failed to restore category", "error_code": "INTERNAL_ERROR"}

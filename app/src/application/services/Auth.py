@@ -34,10 +34,6 @@ class ApplicationAuthService(BaseAuth):
         self.workspace_repo = WorkspaceRepository(db)
         self.persona_repo = PersonaRepository(db)
 
-    # ------------------------------------------------------------------
-    # Login — 2 DB round-trips total
-    # ------------------------------------------------------------------
-
     async def login(self, email: str, password: str) -> Optional[Dict[str, Any]]:
         """
         Authenticate an app user and return tokens + enriched user dict.
@@ -65,9 +61,6 @@ class ApplicationAuthService(BaseAuth):
             "jwt_enabled": True,
         }
 
-    # ------------------------------------------------------------------
-    # Signup — atomic, pre-flight checks sequential
-    # ------------------------------------------------------------------
 
     async def signup(
         self,
@@ -123,9 +116,9 @@ class ApplicationAuthService(BaseAuth):
         )
 
         # ------------------------------------------------------------------
-        # All writes inside a transaction — fully atomic
+        # All writes inside a SAVEPOINT — fully atomic
         # ------------------------------------------------------------------
-        async with self.db.begin():  # ✅ changed from begin_nested()
+        async with self.db.begin_nested():  # ✅ safe inside FastAPI get_db
             try:
                 if not owner_role:
                     owner_role = await self.role_repo.create({
@@ -203,7 +196,7 @@ class ApplicationAuthService(BaseAuth):
                     )
 
             except IntegrityError as exc:
-                await self.db.rollback()  # ✅ added rollback
+                await self.db.rollback()  # ✅ rollback before re-raising
                 err_str = str(exc).lower()
                 if "uq_users_email" in err_str or ("users" in err_str and "email" in err_str):
                     raise ValueError(
@@ -226,4 +219,3 @@ class ApplicationAuthService(BaseAuth):
             "persona": created_persona,
             "user": created_owner,
         }
-    

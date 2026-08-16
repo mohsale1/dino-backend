@@ -1,7 +1,7 @@
 import logging
 from typing import Any, Dict
 
-from fastapi import APIRouter, Depends, Query, Request
+from fastapi import APIRouter, Depends, Request
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -18,6 +18,7 @@ from src.core.Exceptions import (
     NotAuthenticatedError,
 )
 from src.core.Security import decode_token
+from src.config.Utility import _client_ip
 from src.models.User import User
 from src.schemas.Auth import (
     ChangePasswordRequest,
@@ -30,15 +31,7 @@ from src.schemas.Auth import (
 )
 
 logger = logging.getLogger(__name__)
-
 router = APIRouter(prefix="/auth", tags=["Application Auth"])
-
-
-def _client_ip(request: Request) -> str:
-    forwarded_for = request.headers.get("X-Forwarded-For")
-    if forwarded_for:
-        return forwarded_for.split(",")[0].strip()
-    return request.client.host if request.client else "unknown"
 
 
 @router.post("/login", response_model=LoginResponse)
@@ -48,7 +41,6 @@ async def login(request: Request, body: LoginRequest, db: AsyncSession = Depends
     logger.info("auth.login.request email=%s ip=%s", body.email, ip)
 
     result = await ApplicationAuthService(db).login(body.email, body.password)
-
     if not result:
         logger.warning("auth.login.failed email=%s ip=%s reason=invalid_credentials", body.email, ip)
         raise InvalidCredentialsError()
@@ -62,10 +54,7 @@ async def login(request: Request, body: LoginRequest, db: AsyncSession = Depends
 async def signup(request: Request, body: SignupRequest, db: AsyncSession = Depends(get_db)):
     """Complete signup: create workspace, persona, and admin user."""
     ip = _client_ip(request)
-    logger.info(
-        "auth.signup.request workspace=%r email=%s ip=%s",
-        body.workspace_name, body.admin_email, ip,
-    )
+    logger.info("auth.signup.request workspace=%r email=%s ip=%s", body.workspace_name, body.admin_email, ip)
 
     try:
         result = await ApplicationAuthService(db).signup(
@@ -92,69 +81,22 @@ async def signup(request: Request, body: SignupRequest, db: AsyncSession = Depen
             referral_email=body.referral_email,
         )
     except ValueError as e:
-        logger.warning(
-            "auth.signup.conflict workspace=%r email=%s ip=%s reason=%s",
-            body.workspace_name, body.admin_email, ip, str(e),
-        )
+        logger.warning("auth.signup.conflict workspace=%r email=%s ip=%s reason=%s", body.workspace_name, body.admin_email, ip, str(e))
         raise ConflictError(str(e))
     except Exception:
-        logger.error(
-            "auth.signup.error workspace=%r email=%s ip=%s",
-            body.workspace_name, body.admin_email, ip,
-            exc_info=True,
-        )
+        logger.error("auth.signup.error workspace=%r email=%s ip=%s", body.workspace_name, body.admin_email, ip, exc_info=True)
         raise InternalError("An unexpected error occurred. Please try again later.")
 
     workspace_id = result["workspace"].get("id")
     user_id = result["user"].get("id")
     persona_id = result["persona"].get("id")
-    logger.info(
-        "auth.signup.success workspace_id=%s persona_id=%s user_id=%s email=%s ip=%s",
-        workspace_id, persona_id, user_id, body.admin_email, ip,
-    )
+    logger.info("auth.signup.success workspace_id=%s persona_id=%s user_id=%s email=%s ip=%s", workspace_id, persona_id, user_id, body.admin_email, ip)
+
     return SignupResponse(
         workspace=result["workspace"],
         persona=result["persona"],
         user=result["user"],
         message="Signup successful. You can now login with your credentials.",
-    )
-
-
-@router.get("/validate-referral", response_model=BaseResponse)
-async def validate_referral(
-    request: Request,
-    email: str = Query(..., description="Agent email address to validate"),
-    db: AsyncSession = Depends(get_db),
-):
-    """Validate that a referral email belongs to an active system user (agent)."""
-    ip = _client_ip(request)
-    logger.info("auth.validate_referral.request email=%s ip=%s", email, ip)
-
-    stmt = select(
-        User.user_type,
-        User.is_active,
-        User.first_name,
-        User.last_name,
-    ).where(User.email == email.strip().lower())
-
-    row = (await db.execute(stmt)).one_or_none()
-
-    if not row or row.user_type != 0 or not row.is_active:
-        logger.warning(
-            "auth.validate_referral.not_found email=%s ip=%s",
-            email, ip,
-        )
-        raise NotFoundError("No active agent found with this email")
-
-    agent_name = f"{row.first_name} {row.last_name}".strip()
-    logger.info(
-        "auth.validate_referral.success email=%s agent=%r ip=%s",
-        email, agent_name, ip,
-    )
-    return BaseResponse(
-        success=True,
-        message="Agent found",
-        data={"valid": True, "name": agent_name},
     )
 
 
@@ -165,7 +107,6 @@ async def refresh_token(request: Request, body: RefreshTokenRequest, db: AsyncSe
     logger.info("auth.token.refresh.request ip=%s", ip)
 
     payload = decode_token(body.refresh_token)
-
     if payload.get("type") != "refresh" or payload.get("user_type") != 1:
         logger.warning("auth.token.refresh.invalid_type ip=%s type=%s", ip, payload.get("type"))
         raise TokenInvalidError("Invalid refresh token")
@@ -179,10 +120,7 @@ async def refresh_token(request: Request, body: RefreshTokenRequest, db: AsyncSe
     stmt = select(User.is_active).where(User.id == user_id, User.user_type == 1)
     row = (await db.execute(stmt)).one_or_none()
     if not row or not row.is_active:
-        logger.warning(
-            "auth.token.refresh.user_not_found user_id=%s ip=%s",
-            user_id, ip,
-        )
+        logger.warning("auth.token.refresh.user_not_found user_id=%s ip=%s", user_id, ip)
         raise NotAuthenticatedError("User not found or inactive")
 
     token_data = {"sub": payload["sub"], "email": payload["email"], "user_type": 1}
@@ -198,11 +136,7 @@ async def get_current_user(
 ):
     """Return the currently authenticated user — resolved from JWT, no extra DB call."""
     logger.info("auth.me.request user_id=%s", current_user.get("id"))
-    return {
-        "success": True,
-        "message": "User retrieved successfully",
-        "data": {"user": current_user},
-    }
+    return {"success": True, "message": "User retrieved successfully", "data": {"user": current_user}}
 
 
 @router.post("/change-password", response_model=BaseResponse)
@@ -217,9 +151,7 @@ async def change_password(
     ip = _client_ip(request)
     logger.info("auth.change_password.request user_id=%s ip=%s", user_id, ip)
 
-    await ApplicationAuthService(db).change_password(
-        user_id, body.old_password, body.new_password
-    )
+    await ApplicationAuthService(db).change_password(user_id, body.old_password, body.new_password)
 
     logger.info("auth.change_password.success user_id=%s ip=%s", user_id, ip)
     return {"success": True, "message": "Password changed successfully"}
